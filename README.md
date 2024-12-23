@@ -22,9 +22,14 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 - **Dependencies**: Run the `install_extensions.bat` file to install the necessary dependencies listed in `requirements.txt`.
 
 ### Preparing Your Photos
-1. **Take Photos**: Use a lightboard to take photos of your tools or components. Ensure to include a 2" disc in the photo for scale reference (the STL file for the disc can be found in the `STL` folder).
-2. **Crop Photos**: Ensure the borders of the photos are all white.
-3. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline.
+1. **Take Photos**: Use a lightboard to take photos of your tools or components. Ensure to include a 2" disc in the photo for scale reference (the STL file for the disc can be found in the `STL` folder). For the lightbox, I used a 2 ft x 2 ft LED panel ceiling light fixture. An example from Menards is model number GT-FP-22BLP. I also wired a switch to this and an extension cord to plug it into an outlet. Based on your ambient lighting conditions, you will need to fine-tune your Threshold Input value.
+2. **Example Image**: An example image taken on a lightbox is located in the `Pictures` folder. If you want to practice on this file, the ideal settings are:
+   - **Threshold Input**: 160
+   - **Offset**: 0.05
+   - **Token Size**: 2.0
+   These settings will yield an image like the one shown above.
+3. **Crop Photos**: Ensure the borders of the photos are all white.
+4. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline.
 
 ### Step-by-Step Guide
 
