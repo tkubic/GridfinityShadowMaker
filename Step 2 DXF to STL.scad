@@ -10,6 +10,10 @@ use <src/core/gridfinity-rebuilt-holes.scad>
 // Define a variable for the DXF file path 
 dxf_file_path = "DXF/example.dxf";
 
+/* [DXF Position] */
+// Array to adjust the x and y position of the DXF file
+dxf_position = [0, 0]; // [x, y]
+
 /* [General Settings] */
 // number of bases along x-axis
 gridx = 5; //.5
@@ -25,14 +29,13 @@ num_slots = 1; //[0:1:4] //.5
 // Width of each slot
 slot_width = 40; // 10
 // Array of start positions relative to the x-axis
-start_positions = [0,-50, 100,0]; // .1
+start_positions = [0, -50, 100, 0]; // .1
 // Rotation angle of the slots
 slot_rotation = 90; // 10
 
 /* [Cut Depth] */
 // Variable for cut depth
 cut_depth = 10; // 1
-
 
 
 /* [Hidden] */
@@ -95,7 +98,7 @@ difference() {
     }
 
     // Position and extrude the DXF shape to perform the cut
-    translate([0, 0, gridz*7-cut_depth]) { // Start the cut from the top surface and cut downward by cut_depth
+    translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth]) { // Use the array to adjust the x and y position
         linear_extrude(height = cut_depth+1) { // Cut downward by the variable cut_depth
             scale([25.4, 25.4, 1]) { // Scale from inches to mm
                 import(dxf_file_path);
