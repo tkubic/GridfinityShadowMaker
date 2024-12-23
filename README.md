@@ -2,6 +2,19 @@
 
 This template is used to create Gridfinity shadow boards using Python scripts and OpenSCAD.
 
+## Highlights
+
+<table>
+  <tr>
+    <td><img src="assets/images/lightbox example.png" alt="Lightbox Example" width="320"></td>
+    <td><img src="assets/images/dxf generated example.png" alt="DXF Generated Example" width="320"></td>
+  </tr>
+  <tr>
+    <td><img src="assets/images/openscad example.png" alt="OpenSCAD Example" width="320"></td>
+    <td><img src="assets/images/orcastudio example.png" alt="OrcaStudio Example" width="320"></td>
+  </tr>
+</table>
+
 ## Instructions
 
 ### Prerequisites
@@ -44,6 +57,9 @@ Run the provided Python script to create your DXF files. This script will also c
    - Download and install the latest version of Python from [python.org](https://www.python.org/). Ensure to add Python to your system PATH.
 2. **Install Dependencies**:
    - Run `install_extensions.bat` to install all required dependencies from `requirements.txt`.
+
+## Credits
+This project uses code from [kennetek's gridfinity-rebuilt-openscad](https://github.com/kennetek/gridfinity-rebuilt-openscad) project for creating the Gridfinity base bins.
 
 ---
 
