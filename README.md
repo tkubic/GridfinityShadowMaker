@@ -19,7 +19,8 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 
 ### Prerequisites
 - **Python**: Make sure you have Python installed on your PC. If not, download and install the latest version from [python.org](https://www.python.org/). Ensure to add Python to your system PATH during installation.
-- **Dependencies**: Run the `install_extensions.bat` file to install the necessary dependencies listed in `requirements.txt`.
+- **OpenSCAD**: Download and install the latest version of OpenSCAD from [openscad.org](https://www.openscad.org/).
+- **OrcaSlicer or Bambu Studio**: Download and install either OrcaSlicer from [OrcaSlicer releases](https://github.com/SoftFever/OrcaSlicer/releases) or Bambu Studio from [Bambu Studio](https://bambulab.com/en/download/studio).
 
 ### Preparing Your Photos
 1. **Take Photos**: Use a lightboard to take photos of your tools or components. Ensure to include a 2" disc in the photo for scale reference (the STL file for the disc can be found in the `STL` folder). For the lightbox, I used a 2 ft x 2 ft LED panel ceiling light fixture. An example from Menards is model number GT-FP-22BLP. I also wired a switch to this and an extension cord to plug it into an outlet. Based on your ambient lighting conditions, you will need to fine-tune your Threshold Input value.
@@ -61,7 +62,10 @@ Run the provided Python script to create your DXF files. This script will also c
 1. **Setup Python**:
    - Download and install the latest version of Python from [python.org](https://www.python.org/). Ensure to add Python to your system PATH.
 2. **Install Dependencies**:
-   - Run `install_extensions.bat` to install all required dependencies from `requirements.txt`.
+   - You can either run the `install_extensions.bat` file or use the following command to install the required dependencies:
+     ```sh
+     pip install colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
+     ```
 
 ## Credits
 This project uses code from [kennetek's gridfinity-rebuilt-openscad](https://github.com/kennetek/gridfinity-rebuilt-openscad) project for creating the Gridfinity base bins.
