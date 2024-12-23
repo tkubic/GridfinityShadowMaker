@@ -1,0 +1,5 @@
+Getting Started:
+
+1. Setup python: browse to python.org. Download and install the latest version of python on your PC. If you uncheck the setup as an administrator you won't need IT involvement. Also make sure to install python to PATH
+
+2. click on "instal extensions.bat" to install dependencies in requirements.txt
