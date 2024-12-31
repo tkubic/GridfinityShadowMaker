@@ -164,7 +164,7 @@ def save_contours_as_dxf(contours, file_name, scale_factor):
 def select_image():
     file_path = filedialog.askopenfilename(
         title="Select Image",
-        filetypes=[("Image files", "*.jpg;*.png;*.bmp")]
+        filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp")]
     )
     file_name, file_extension = os.path.splitext(os.path.basename(file_path))
     return file_path, file_name
