@@ -162,10 +162,18 @@ def save_contours_as_dxf(contours, file_name, scale_factor):
 
 
 def select_image():
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+    root.update()  # Ensure the root window is updated
     file_path = filedialog.askopenfilename(
         title="Select Image",
         filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp")]
     )
+    root.destroy()  # Destroy the root window after file dialog is closed
+    if file_path:
+        print(f"Selected file: {file_path}")
+    else:
+        print("No file selected.")
     file_name, file_extension = os.path.splitext(os.path.basename(file_path))
     return file_path, file_name
 
@@ -177,11 +185,16 @@ def main():
         input_image_path, file_name = select_image()
         if not input_image_path:
             print("No image selected. Exiting.")
-        else:
-            diameter, threshold_input = find_diameter(input_image_path, root, canvas)
-            contours, offset_image = find_contours(input_image_path, diameter, threshold_input, canvas)
-            output_dxf_path = save_contours_as_dxf(contours, file_name, 2.005 / diameter)
-            print(f"Contours saved to {output_dxf_path}")
+            return
+        print(f"Processing image: {input_image_path}")
+        image = cv2.imread(input_image_path)
+        if image is None:
+            print("Failed to load image.")
+            return
+        diameter, threshold_input = find_diameter(input_image_path, root, canvas)
+        contours, offset_image = find_contours(input_image_path, diameter, threshold_input, canvas)
+        output_dxf_path = save_contours_as_dxf(contours, file_name, 2.005 / diameter)
+        print(f"Contours saved to {output_dxf_path}")
 
     def exit_application():
         root.destroy()
