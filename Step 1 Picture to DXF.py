@@ -1,17 +1,48 @@
 import cv2
 import ezdxf
 import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox
+from tkinter import filedialog, simpledialog, messagebox, ttk
 from PIL import Image, ImageTk
 import numpy as np
 import math
 import os
 import time
 import pyperclip
+import subprocess  # Add this import
+import tempfile  # Add this import
 
 # Global variables
 offset = 0.1  # inches
 token = 2.000  # inches
+temp_scad_file_path = None  # Add this global variable to keep track of the temp file
+
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        x, y, _cx, cy = self.widget.bbox("insert")
+        x = x + self.widget.winfo_rootx() + 25
+        y = y + cy + self.widget.winfo_rooty() + 25
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("tahoma", "8", "normal"))
+        label.pack(ipadx=1)
+
+    def hide_tip(self, event=None):
+        tw = self.tip_window
+        self.tip_window = None
+        if tw:
+            tw.destroy()
 
 def get_threshold_input():
     global offset, token, resolution
@@ -93,9 +124,9 @@ def find_diameter(image_path, root, canvas):
     if max_circularity_contour is not None:
         (x, y), radius = cv2.minEnclosingCircle(max_circularity_contour)
         diameter = 2 * radius
-        print(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
+        console_text.set(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
     else:
-        print("No circle with sufficient circularity found.")
+        console_text.set("No circle with sufficient circularity found.")
     return diameter, threshold_input
 
 def find_contours(image_path, diameter, threshold_input, canvas):
@@ -135,9 +166,9 @@ def find_contours(image_path, diameter, threshold_input, canvas):
     if max_circularity_contour is not None:
         (x, y), radius = cv2.minEnclosingCircle(max_circularity_contour)
         diameter = 2 * radius
-        print(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
+        console_text.set(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
     else:
-        print("No circle with sufficient circularity found.")
+        console_text.set("No circle with sufficient circularity found.")
 
     return contours, filtered_contours_image
 
@@ -172,6 +203,7 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text):
     # Copy the file path to the clipboard
     pyperclip.copy(output_path)
     console_text.set(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.")
+    return output_path
 
 def select_image():
     root = tk.Tk()
@@ -189,8 +221,41 @@ def select_image():
     file_name, file_extension = os.path.splitext(os.path.basename(file_path))
     return file_path, file_name
 
+def import_to_openscad(dxf_path):
+    global temp_scad_file_path  # Use the global variable to keep track of the temp file
+    scad_file_path = "Step 2 DXF to STL.scad"
+    with open(scad_file_path, 'r') as file:
+        scad_content = file.read()
+    
+    # Use forward slashes for the file path
+    dxf_path = dxf_path.replace("\\", "/")
+    updated_scad_content = scad_content.replace('dxf_file_path = "DXF/example.dxf";', f'dxf_file_path = "{dxf_path}";')
+    
+    # Delete the previous temporary SCAD file if it exists
+    if temp_scad_file_path and os.path.exists(temp_scad_file_path):
+        os.remove(temp_scad_file_path)
+    
+    # Create a new temporary SCAD file in the same directory as this script
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".scad", dir=script_directory) as temp_scad_file:
+        temp_scad_file.write(updated_scad_content.encode('utf-8'))
+        temp_scad_file_path = temp_scad_file.name
+    
+    # Path to the OpenSCAD executable
+    openscad_executable = "C:/Program Files/OpenSCAD/openscad.exe"
+    
+    # Open the temporary SCAD file with OpenSCAD
+    subprocess.Popen([openscad_executable, temp_scad_file_path])
+
+def exit_application():
+    global temp_scad_file_path  # Use the global variable to keep track of the temp file
+    # Delete the temporary SCAD file if it exists
+    if temp_scad_file_path and os.path.exists(temp_scad_file_path):
+        os.remove(temp_scad_file_path)
+    root.destroy()
+
 def main():
-    global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name
+    global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text
     root = tk.Tk()
     root.title("Image to DXF Converter")
     
@@ -198,27 +263,33 @@ def main():
         global input_image_path, file_name
         input_image_path, file_name = select_image()
         if not input_image_path:
-            print("No image selected. Exiting.")
+            console_text.set("No image selected. Exiting.")
             return
-        print(f"Loaded image: {input_image_path}")
+        console_text.set(f"Loaded image: {input_image_path}")
         image = cv2.imread(input_image_path)
         if image is None:
-            print("Failed to load image.")
+            console_text.set("Failed to load image.")
             return
         display_image_on_canvas(image, canvas, 1, "Original")
 
     def process_image():
         if not input_image_path:
-            print("No image loaded. Please load an image first.")
+            console_text.set("No image loaded. Please load an image first.")
             return
-        print(f"Processing image: {input_image_path}")
+        console_text.set(f"Processing image: {input_image_path}")
         diameter, threshold_input = find_diameter(input_image_path, root, canvas)
         if diameter is None or threshold_input is None:
             return  # Return to main loop if the user selects "no"
         contours, offset_image = find_contours(input_image_path, diameter, threshold_input, canvas)
-        save_contours_as_dxf(contours, file_name, 2.005 / diameter, console_text)
+        dxf_path = save_contours_as_dxf(contours, file_name, 2.005 / diameter, console_text)
+        import_button.config(state=tk.NORMAL)
+        import_button.dxf_path = dxf_path
 
     def exit_application():
+        global temp_scad_file_path  # Use the global variable to keep track of the temp file
+        # Delete the temporary SCAD file if it exists
+        if temp_scad_file_path and os.path.exists(temp_scad_file_path):
+            os.remove(temp_scad_file_path)
         root.destroy()
 
     root.attributes('-fullscreen', True)
@@ -234,6 +305,7 @@ def main():
 
     load_button = tk.Button(control_frame, text="Load Image", command=load_image, font=("Helvetica", 16))
     load_button.grid(row=0, column=0, columnspan=2, pady=10)
+    ToolTip(load_button, "Load an image to process")
 
     tk.Label(control_frame, text="Threshold Input (0-255):").grid(row=1, column=0, sticky=tk.W)
     threshold_entry = tk.Entry(control_frame)
@@ -257,6 +329,12 @@ def main():
 
     process_button = tk.Button(control_frame, text="Process Image", command=process_image, font=("Helvetica", 16))
     process_button.grid(row=5, column=0, columnspan=2, pady=10)
+    ToolTip(process_button, "Process the loaded image")
+
+    import_button = tk.Button(control_frame, text="Import to OpenSCAD", command=lambda: import_to_openscad(import_button.dxf_path), font=("Helvetica", 16))
+    import_button.grid(row=6, column=0, columnspan=2, pady=10)
+    import_button.config(state=tk.DISABLED)
+    ToolTip(import_button, "Import the DXF file to OpenSCAD")
 
     console_frame = tk.Frame(root)
     console_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=5)  # Adjust the padding to make the console smaller
