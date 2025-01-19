@@ -6,12 +6,11 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 
 <table>
   <tr>
-    <td><img src="assets/images/lightbox example.png" alt="Lightbox Example" width="320"></td>
-    <td><img src="assets/images/dxf generated example.png" alt="DXF Generated Example" width="320"></td>
+    <td colspan="2"><img src="assets/images/Image%20to%20DXF.png" alt="Image to DXF" width="800"></td>
   </tr>
   <tr>
-    <td><img src="assets/images/openscad example.png" alt="OpenSCAD Example" width="320"></td>
-    <td><img src="assets/images/orcastudio example.png" alt="OrcaStudio Example" width="320"></td>
+    <td><img src="assets/images/openscad%20example.png" alt="Openscad example" width="400"></td>
+    <td><img src="assets/images/orcastudio%20example.png" alt="Orca Studio example" width="400"></td>
   </tr>
 </table>
 
@@ -64,7 +63,7 @@ Run the provided Python script to create your DXF files. This script will also c
 2. **Install Dependencies**:
    - You can either run the `install_extensions.bat` file or use the following command to install the required dependencies:
      ```sh
-     pip install colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
+     pip install PyQt5 cv2 pillow colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
      ```
 
 ## Credits
