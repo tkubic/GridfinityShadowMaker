@@ -1,355 +1,61 @@
+from PyQt5 import QtWidgets
+from ui import create_main_window, display_image_on_canvas
+from processing import find_diameter, find_contours, save_contours_as_dxf, select_image, import_to_openscad, exit_application, clear_canvas
 import cv2
-import ezdxf
-import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox, ttk
-from PIL import Image, ImageTk
-import numpy as np
-import math
-import os
-import time
-import pyperclip
-import subprocess  # Add this import
-import tempfile  # Add this import
-
-# Global variables
-offset = 0.1  # inches
-token = 2.000  # inches
-temp_scad_file_path = None  # Add this global variable to keep track of the temp file
-
-class ToolTip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tip_window = None
-        self.widget.bind("<Enter>", self.show_tip)
-        self.widget.bind("<Leave>", self.hide_tip)
-
-    def show_tip(self, event=None):
-        if self.tip_window or not self.text:
-            return
-        x, y, _cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + cy + self.widget.winfo_rooty() + 25
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                         font=("tahoma", "8", "normal"))
-        label.pack(ipadx=1)
-
-    def hide_tip(self, event=None):
-        tw = self.tip_window
-        self.tip_window = None
-        if tw:
-            tw.destroy()
-
-def get_threshold_input():
-    global offset, token, resolution
-    try:
-        threshold_input = int(threshold_entry.get())
-        if threshold_input < 0:
-            threshold_input = 0
-        elif threshold_input > 255:
-            threshold_input = 255
-    except ValueError:
-        threshold_input = 145
-    try:
-        offset = float(offset_entry.get())
-    except ValueError:
-        offset = 0.1
-    try:
-        token = float(token_entry.get())
-    except ValueError:
-        token = 2.000
-    try:
-        resolution = float(resolution_entry.get())
-    except ValueError:
-        resolution = 10
-    return threshold_input
-
-def display_image_on_canvas(image, canvas, region, caption):
-    img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(img)
-    
-    # Resize the image to fit the specified region while maintaining aspect ratio
-    canvas_width = canvas.winfo_width() // 3
-    canvas_height = canvas.winfo_height() - 50  # Leave more space for caption
-    img.thumbnail((canvas_width, canvas_height), Image.LANCZOS)
-    
-    img = ImageTk.PhotoImage(img)
-    if region == 1:
-        x_offset = 0
-        canvas.image1 = img  # Keep a reference to avoid garbage collection
-    elif region == 2:
-        x_offset = canvas_width
-        canvas.image2 = img  # Keep a reference to avoid garbage collection
-    elif region == 3:
-        x_offset = 2 * canvas_width
-        canvas.image3 = img  # Keep a reference to avoid garbage collection
-    canvas.create_image(x_offset, 0, anchor=tk.NW, image=img)
-    canvas.create_text(x_offset + canvas_width // 2, 5, text=caption, fill="black", font=("Helvetica", 16), anchor=tk.N)  # Move text up slightly
-    
-    # Update the canvas
-    canvas.update()
-
-def find_diameter(image_path, root, canvas):
-    threshold_input = get_threshold_input()
-    image = cv2.imread(image_path)
-    imgray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(imgray, threshold_input, 255, cv2.THRESH_BINARY)
-    thresh = cv2.bitwise_not(thresh)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    display_image_on_canvas(thresh, canvas, 2, "Traced")
-    
-    contours = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
-    find_diameter_contours_img = image.copy()
-    cv2.drawContours(find_diameter_contours_img, contours, -1, (0, 255, 0), 3)
-    display_image_on_canvas(find_diameter_contours_img, canvas, 2, "Traced")
-
-    max_circularity = 0
-    global max_circularity_contour
-    max_circularity_contour = None
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        circularity = (4 * np.pi * area) / (perimeter * perimeter)
-        if circularity > 0.85:
-            if circularity > max_circularity:
-                max_circularity = circularity
-                max_circularity_contour = contour
-
-    if max_circularity_contour is not None:
-        (x, y), radius = cv2.minEnclosingCircle(max_circularity_contour)
-        diameter = 2 * radius
-        console_text.set(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
-    else:
-        console_text.set("No circle with sufficient circularity found.")
-    return diameter, threshold_input
-
-def find_contours(image_path, diameter, threshold_input, canvas):
-    image = cv2.imread(image_path)
-    imgray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(imgray, threshold_input, 255, cv2.THRESH_BINARY)
-    thresh = cv2.bitwise_not(thresh)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    kernel_size = math.ceil(diameter / (token / offset) * 2)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    thresh = cv2.dilate(thresh, kernel)
-    epsilon = kernel_size / resolution
-
-    contours_tuple = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
-    print(f"epsilon: {epsilon}")
-    contours = [cv2.approxPolyDP(contour, epsilon, True) for contour in contours_tuple]
-
-    max_circularity = 0
-    global max_circularity_contour
-    max_circularity_contour = None
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        perimeter = cv2.arcLength(contour, True)
-        circularity = (4 * np.pi * area) / (perimeter * perimeter)
-        if circularity > 0.8:
-            if circularity > max_circularity:
-                max_circularity = circularity
-                max_circularity_contour = contour
-
-    filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_circularity_contour)]
-    filtered_contours_image = image.copy()
-    cv2.drawContours(filtered_contours_image, filtered_contours, -1, (255, 0, 0), 2)
-    display_image_on_canvas(filtered_contours_image, canvas, 3, "Filtered Contours")
-
-    if max_circularity_contour is not None:
-        (x, y), radius = cv2.minEnclosingCircle(max_circularity_contour)
-        diameter = 2 * radius
-        console_text.set(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
-    else:
-        console_text.set("No circle with sufficient circularity found.")
-
-    return contours, filtered_contours_image
-
-def save_contours_as_dxf(contours, file_name, scale_factor, console_text):
-    doc = ezdxf.new()
-    msp = doc.modelspace()
-
-    # Exclude the max_circularity_contour from the contours
-    filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_circularity_contour)]
-
-    # Calculate the bounding box for the remaining contours
-    all_points = np.vstack([contour.reshape(-1, 2) for contour in filtered_contours])
-    min_x, min_y = np.min(all_points, axis=0)
-    max_x, max_y = np.max(all_points, axis=0)
-    center_x = (min_x + max_x) / 2
-    center_y = (min_y + max_y) / 2
-
-    for contour in filtered_contours:
-        points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
-        if points[0] != points[-1]:
-            points.append((points[0][0], points[0][1]))
-        polyline = msp.add_lwpolyline(points)
-        
-    # Ensure the DXF directory exists in the script's directory
-    script_directory = os.path.dirname(os.path.abspath(__file__))
-    dxf_directory = os.path.join(script_directory, "DXF")
-    os.makedirs(dxf_directory, exist_ok=True)
-    output_path = os.path.join(dxf_directory, file_name + ".dxf")
-    
-    doc.saveas(output_path)
-    
-    # Copy the file path to the clipboard
-    pyperclip.copy(output_path)
-    console_text.set(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.")
-    return output_path
-
-def select_image():
-    root = tk.Tk()
-    root.withdraw()  # Hide the root window
-    root.update()  # Ensure the root window is updated
-    file_path = filedialog.askopenfilename(
-        title="Select Image",
-        filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp")]
-    )
-    root.destroy()  # Destroy the root window after file dialog is closed
-    if file_path:
-        print(f"Selected file: {file_path}")
-    else:
-        print("No file selected.")
-    file_name, file_extension = os.path.splitext(os.path.basename(file_path))
-    return file_path, file_name
-
-def import_to_openscad(dxf_path):
-    global temp_scad_file_path  # Use the global variable to keep track of the temp file
-    scad_file_path = "Step 2 DXF to STL.scad"
-    with open(scad_file_path, 'r') as file:
-        scad_content = file.read()
-    
-    # Use forward slashes for the file path
-    dxf_path = dxf_path.replace("\\", "/")
-    updated_scad_content = scad_content.replace('dxf_file_path = "DXF/example.dxf";', f'dxf_file_path = "{dxf_path}";')
-    
-    # Delete the previous temporary SCAD file if it exists
-    if temp_scad_file_path and os.path.exists(temp_scad_file_path):
-        os.remove(temp_scad_file_path)
-    
-    # Create a new temporary SCAD file in the same directory as this script
-    script_directory = os.path.dirname(os.path.abspath(__file__))
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".scad", dir=script_directory) as temp_scad_file:
-        temp_scad_file.write(updated_scad_content.encode('utf-8'))
-        temp_scad_file_path = temp_scad_file.name
-    
-    # Path to the OpenSCAD executable
-    openscad_executable = "C:/Program Files/OpenSCAD/openscad.exe"
-    
-    # Open the temporary SCAD file with OpenSCAD
-    subprocess.Popen([openscad_executable, temp_scad_file_path])
-
-def exit_application():
-    global temp_scad_file_path  # Use the global variable to keep track of the temp file
-    # Delete the temporary SCAD file if it exists
-    if temp_scad_file_path and os.path.exists(temp_scad_file_path):
-        os.remove(temp_scad_file_path)
-    root.destroy()
+import traceback
 
 def main():
     global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text
-    root = tk.Tk()
-    root.title("Image to DXF Converter")
+    app = QtWidgets.QApplication([])
+    window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text = create_main_window()
     
     def load_image():
         global input_image_path, file_name
-        input_image_path, file_name = select_image()
-        if not input_image_path:
-            console_text.set("No image selected. Exiting.")
-            return
-        console_text.set(f"Loaded image: {input_image_path}")
-        image = cv2.imread(input_image_path)
-        if image is None:
-            console_text.set("Failed to load image.")
-            return
-        display_image_on_canvas(image, canvas, 1, "Original")
+        try:
+            clear_canvas(canvas)
+            input_image_path, file_name = select_image(console_text)
+            if not input_image_path:
+                console_text.setText("No image selected. Exiting.")
+                return
+            console_text.setText(f"Loaded image: {input_image_path}")
+            image = cv2.imread(input_image_path)
+            if image is None:
+                console_text.setText("Failed to load image.")
+                return
+            display_image_on_canvas(image, canvas, 1, "Original")
+        except Exception as e:
+            console_text.setText(f"Error loading image: {str(e)}")
+            print(traceback.format_exc())
 
     def process_image():
         if not input_image_path:
-            console_text.set("No image loaded. Please load an image first.")
+            console_text.setText("No image loaded. Please load an image first.")
             return
-        console_text.set(f"Processing image: {input_image_path}")
-        diameter, threshold_input = find_diameter(input_image_path, root, canvas)
-        if diameter is None or threshold_input is None:
-            return  # Return to main loop if the user selects "no"
-        contours, offset_image = find_contours(input_image_path, diameter, threshold_input, canvas)
-        dxf_path = save_contours_as_dxf(contours, file_name, 2.005 / diameter, console_text)
-        import_button.config(state=tk.NORMAL)
-        import_button.dxf_path = dxf_path
+        try:
+            clear_canvas(canvas, keep_original=True)
+            console_text.setText(f"Processing image: {input_image_path}")
+            diameter, threshold_input = find_diameter(input_image_path, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text)
+            if diameter is None or threshold_input is None:
+                return  # Return to main loop if the user selects "no"
+            contours, offset_image = find_contours(input_image_path, diameter, threshold_input, canvas, console_text)
+            dxf_path, gridx_size, gridy_size = save_contours_as_dxf(contours, file_name, 2.005 / diameter, console_text)
+            console_text.setText(f"Processing image: {input_image_path}\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
+            import_button.setEnabled(True)
+            import_button.dxf_path = dxf_path
+            import_button.gridx_size = gridx_size
+            import_button.gridy_size = gridy_size
+            
+        except Exception as e:
+            console_text.setText(f"Error processing image: {str(e)}")
+            print(traceback.format_exc())
 
-    def exit_application():
-        global temp_scad_file_path  # Use the global variable to keep track of the temp file
-        # Delete the temporary SCAD file if it exists
-        if temp_scad_file_path and os.path.exists(temp_scad_file_path):
-            os.remove(temp_scad_file_path)
-        root.destroy()
-
-    root.attributes('-fullscreen', True)
-
-    canvas_frame = tk.Frame(root)
-    canvas_frame.pack(fill=tk.BOTH, expand=True)
-
-    canvas = tk.Canvas(canvas_frame, height=canvas_frame.winfo_height() - 100)  # Set a fixed height for the canvas
-    canvas.pack(fill=tk.BOTH, expand=True)
-
-    control_frame = tk.Frame(root)
-    control_frame.pack(side=tk.TOP, anchor=tk.NE, padx=20, pady=20)
-
-    load_button = tk.Button(control_frame, text="Load Image", command=load_image, font=("Helvetica", 16))
-    load_button.grid(row=0, column=0, columnspan=2, pady=10)
-    ToolTip(load_button, "Load an image to process")
-
-    tk.Label(control_frame, text="Threshold Input (0-255):").grid(row=1, column=0, sticky=tk.W)
-    threshold_entry = tk.Entry(control_frame)
-    threshold_entry.grid(row=1, column=1)
-    threshold_entry.insert(0, "145")
-
-    tk.Label(control_frame, text="Offset (inches):").grid(row=2, column=0, sticky=tk.W)
-    offset_entry = tk.Entry(control_frame)
-    offset_entry.grid(row=2, column=1)
-    offset_entry.insert(0, "0.1")
-
-    tk.Label(control_frame, text="Token Size (inches):").grid(row=3, column=0, sticky=tk.W)
-    token_entry = tk.Entry(control_frame)
-    token_entry.grid(row=3, column=1)
-    token_entry.insert(0, "2.000")
-
-    tk.Label(control_frame, text="Resolution:").grid(row=4, column=0, sticky=tk.W)
-    resolution_entry = tk.Entry(control_frame)
-    resolution_entry.grid(row=4, column=1)
-    resolution_entry.insert(0, "10")
-
-    process_button = tk.Button(control_frame, text="Process Image", command=process_image, font=("Helvetica", 16))
-    process_button.grid(row=5, column=0, columnspan=2, pady=10)
-    ToolTip(process_button, "Process the loaded image")
-
-    import_button = tk.Button(control_frame, text="Import to OpenSCAD", command=lambda: import_to_openscad(import_button.dxf_path), font=("Helvetica", 16))
-    import_button.grid(row=6, column=0, columnspan=2, pady=10)
-    import_button.config(state=tk.DISABLED)
-    ToolTip(import_button, "Import the DXF file to OpenSCAD")
-
-    console_frame = tk.Frame(root)
-    console_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=5)  # Adjust the padding to make the console smaller
-
-    console_text = tk.StringVar()
-    console_label = tk.Label(console_frame, textvariable=console_text, font=("Helvetica", 12), fg="green")
-    console_label.pack(padx=10)
-
-    button_frame = tk.Frame(console_frame)
-    button_frame.pack(side=tk.BOTTOM, pady=5)
-
-    exit_button = tk.Button(button_frame, text="Exit", command=exit_application, font=("Helvetica", 16))
-    exit_button.pack(padx=10)
-
-    root.mainloop()
+    load_button.clicked.connect(load_image)
+    process_button.clicked.connect(process_image)
+    import_button.clicked.connect(lambda: import_to_openscad(import_button.dxf_path, import_button.gridx_size, import_button.gridy_size, console_text, file_name))
+    exit_button.clicked.connect(lambda: exit_application(console_text))
+    
+    window.show()
+    app.exec_()
 
 if __name__ == "__main__":
     main()
