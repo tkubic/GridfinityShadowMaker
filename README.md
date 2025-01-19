@@ -17,16 +17,13 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 ## Instructions
 
 ### Prerequisites
-- **Python**: Make sure you have Python installed on your PC. If not, download and install the latest version from [python.org](https://www.python.org/). Ensure to add Python to your system PATH during installation.
+- **Python**: Make sure you have Python installed on your PC. If not, download and install the latest version from [python.org](https://www.python.org/). Ensure to add Python to your system PATH during installation, then install the dependencies shown at the bottom of this page.
 - **OpenSCAD**: Download and install the latest version of OpenSCAD from [openscad.org](https://www.openscad.org/).
 - **OrcaSlicer or Bambu Studio**: Download and install either OrcaSlicer from [OrcaSlicer releases](https://github.com/SoftFever/OrcaSlicer/releases) or Bambu Studio from [Bambu Studio](https://bambulab.com/en/download/studio).
 
 ### Preparing Your Photos
 1. **Take Photos**: Use a lightboard to take photos of your tools or components. Ensure to include a 2" disc in the photo for scale reference (the STL file for the disc can be found in the `STL` folder). For the lightbox, I used a 2 ft x 2 ft LED panel ceiling light fixture. An example from Menards is model number GT-FP-22BLP. I also wired a switch to this and an extension cord to plug it into an outlet. Based on your ambient lighting conditions, you will need to fine-tune your Threshold Input value.
-2. **Example Image**: An example image taken on a lightbox is located in the `Pictures` folder. If you want to practice on this file, the ideal settings are:
-   - **Threshold Input**: 160
-   - **Offset**: 0.05
-   - **Token Size**: 2.0
+2. **Example Images**: An example image taken on a lightbox is located in the `Pictures/examples` folder. 
    These settings will yield an image like the one shown above.
 3. **Crop Photos**: Ensure the borders of the photos are all white.
 4. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline.
@@ -35,10 +32,13 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 
 #### Step 1: Create DXF Files
 Run the provided Python script to create your DXF files. This script will also copy the file path of the generated DXF to your clipboard.
-
+General description of settings:
+   - **Threshold Input**: This helps with edge detection. Images should have high contrast of edges to background
+   - **Offset**: offset in inches from traced image
+   - **Token Size**: used for a scale reference
 #### Step 2: Generate STL Files with OpenSCAD
-1. Open the `Step 2 OpenSCAD` file.
-2. In the customizer, input the path to your DXF file (paste from clipboard using `Ctrl+V`).
+1. The OpenSCAD file can be opened direclty from the Step 1 python file. this will prepopulate DXF path and estimated size for the board
+2. In the customizer you can modify many things. Most common are in general settings, finger slot, and cut depth
 3. **General Settings**:
    - Adjust `gridx`, `gridy`, and `gridz` to match the size of your desired shadow board.
 4. **Finger Slot Options**:
