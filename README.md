@@ -63,7 +63,7 @@ General description of settings:
 2. **Install Dependencies**:
    - You can either run the `install_extensions.bat` file or use the following command to install the required dependencies:
      ```sh
-     pip install PyQt5 cv2 pillow colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
+     pip install PyQt5 opencv_python pillow colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
      ```
 
 ## Credits
