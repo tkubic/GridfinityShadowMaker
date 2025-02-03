@@ -7,8 +7,9 @@ import os
 import tempfile
 import subprocess
 import traceback
+from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
-from ui import display_image_on_canvas  # Import display_image_on_canvas
+from ui import Ui_MainWindow  # Import Ui_MainWindow
 
 temp_scad_file_path = None  # Declare temp_scad_file_path as a global variable
 
@@ -42,10 +43,10 @@ def clear_canvas(canvas, keep_original=False):
         print(f"Error clearing canvas: {str(e)}")
         print(traceback.format_exc())
 
-def find_diameter(image_path, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text):
+def find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text):
     try:
         threshold_input = get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry)
-        image, thresh = preprocess_image(image_path, threshold_input)
+        image, thresh = preprocess_image(image, threshold_input)
         display_image_on_canvas(thresh, canvas, 2, "Traced")
         
         contours = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
@@ -63,8 +64,9 @@ def find_diameter(image_path, canvas, threshold_entry, offset_entry, token_entry
         print(traceback.format_exc())
         return None, None
 
-def preprocess_image(image_path, threshold_input):
-    image = cv2.imread(image_path)
+def preprocess_image(image, threshold_input):
+    if isinstance(image, str):
+        image = cv2.imread(image)
     imgray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     ret, thresh = cv2.threshold(imgray, threshold_input, 255, cv2.THRESH_BINARY)
     thresh = cv2.bitwise_not(thresh)
@@ -97,9 +99,9 @@ def calculate_diameter(contour):
     (x, y), radius = cv2.minEnclosingCircle(contour)
     return 2 * radius
 
-def find_contours(image_path, diameter, threshold_input, canvas, console_text):
+def find_contours(image, diameter, threshold_input, canvas, console_text):
     try:
-        image, thresh = preprocess_image(image_path, threshold_input)
+        image, thresh = preprocess_image(image, threshold_input)
         kernel_size = math.ceil(diameter / (token / offset) * 2)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         thresh = cv2.dilate(thresh, kernel)
@@ -135,6 +137,10 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text):
 
         filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_circularity_contour)]
         
+        if not filtered_contours:
+            console_text.setText("No valid contours found after filtering.")
+            return None, None, None
+
         # Calculate the bounding box for the remaining contours
         all_points = np.vstack([contour.reshape(-1, 2) for contour in filtered_contours])
         min_x, min_y = np.min(all_points, axis=0)
@@ -241,4 +247,56 @@ def exit_application(console_text):
         QtWidgets.QApplication.quit()
     except Exception as e:
         console_text.setText(f"Error exiting application: {str(e)}")
+        print(traceback.format_exc())
+
+def create_main_window():
+    MainWindow = QtWidgets.QMainWindow()
+    ui = Ui_MainWindow()
+    ui.setupUi(MainWindow)
+    
+    canvas = ui.canvas
+    canvas.setScene(QtWidgets.QGraphicsScene())
+    
+    return (MainWindow, canvas, ui.load_button, ui.process_button, ui.import_button, 
+            ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
+            ui.resolution_entry, ui.console_text)
+
+def display_image_on_canvas(image, canvas, region, caption):
+    try:
+        img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img)
+        
+        # Resize the image to fit 1/3 of the horizontal screen while maintaining aspect ratio
+        canvas_width = canvas.width() // 3
+        canvas_height = canvas.height() - 50
+        
+        # Calculate the scaling factor to maintain aspect ratio
+        scale_factor = min(canvas_width / img.width, canvas_height / img.height)
+        new_width = int(img.width * scale_factor)
+        new_height = int(img.height * scale_factor)
+        
+        img = img.resize((new_width, new_height), Image.LANCZOS)
+        
+        # Convert the image to QImage
+        img_data = img.tobytes()
+        bytes_per_line = new_width * 3
+        qimage = QtGui.QImage(img_data, new_width, new_height, bytes_per_line, QtGui.QImage.Format_RGB888)
+        pixmap = QtGui.QPixmap.fromImage(qimage)
+        
+        if region == 1:
+            x_offset = canvas.width() // 6
+            canvas.image1 = pixmap
+        elif region == 2:
+            x_offset = canvas_width
+            canvas.image2 = pixmap
+        elif region == 3:
+            x_offset = 2 * canvas_width
+            canvas.image3 = pixmap
+        canvas.scene().addPixmap(pixmap).setPos(x_offset, 0)
+        canvas.scene().addText(caption, QtGui.QFont("Helvetica", 16)).setPos(x_offset + canvas_width // 2, 5)
+        
+        # Update the canvas
+        canvas.update()
+    except Exception as e:
+        print(f"Error displaying image on canvas: {str(e)}")
         print(traceback.format_exc())
