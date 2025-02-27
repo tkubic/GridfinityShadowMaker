@@ -11,11 +11,11 @@ use <src/core/gridfinity-rebuilt-holes.scad>
 dxf_file_path = "DXF/example.dxf";
 
 /* [DXF Position] */
-// Adjust x and y of the DXF
+// Array to adjust the x and y position of the DXF file
 dxf_position = [0, 0]; // [x, y]
 
 // [DXF Rotation]
-// Rotate the DXF
+// Variable to adjust the rotation of the DXF file
 dxf_rotation = 0; // Rotation angle in degrees
 
 /* [General Settings] */
@@ -40,6 +40,12 @@ slot_rotation = 90; // 10
 /* [Cut Depth] */
 // Variable for cut depth
 cut_depth = 10; // 1
+
+/* [Cutout] */
+// Checkbox to include or exclude the cutout
+include_cutout = true; // true or false
+// Variable for cutout height, default is 1.8
+cutout_height = 1.8; // 1.8
 
 
 /* [Hidden] */
@@ -85,7 +91,11 @@ enable_zsnap = false;
 // Function to create the finger slot
 module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     rotate([0, 0, rotation]) {
-        translate([start_pos - width / 2, -250, gridz*7-cut_depth+1]) { // Start the cut at 21mm above the Z-axis
+        translate([
+            start_pos - width / 2, 
+            -250, 
+            gridz*7-cut_depth+1 + (include_cutout ? cutout_height : 0) // Add cutout_height if include_cutout is true
+        ]) { 
             cube([width, 500, gridz * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
         }
     }
@@ -116,7 +126,18 @@ difference() {
     for (i = [0 : num_slots - 1]) {
         finger_slot(slot_width, start_positions[i], slot_rotation);
     }
-}
 
+
+}
+// Conditionally extrude the DXF at x=0 y=gridy*1.5*42+5
+if (include_cutout) {
+    translate([0, gridy*42+5, 0]) {
+        linear_extrude(height = cutout_height) {
+            scale([25.4, 25.4, 1]) {
+                import(dxf_file_path);
+            }
+        }
+    }
+}
 // Draw the base with holes
 gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew);
