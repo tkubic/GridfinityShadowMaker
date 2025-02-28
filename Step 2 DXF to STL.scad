@@ -42,9 +42,9 @@ slot_rotation = 90; // 10
 cut_depth = 10; // 1
 
 /* [Label Cutout] */
-include_cutout = true; // true or false
+include_cutout = false; // true or false
 cutout_height = 1.8;
-include_label = true; // true or false
+include_label = false; // true or false
 label_height = 11; // 1
 label_width = 80; // 5
 label_thickness = 4;
