@@ -41,14 +41,23 @@ slot_rotation = 90; // 10
 // Variable for cut depth
 cut_depth = 10; // 1
 
-/* [Cutout] */
-// Checkbox to include or exclude the cutout
+/* [Label Cutout] */
 include_cutout = true; // true or false
-// Variable for cutout height, default is 1.8
-cutout_height = 1.8; // 1.8
+cutout_height = 1.8;
+include_label = true; // true or false
+label_height = 11; // 1
+label_width = 80; // 5
+label_thickness = 4;
+label_clearance = 0.1; //
+label_position_x = 0; // 10
+label_position_y = 0; // 10
 
+text_thickness = 0.6; // height of the text in mm
+text_size = 9; // size of the text
+input_text_value = "Custom Text"; // Input text value
 
 /* [Hidden] */
+text_font = "Arial Rounded MT Bold:style=Regular"; 
 $fa = 8;
 $fs = 0.25; // .01
 // number of X Divisions (set to zero to have solid bin)
@@ -127,9 +136,15 @@ difference() {
         finger_slot(slot_width, start_positions[i], slot_rotation);
     }
 
-
+    // Add label slot if include_label is true
+    if (include_label) {
+        translate([0+label_position_x, - gridy*42/2+ label_height/2+5+label_position_y, gridz*7]) {
+            cube([label_width+label_clearance, label_height+label_clearance, label_thickness], center = true);
+        }
+    }
 }
-// Conditionally extrude the DXF at x=0 y=gridy*1.5*42+5
+
+// Conditionally extrude the DXF at x=0 y=gridy*42+5
 if (include_cutout) {
     translate([0, gridy*42+5, 0]) {
         linear_extrude(height = cutout_height) {
@@ -139,5 +154,22 @@ if (include_cutout) {
         }
     }
 }
+
+// Conditionally extrude the label at x=0 y=-gridy*42+5
+if (include_label) {
+    // Adjust the position of the label based on gridy
+    translate([0, -gridy*42/2-5-label_height/2, label_thickness/2]) {
+        union() {
+            cube([label_width, label_height, label_thickness], center = true);
+            // Add text on top of the label
+            translate([0, 0,label_thickness/2]) {
+                linear_extrude(height = text_thickness) {
+                    text(input_text_value, size = text_size, font = text_font, halign = "center", valign = "center");
+                }
+            }
+        }
+    }
+}
+
 // Draw the base with holes
 gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew);
