@@ -11,11 +11,11 @@ use <src/core/gridfinity-rebuilt-holes.scad>
 dxf_file_path = "DXF/example.dxf";
 
 /* [DXF Position] */
-// Adjust x and y of the DXF
+// Array to adjust the x and y position of the DXF file
 dxf_position = [0, 0]; // [x, y]
 
 // [DXF Rotation]
-// Rotate the DXF
+// Variable to adjust the rotation of the DXF file
 dxf_rotation = 0; // Rotation angle in degrees
 
 /* [General Settings] */
@@ -41,8 +41,23 @@ slot_rotation = 90; // 10
 // Variable for cut depth
 cut_depth = 10; // 1
 
+/* [Label Cutout] */
+include_cutout = false; // true or false
+cutout_height = 1.8;
+include_label = false; // true or false
+label_height = 11; // 1
+label_width = 80; // 5
+label_thickness = 4;
+label_clearance = 0.1; //
+label_position_x = 0; // 10
+label_position_y = 0; // 10
+
+text_thickness = 0.6; // height of the text in mm
+text_size = 9; // size of the text
+input_text_value = "Custom Text"; // Input text value
 
 /* [Hidden] */
+text_font = "Arial Rounded MT Bold:style=Regular"; 
 $fa = 8;
 $fs = 0.25; // .01
 // number of X Divisions (set to zero to have solid bin)
@@ -85,7 +100,11 @@ enable_zsnap = false;
 // Function to create the finger slot
 module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     rotate([0, 0, rotation]) {
-        translate([start_pos - width / 2, -250, gridz*7-cut_depth+1]) { // Start the cut at 21mm above the Z-axis
+        translate([
+            start_pos - width / 2, 
+            -250, 
+            gridz*7-cut_depth+1 + (include_cutout ? cutout_height : 0) // Add cutout_height if include_cutout is true
+        ]) { 
             cube([width, 500, gridz * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
         }
     }
@@ -115,6 +134,40 @@ difference() {
     // Add the finger slots
     for (i = [0 : num_slots - 1]) {
         finger_slot(slot_width, start_positions[i], slot_rotation);
+    }
+
+    // Add label slot if include_label is true
+    if (include_label) {
+        translate([0+label_position_x, - gridy*42/2+ label_height/2+5+label_position_y, gridz*7]) {
+            cube([label_width+label_clearance, label_height+label_clearance, label_thickness], center = true);
+        }
+    }
+}
+
+// Conditionally extrude the DXF at x=0 y=gridy*42+5
+if (include_cutout) {
+    translate([0, gridy*42+5, 0]) {
+        linear_extrude(height = cutout_height) {
+            scale([25.4, 25.4, 1]) {
+                import(dxf_file_path);
+            }
+        }
+    }
+}
+
+// Conditionally extrude the label at x=0 y=-gridy*42+5
+if (include_label) {
+    // Adjust the position of the label based on gridy
+    translate([0, -gridy*42/2-5-label_height/2, label_thickness/2]) {
+        union() {
+            cube([label_width, label_height, label_thickness], center = true);
+            // Add text on top of the label
+            translate([0, 0,label_thickness/2]) {
+                linear_extrude(height = text_thickness) {
+                    text(input_text_value, size = text_size, font = text_font, halign = "center", valign = "center");
+                }
+            }
+        }
     }
 }
 
