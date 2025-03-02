@@ -5,6 +5,8 @@ import cv2
 import traceback
 from PIL import Image
 import threading
+import os
+from datetime import datetime
 
 def create_main_window():
     MainWindow = QtWidgets.QMainWindow()
@@ -16,7 +18,7 @@ def create_main_window():
     
     return (MainWindow, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
-            ui.resolution_entry, ui.console_text, ui.comboBox, ui.camera_pushButton)
+            ui.resolution_entry, ui.console_text, ui.comboBox, ui.camera_pushButton, ui.image_name)
 
 def detect_cameras(max_cameras=10):
     index = 0
@@ -42,7 +44,7 @@ def populate_camera_comboBox(comboBox):
 def main():
     global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text, image
     app = QtWidgets.QApplication([])
-    window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text, comboBox, camera_pushButton = create_main_window()
+    window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text, comboBox, camera_pushButton, image_name_input = create_main_window()
     
     # Detect connected USB cameras in a separate thread
     threading.Thread(target=populate_camera_comboBox, args=(comboBox,)).start()
@@ -77,7 +79,15 @@ def main():
                 console_text.setText("Failed to capture image from camera.")
                 return
             image = frame
-            file_name = "captured_image"  # Set a default file name for captured images
+            image_name = image_name_input.text().strip()
+            if not image_name:
+                image_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            file_name = image_name
+            # Change image_path to the Pictures folder in the same relative path
+            image_path = os.path.join(os.path.dirname(__file__), "Pictures", f"{image_name}.png")
+            os.makedirs(os.path.dirname(image_path), exist_ok=True)
+            cv2.imwrite(image_path, image)
+            console_text.setText(f"Captured image saved as: {image_path}")
             display_image_on_canvas(image, canvas, 1, "Captured")
             process_image()  # Automatically run process_image after capturing the image
         except Exception as e:

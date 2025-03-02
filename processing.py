@@ -11,7 +11,7 @@ from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
 from ui import Ui_MainWindow  # Import Ui_MainWindow
 
-temp_scad_file_path = None  # Declare temp_scad_file_path as a global variable
+scad_file_path = None  # Declare scad_file_path as a global variable
 
 def get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry):
     global offset, token, resolution
@@ -201,9 +201,9 @@ def select_image(console_text):
 
 def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name):
     try:
-        global temp_scad_file_path  # Use the global variable to keep track of the temp file
-        scad_file_path = "Step 2 DXF to STL.scad"
-        with open(scad_file_path, 'r') as file:
+        global scad_file_path  # Use the global variable to keep track of the SCAD file
+        scad_template_path = "Step 2 DXF to STL.scad"
+        with open(scad_template_path, 'r') as file:
             scad_content = file.read()
         
         # Use forward slashes for the file path
@@ -218,32 +218,29 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         updated_scad_content = updated_scad_content.replace('gridy = 2;', f'gridy = {gridy_size};')
         updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
+        updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-utility.scad>', 'use <../src/core/gridfinity-rebuilt-utility.scad>')
+        updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-holes.scad>', 'use <../src/core/gridfinity-rebuilt-holes.scad>')
         
-        # Delete the previous temporary SCAD file if it exists
-        if temp_scad_file_path and os.path.exists(temp_scad_file_path):
-            os.remove(temp_scad_file_path)
-        
-        # Create a new temporary SCAD file with the same name as the picture
+        # Save the SCAD file in the "Pictures" folder within the same directory as the script
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        temp_scad_file_path = os.path.join(script_directory, f"{file_name}.scad")
-        with open(temp_scad_file_path, 'w') as temp_scad_file:
-            temp_scad_file.write(updated_scad_content)
+        pictures_directory = os.path.join(script_directory, "Pictures")
+        os.makedirs(pictures_directory, exist_ok=True)
+        scad_file_path = os.path.join(pictures_directory, f"{file_name}.scad")
+        with open(scad_file_path, 'w') as scad_file:
+            scad_file.write(updated_scad_content)
         
         # Path to the OpenSCAD executable
         openscad_executable = "C:/Program Files/OpenSCAD/openscad.exe"
         
-        # Open the temporary SCAD file with OpenSCAD
-        subprocess.Popen([openscad_executable, temp_scad_file_path])
+        # Open the SCAD file with OpenSCAD
+        subprocess.Popen([openscad_executable, scad_file_path])
     except Exception as e:
         console_text.setText(f"Error importing to OpenSCAD: {str(e)}")
         print(traceback.format_exc())
 
 def exit_application(console_text):
     try:
-        global temp_scad_file_path  # Use the global variable to keep track of the temp file
-        # Delete the temporary SCAD file if it exists
-        if temp_scad_file_path and os.path.exists(temp_scad_file_path):
-            os.remove(temp_scad_file_path)
+        global scad_file_path  # Use the global variable to keep track of the SCAD file
         QtWidgets.QApplication.quit()
     except Exception as e:
         console_text.setText(f"Error exiting application: {str(e)}")
