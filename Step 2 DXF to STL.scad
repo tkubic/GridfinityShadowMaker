@@ -56,6 +56,12 @@ text_thickness = 0.6; // height of the text in mm
 text_size = 9; // size of the text
 input_text_value = "Custom Text"; // Input text value
 
+// Label Rotation
+label_rotation = 0;
+
+// Label Position Options
+label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
+
 /* [Hidden] */
 text_font = "Arial Rounded MT Bold:style=Regular"; 
 $fa = 8;
@@ -103,8 +109,7 @@ module finger_slot(width = 80, start_pos = 0, rotation = 0) {
         translate([
             start_pos - width / 2, 
             -250, 
-            gridz*7-cut_depth+1 + (include_cutout ? cutout_height : 0) // Add cutout_height if include_cutout is true
-        ]) { 
+            gridz*7-cut_depth+1]) { 
             cube([width, 500, gridz * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
         }
     }
@@ -121,9 +126,9 @@ difference() {
     }
 
     // Position, rotate, and extrude the DXF shape to perform the cut
-    translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth]) { // Use the array to adjust the x and y position
+    translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) { // Use the array to adjust the x and y position
         rotate([0, 0, dxf_rotation]) { // Rotate the DXF file
-            linear_extrude(height = cut_depth+1) { // Cut downward by the variable cut_depth
+            linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) { // Cut downward by the variable cut_depth
                 scale([25.4, 25.4, 1]) { // Scale from inches to mm
                     import(dxf_file_path);
                 }
@@ -138,8 +143,30 @@ difference() {
 
     // Add label slot if include_label is true
     if (include_label) {
-        translate([0+label_position_x, - gridy*42/2+ label_height/2+5+label_position_y, gridz*7]) {
-            cube([label_width+label_clearance, label_height+label_clearance, label_thickness], center = true);
+        if (label_position_option == "bottom") {
+            translate([0 + label_position_x, -gridy * 42 / 2 + label_height / 2 + 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                rotate([0, 0, label_rotation]) {
+                    cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
+                }
+            }
+        } else if (label_position_option == "top") {
+            translate([0 + label_position_x, gridy * 42 / 2 - label_height / 2 - 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                rotate([0, 0, label_rotation]) {
+                    cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
+                }
+            }
+        } else if (label_position_option == "right") {
+            translate([gridx * 42 / 2 - label_height / 2 - 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                rotate([0, 0, label_rotation]) {
+                    cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
+                }
+            }
+        } else if (label_position_option == "left") {
+            translate([-gridx * 42 / 2 + label_height / 2 + 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                rotate([0, 0, label_rotation]) {
+                    cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
+                }
+            }
         }
     }
 }
