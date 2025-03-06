@@ -182,6 +182,7 @@ if (include_cutout) {
     }
 }
 
+render(convexity = 2)
 // Conditionally extrude the label at x=0 y=-gridy*42+5
 if (include_label) {
     // Adjust the position of the label based on gridy
