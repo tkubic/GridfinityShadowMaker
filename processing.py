@@ -50,12 +50,13 @@ def find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, res
         display_image_on_canvas(thresh, canvas, 2, "Traced")
         
         contours = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
-        display_contours(image, contours, canvas, 2, "Traced", (0, 255, 0))  # Green color for traced image
 
         max_circularity_contour, max_circularity = find_max_circularity_contour(contours)
         if max_circularity_contour is not None:
             diameter = calculate_diameter(max_circularity_contour)
             console_text.setText(f"Circle with Greatest Circularity - Diameter: {diameter}, Circularity: {max_circularity}")
+            filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_circularity_contour)]
+            display_contours(image, filtered_contours, canvas, 2, "Traced", (0, 255, 0))  # Green color for traced image
         else:
             console_text.setText("No circle with sufficient circularity found.")
         return diameter, threshold_input
