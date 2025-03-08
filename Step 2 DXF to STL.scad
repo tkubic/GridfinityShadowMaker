@@ -8,7 +8,7 @@ use <src/core/gridfinity-rebuilt-holes.scad>
 // ===== IMPLEMENTATION ===== //
 /* [DXF file path] */
 // Define a variable for the DXF file path 
-dxf_file_path = "DXF/example.dxf";
+dxf_file_path = "examples/example.dxf";
 
 /* [DXF Position] */
 // Array to adjust the x and y position of the DXF file
@@ -199,5 +199,6 @@ if (include_label) {
     }
 }
 
+render(convexity = 2)
 // Draw the base with holes
 gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew);

@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtGui
-from ui import Ui_MainWindow
-from processing import find_diameter, find_contours, save_contours_as_dxf, select_image, import_to_openscad, exit_application, clear_canvas, create_main_window, display_image_on_canvas
+from src.ui import Ui_MainWindow # type: ignore
+from src.processing import find_diameter, find_contours, save_contours_as_dxf, select_image, import_to_openscad, exit_application, clear_canvas, create_main_window, display_image_on_canvas # type: ignore
 import cv2
 import traceback
 from PIL import Image
@@ -106,7 +106,7 @@ def main():
             if diameter is None or threshold_input is None:
                 return  # Return to main loop if the user selects "no"
             contours, offset_image = find_contours(image, diameter, threshold_input, canvas, console_text)
-            dxf_path, gridx_size, gridy_size = save_contours_as_dxf(contours, file_name, 2.005 / diameter, console_text)
+            dxf_path, gridx_size, gridy_size = save_contours_as_dxf(contours, file_name, float(token_entry.text()) / diameter, console_text)
             console_text.setText(f"Processing image\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
             import_button.setEnabled(True)
             import_button.dxf_path = dxf_path
