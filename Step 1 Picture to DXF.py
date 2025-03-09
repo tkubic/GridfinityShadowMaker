@@ -63,6 +63,15 @@ def main():
                 console_text.setText("Failed to load image.")
                 return
             display_image_on_canvas(image, canvas, 1, "Original")
+            
+            # Check if the file is in the "Design Files" folder
+            design_files_folder = os.path.join(os.path.dirname(__file__), "Design Files")
+            os.makedirs(design_files_folder, exist_ok=True)
+            design_file_path = os.path.join(design_files_folder, os.path.basename(input_image_path))
+            if not os.path.exists(design_file_path):
+                cv2.imwrite(design_file_path, image)
+                console_text.setText(f"Copied image to: {design_file_path}")
+            
             process_image()  # Automatically run process_image after loading the image
         except Exception as e:
             console_text.setText(f"Error loading image: {str(e)}")
@@ -73,6 +82,11 @@ def main():
         try:
             camera_index = comboBox.currentIndex()
             cap = cv2.VideoCapture(camera_index)
+            
+            # Automatically set camera settings
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)  # Enable auto exposure
+            cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.5)  # Set brightness to a middle value
+            
             ret, frame = cap.read()
             cap.release()
             if not ret:

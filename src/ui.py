@@ -251,5 +251,5 @@ class Ui_MainWindow(object):
         self.token_entry.setText(_translate("MainWindow", "2.000"))
         self.label_token.setText(_translate("MainWindow", "Token Size (inches):"))
         self.resolution_entry.setText(_translate("MainWindow", "10"))
-        self.threshold_entry.setText(_translate("MainWindow", "145"))
+        self.threshold_entry.setText(_translate("MainWindow", "110"))
         self.exit_button.setText(_translate("MainWindow", "Exit"))

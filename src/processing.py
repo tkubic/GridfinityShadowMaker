@@ -15,7 +15,7 @@ scad_file_path = None  # Declare scad_file_path as a global variable
 
 def get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry):
     global offset, token, resolution
-    threshold_input = validate_input(threshold_entry.text(), 145, 0, 255)
+    threshold_input = validate_input(threshold_entry.text(), 110, 0, 255)
     offset = validate_input(offset_entry.text(), 0.1)
     token = validate_input(token_entry.text(), 2.000)
     resolution = validate_input(resolution_entry.text(), 10)
@@ -115,7 +115,7 @@ def find_contours(image, diameter, threshold_input, canvas, console_text):
 
         max_p2d_contour, max_p2d_ratio = find_max_p2d_ratio_contour(contours)
         filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_p2d_contour)]
-        display_contours(image, filtered_contours, canvas, 3, "Filtered Contours", (255, 0, 0))  # Blue color for filtered contours
+        display_contours(image, filtered_contours, canvas, 3, "Offset", (255, 0, 0))  # Blue color for filtered contours
 
         if max_p2d_contour is not None:
             diameter = calculate_diameter(max_p2d_contour)
