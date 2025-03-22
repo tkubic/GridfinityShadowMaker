@@ -18,36 +18,12 @@ def create_main_window():
     
     return (MainWindow, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
-            ui.resolution_entry, ui.console_text, ui.comboBox, ui.camera_pushButton, ui.image_name)
-
-def detect_cameras(max_cameras=10):
-    index = 0
-    arr = []
-    while index < max_cameras:
-        cap = cv2.VideoCapture(index)
-        if not cap.read()[0]:
-            break
-        else:
-            arr.append(f"USB Camera {index}")
-        cap.release()
-        index += 1
-    return arr
-
-def populate_camera_comboBox(comboBox):
-    cameras = detect_cameras()
-    comboBox.clear()
-    if cameras:
-        comboBox.addItems(cameras)
-    else:
-        comboBox.addItem("No USB Camera Detected")
+            ui.resolution_entry, ui.console_text)
 
 def main():
     global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text, image
     app = QtWidgets.QApplication([])
-    window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text, comboBox, camera_pushButton, image_name_input = create_main_window()
-    
-    # Detect connected USB cameras in a separate thread
-    threading.Thread(target=populate_camera_comboBox, args=(comboBox,)).start()
+    window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text = create_main_window()
 
     def load_image():
         global input_image_path, file_name, image
@@ -77,37 +53,6 @@ def main():
             console_text.setText(f"Error loading image: {str(e)}")
             print(traceback.format_exc())
 
-    def capture_image():
-        global image, file_name
-        try:
-            camera_index = comboBox.currentIndex()
-            cap = cv2.VideoCapture(camera_index)
-            
-            # Automatically set camera settings
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)  # Enable auto exposure
-            cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.5)  # Set brightness to a middle value
-            
-            ret, frame = cap.read()
-            cap.release()
-            if not ret:
-                console_text.setText("Failed to capture image from camera.")
-                return
-            image = frame
-            image_name = image_name_input.text().strip()
-            if not image_name:
-                image_name = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            file_name = image_name
-            # Change image_path to the Pictures folder in the same relative path
-            image_path = os.path.join(os.path.dirname(__file__), "Pictures", f"{image_name}.png")
-            os.makedirs(os.path.dirname(image_path), exist_ok=True)
-            cv2.imwrite(image_path, image)
-            console_text.setText(f"Captured image saved as: {image_path}")
-            display_image_on_canvas(image, canvas, 1, "Captured")
-            process_image()  # Automatically run process_image after capturing the image
-        except Exception as e:
-            console_text.setText(f"Error capturing image: {str(e)}")
-            print(traceback.format_exc())
-
     def process_image():
         global image
         if image is None:
@@ -133,7 +78,6 @@ def main():
 
     load_button.clicked.connect(load_image)
     process_button.clicked.connect(process_image)
-    camera_pushButton.clicked.connect(capture_image)
     import_button.clicked.connect(lambda: import_to_openscad(import_button.dxf_path, import_button.gridx_size, import_button.gridy_size, console_text, file_name))
     exit_button.clicked.connect(lambda: exit_application(console_text))
     
