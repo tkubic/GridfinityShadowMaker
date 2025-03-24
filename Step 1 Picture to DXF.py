@@ -7,6 +7,7 @@ from PIL import Image
 import threading
 import os
 from datetime import datetime
+#from src.undistort_image import load_calibration_data, undistort_image  # Import necessary functions
 
 def create_main_window():
     MainWindow = QtWidgets.QMainWindow()
@@ -21,6 +22,7 @@ def create_main_window():
             ui.resolution_entry, ui.console_text)
 
 def main():
+    CALIBRATION_FILE = '/src/calibration_data.pkl'
     global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text, image
     app = QtWidgets.QApplication([])
     window, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text = create_main_window()
@@ -31,13 +33,28 @@ def main():
             clear_canvas(canvas)
             input_image_path, file_name = select_image(console_text)
             if not input_image_path:
-                console_text.setText("No image selected. Exiting.")
+                print("No image selected. Exiting.")  # Changed from console_text
                 return
-            console_text.setText(f"Loaded image: {input_image_path}")
+            print(f"Loaded image: {input_image_path}")  # Changed from console_text
             image = cv2.imread(input_image_path)
             if image is None:
-                console_text.setText("Failed to load image.")
+                print("Failed to load image.")  # Changed from console_text
                 return
+            
+            # # Attempt to load calibration data and undistort the image
+            # calibration_file = os.path.join(os.path.dirname(__file__), "src", "calibration_data.pkl")
+            # mtx, dist = load_calibration_data(calibration_file)
+            # if mtx is not None and dist is not None:
+            #     print("Calibration data loaded. Undistorting image...")  # Changed from console_text
+            #     undistorted_image = undistort_image(image, mtx, dist)
+            #     if undistorted_image is None or undistorted_image.size == 0:
+            #         print("Undistorted image is empty. Using the original image.")  # Changed from console_text
+            #     else:
+            #         image = undistorted_image
+            #         print("Image undistorted successfully.")  # Changed from console_text
+            # else:
+            #     print("Calibration data not found. Proceeding with original image.")  # Changed from console_text
+            
             display_image_on_canvas(image, canvas, 1, "Original")
             
             # Check if the file is in the "Design Files" folder
