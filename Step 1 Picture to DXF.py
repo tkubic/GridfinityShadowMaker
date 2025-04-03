@@ -17,6 +17,8 @@ def create_main_window():
     canvas = ui.canvas
     canvas.setScene(QtWidgets.QGraphicsScene())
     
+    ui.console_text.setText("Input Project Name then Load Image")  # Set default console text
+    
     return (MainWindow, ui, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
             ui.resolution_entry, ui.console_text)
