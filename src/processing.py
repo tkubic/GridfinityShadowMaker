@@ -129,7 +129,15 @@ def find_contours(image, diameter, threshold_input, canvas, console_text):
         print(traceback.format_exc())
         return None, None
 
-def save_contours_as_dxf(contours, file_name, scale_factor, console_text):
+def save_dxf_file(doc, file_name, folder_name):
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+    design_files_directory = os.path.join(script_directory, "..", folder_name)
+    os.makedirs(design_files_directory, exist_ok=True)
+    output_path = os.path.join(design_files_directory, file_name + ".dxf")
+    doc.saveas(output_path)
+    return file_name + ".dxf"
+
+def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder_name):
     try:
         max_p2d_contour, max_p2d_ratio = find_max_p2d_ratio_contour(contours)
         if max_p2d_contour is None:
@@ -157,7 +165,7 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text):
                 points.append((points[0][0], points[0][1]))
             polyline = msp.add_lwpolyline(points)
             
-        output_path = save_dxf_file(doc, file_name)
+        output_path = save_dxf_file(doc, file_name, folder_name)
         gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
         pyperclip.copy(output_path)
         console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
@@ -177,14 +185,6 @@ def calculate_grid_size(contours, scale_factor):
     gridx_size = math.ceil(y_size / 42 * scale_factor * 25.4)
     return gridx_size, gridy_size
 
-def save_dxf_file(doc, file_name):
-    script_directory = os.path.dirname(os.path.abspath(__file__))
-    design_files_directory = os.path.join(script_directory, "..", "Design Files")
-    os.makedirs(design_files_directory, exist_ok=True)
-    output_path = os.path.join(design_files_directory, file_name + ".dxf")
-    doc.saveas(output_path)
-    return file_name + ".dxf"
-
 def select_image(console_text):
     try:
         file_dialog = QtWidgets.QFileDialog()
@@ -202,7 +202,7 @@ def select_image(console_text):
         print(traceback.format_exc())
         return None, None
 
-def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name):
+def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name):
     try:
         global scad_file_path  # Use the global variable to keep track of the SCAD file
         scad_template_path = os.path.join(os.path.dirname(__file__), "..", "Step 2 DXF to STL.scad")
@@ -224,9 +224,9 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-utility.scad>', 'use <../src/core/gridfinity-rebuilt-utility.scad>')
         updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-holes.scad>', 'use <../src/core/gridfinity-rebuilt-holes.scad>')
         
-        # Save the SCAD file in the "Design Files" folder within the same directory as the script
+        # Save the SCAD file in the folder specified by folder_name
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        design_files_directory = os.path.join(script_directory, "..", "Design Files")
+        design_files_directory = os.path.join(script_directory, "..", folder_name)
         os.makedirs(design_files_directory, exist_ok=True)
         scad_file_path = os.path.join(design_files_directory, f"{file_name}.scad")
         with open(scad_file_path, 'w') as scad_file:
