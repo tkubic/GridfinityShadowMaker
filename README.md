@@ -18,7 +18,7 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 
 ### Prerequisites
 - **Python**: Make sure you have Python installed on your PC. If not, download and install the latest version from [python.org](https://www.python.org/). Ensure to add Python to your system PATH during installation, then install the dependencies shown at the bottom of this page.
-- **OpenSCAD**: Download and install the latest version of OpenSCAD from [openscad.org](https://www.openscad.org/).
+- **OpenSCAD**: Download and install the latest nightly version of OpenSCAD from [OpenSCAD Nightly Builds](https://openscad.org/downloads.html#snapshots).
 - **OrcaSlicer or Bambu Studio**: Download and install either OrcaSlicer from [OrcaSlicer releases](https://github.com/SoftFever/OrcaSlicer/releases) or Bambu Studio from [Bambu Studio](https://bambulab.com/en/download/studio).
 
 ### Preparing Your Photos

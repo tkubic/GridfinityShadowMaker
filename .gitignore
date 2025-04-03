@@ -1,3 +1,6 @@
 *.pyc
 *.pyc
 src/__pycache__/ui.cpython-313.pyc
+*.pyc
+src/__pycache__/processing.cpython-313.pyc
+*.pyc
