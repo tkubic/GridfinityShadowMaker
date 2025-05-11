@@ -7,7 +7,7 @@ use <src/core/gridfinity-rebuilt-holes.scad>
 
 // ===== IMPLEMENTATION ===== //
 /* [DXF file path] */
-// Define a variable for the DXF file path 
+// Define a variable for the DXF file path
 dxf_file_path = "examples/example.dxf";
 
 /* [DXF Position] */
@@ -32,11 +32,16 @@ style_lip = 1; //[0: Regular lip, 1:remove lip subtractively]
 num_slots = 1; //[0:1:4] //.5
 // Width of each slot
 slot_width = 40; // 10
+// Radius of the rounded ends of the slot
+slot_radius = 10; // Adjust as needed
+// Vertical offset of the finger slot from the top of the DXF cut
+slot_vertical_offset = 0; // Adjust this to fine-tune the vertical position
+// Depth of the finger slot (how far it extends downwards)
+slot_depth = 15; // Adjust as needed
 // Array of start positions relative to the x-axis
 start_positions = [0, -50, 100, 0]; // .1
 // Rotation angle of the slots
 slot_rotation = 90; // 10
-
 /* [Cut Depth] */
 // Variable for cut depth
 cut_depth = 10; // 1
@@ -63,7 +68,7 @@ label_rotation = 0;
 label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 
 /* [Hidden] */
-text_font = "Arial Rounded MT Bold:style=Regular"; 
+text_font = "Arial Rounded MT Bold:style=Regular";
 $fa = 8;
 $fs = 0.25; // .01
 // number of X Divisions (set to zero to have solid bin)
@@ -103,14 +108,23 @@ gridz_define = 0;
 height_internal = 0;
 enable_zsnap = false;
 
-// Function to create the finger slot
-module finger_slot(width = 80, start_pos = 0, rotation = 0) {
-    rotate([0, 0, rotation]) {
-        translate([
-            start_pos - width / 2, 
-            -250, 
-            gridz*7-cut_depth+1]) { 
-            cube([width, 500, gridz * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
+// Function to create a finger slot with a rounded bottom
+module rounded_finger_slot(width = 80, radius = 10, depth = 15, start_pos = 0, rotation = 0, vertical_offset = 0) {
+    translate([start_pos, 0, (gridz * 7 - (include_cutout ? cutout_height : 0)) - vertical_offset - depth + radius + 0.01]) {
+        rotate([0, 0, rotation]) {
+            hull() {
+                // Bottom half-cylinder (rounded part)
+                translate([-width/2 + radius, 0, 0]) cylinder(r = radius, h = 0.01, center = false, $fn = 32);
+                translate([width/2 - radius, 0, 0]) cylinder(r = radius, h = 0.01, center = false, $fn = 32);
+
+                // Top flat part (approximated with short cylinders)
+                translate([-width/2 + radius, 0, depth - 2 * radius]) cylinder(r = radius, h = 0.01, center = false, $fn = 32);
+                translate([width/2 - radius, 0, depth - 2 * radius]) cylinder(r = radius, h = 0.01, center = false, $fn = 32);
+
+                // Connecting cylinders (sides)
+                translate([-width/2 + radius, 0, 0]) cylinder(r = radius, h = depth - radius, center = false, $fn = 32);
+                translate([width/2 - radius, 0, 0]) cylinder(r = radius, h = depth - radius, center = false, $fn = 32);
+            }
         }
     }
 }
@@ -136,9 +150,31 @@ difference() {
         }
     }
 
-    // Add the finger slots
+    // Add the rounded finger slots with controlled depth and vertical positioning
     for (i = [0 : num_slots - 1]) {
-        finger_slot(slot_width, start_positions[i], slot_rotation);
+        rounded_finger_slot(slot_width, slot_radius, slot_depth, start_positions[i], slot_rotation, slot_vertical_offset);
+    }
+
+    // Create rounding elements at the intersection (example: a torus section)
+    if (include_cutout && num_slots > 0) {
+        for (i = [0 : num_slots - 1]) {
+            // Rounding at one side of the slot
+            translate([start_positions[i] - slot_width/2 + rounding_radius, 0, (gridz * 7 - cutout_height) - rounding_radius]) {
+                rotate([90, 0, slot_rotation])
+                linear_extrude(height = rounding_radius)
+                offset(r = -0.1)
+                offset(delta = rounding_radius)
+                circle(r = 1, $fn = 16);
+            }
+            // Rounding at the other side of the slot
+            translate([start_positions[i] + slot_width/2 - rounding_radius, 0, (gridz * 7 - cutout_height) - rounding_radius]) {
+                rotate([90, 0, slot_rotation])
+                linear_extrude(height = rounding_radius)
+                offset(r = -0.1)
+                offset(delta = rounding_radius)
+                circle(r = 1, $fn = 16);
+            }
+        }
     }
 
     // Add label slot if include_label is true
