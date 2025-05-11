@@ -18,34 +18,31 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 
 ## Step-by-Step Guide
 
-### Step 1: Taking and Editing Pictures
+### Step 1: Take and Edit Pictures
 1. **Take Photos**: Use a lightboard to take photos of your tools or components. Best images can be taken in an enclosure or dark room. Ensure to include a 3" token in the photo for scale reference (you can 3d print the token found in the main folder folder). Based on your ambient lighting conditions, you will need to fine-tune your Threshold Input value.
 2. **Example Images**: An example image taken on a lightbox is located in the `examples` folder. You can use these to learn the workflow or debug problems.
 3. **Crop Photos**: Ensure the borders of the photos are all white.
 4. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline. The basic Paint application is most popular. Black filled shapes do well to ensure crisp, high contrasting edges are found
 
-### Step 2: Processing the Image to Trace the Objects
+### Step 2: Trace the Objects
 1. Run the provided Python script to create your OpenSCAD files.
 2. Enter a project name. This will save all design files to a folder of that name to aide in documenting your work.
 3. General description of settings:
    - **Threshold Input**: This helps with edge detection. Images should have high contrast of edges to background
    - **Offset**: offset in inches from traced image
    - **Token Size**: used for a scale reference
-   - 
-### Step 3: Creating the 3D Model
+     
+### Step 3: Create the 3D Model
 1. The OpenSCAD file can be opened directly from the Step 1 Python user interface.
 2. In the customizer, you can modify various settings:
-   - **General Settings**:
-     - Adjust `gridx`, `gridy`, and `gridz` to match the size of your desired shadow board.
-   - **Finger Slot Options**:
-     - Customize the size, angle, and position of the finger slots.
-   - **Cut Depth**:
-     - Set the depth for the cuts.
+   - **General Settings**: Adjust `gridx`, `gridy`, and `gridz` to match the size of your desired shadow board.
+   - **Finger Slot Options**: Customize the size, angle, and position of the finger slots.
+   - **Cut Depth**: Set the depth for the cuts.
 3. **Render and Export**:
    - Click the "Render" button (F6) to render the model.
    - Once rendered, click "Export" to save the STL file.
 
-### Step 4: Coloring, adding Text, Slicing and Printing
+### Step 4: Color, add Text, and Print
 1. Open **OrcaSlicer** or **Bambu Studio** to generate the gcode for the printer. A .3mf template is available in the repository with preferred printer settings.
 2. Add text (hotkey "t"). Preferred Font = "Arial Rounded MT Bold", Height = 12mm. Smaller text height must use smaller nozzles on the printer.
 3. Use the color painting feature (hotkey "n") to fill the outline with a color that pops, like red. Standard colors used are:
