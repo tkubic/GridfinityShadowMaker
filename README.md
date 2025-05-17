@@ -1,4 +1,4 @@
-# Gridfinity-ShadowBoards
+# Gridfinity Shadow Maker
 
 This template is used to create Gridfinity shadow boards using Python scripts and OpenSCAD.
 
