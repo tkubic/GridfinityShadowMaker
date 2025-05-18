@@ -51,7 +51,9 @@ This template is used to create Gridfinity shadow boards using Python scripts an
    - **White** for the text/trim
 4. If large shadow boards are being created you may need to cut (hotkey "c") the board into smaller pieces. Preferred method is to use dovetails 
 
-
+## Video Tutorial 🎥
+Want a walkthrough of the process? Check out the YouTube tutorial for a step-by-step guide!
+[![Watch the tutorial](https://img.youtube.com/vi/K45Y8rKlYDY/0.jpg)](https://www.youtube.com/watch?v=K45Y8rKlYDY)
 
 ## Setting Up for the First Time
 
