@@ -6,6 +6,7 @@ import subprocess
 
 def generate_ui_file():
     subprocess.run(['pyuic5', '-o', 'ui.py', 'ui.ui'], check=True)
+    subprocess.run(['pyuic5', '-o', 'capture_image_ui.py', 'capture_image.ui'], check=True)
 
 def fix_ui_file(filepath):
     with open(filepath, 'r', encoding='utf-8') as file:
@@ -27,4 +28,5 @@ def fix_ui_file(filepath):
 if __name__ == "__main__":
     generate_ui_file()
     fix_ui_file('ui.py')
-    print("ui.py has been generated and fixed.")
+    fix_ui_file('capture_image_ui.py')
+    print("ui.py and capture_image_ui.py have been generated and fixed.")

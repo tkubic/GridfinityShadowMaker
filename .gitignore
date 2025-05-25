@@ -4,3 +4,26 @@ src/__pycache__/ui.cpython-313.pyc
 *.pyc
 src/__pycache__/processing.cpython-313.pyc
 *.pyc
+raw photos/calibration_files/undistorted_WIN_20250524_12_29_52_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_29_58_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_30_07_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_30_14_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_30_19_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_30_50_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_30_57_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_31_05_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_31_10_Pro.jpg
+raw photos/calibration_files/undistorted_WIN_20250524_12_31_20_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_29_52_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_29_58_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_30_07_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_30_14_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_30_19_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_30_50_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_30_57_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_31_05_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_31_10_Pro.jpg
+raw photos/calibration_files/WIN_20250524_12_31_20_Pro.jpg
+raw photos/calibration_files/calibration_data.pkl
+raw photos/calibration_files/camera_matrix.txt
+raw photos/calibration_files/distortion_coefficients.txt

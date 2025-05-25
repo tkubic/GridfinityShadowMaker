@@ -185,11 +185,13 @@ def calculate_grid_size(contours, scale_factor):
     gridx_size = math.ceil(y_size / 42 * scale_factor * 25.4)
     return gridx_size, gridy_size
 
-def select_image(console_text):
+def select_image(console_text, default_dir=None):
     try:
         file_dialog = QtWidgets.QFileDialog()
+        # Use default_dir if provided, otherwise use ""
+        start_dir = default_dir if default_dir is not None else ""
         file_path, _ = file_dialog.getOpenFileName(
-            None, "Select Image", "", "Image files (*.jpg;*.jpeg;*.png;*.bmp)"
+            None, "Select Image", start_dir, "Image files (*.jpg;*.jpeg;*.png;*.bmp)"
         )
         if file_path:
             print(f"Selected file: {file_path}")

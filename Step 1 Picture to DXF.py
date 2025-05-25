@@ -7,7 +7,7 @@ from PIL import Image
 import threading
 import os
 from datetime import datetime
-#from src.undistort_image import load_calibration_data, undistort_image  # Import necessary functions
+import sys
 
 def create_main_window():
     MainWindow = QtWidgets.QMainWindow()
@@ -18,6 +18,28 @@ def create_main_window():
     canvas.setScene(QtWidgets.QGraphicsScene())
     
     ui.console_text.setText("Input Project Name then Load Image")  # Set default console text
+
+    # Load defaults if available
+    defaults_path = os.path.join(os.path.dirname(__file__), "default_settings.txt")
+    if os.path.exists(defaults_path):
+        try:
+            with open(defaults_path, "r") as f:
+                lines = f.read().splitlines()
+                defaults = {}
+                for line in lines:
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        defaults[k.strip()] = v.strip()
+                if 'threshold' in defaults:
+                    ui.threshold_entry.setText(defaults['threshold'])
+                if 'offset' in defaults:
+                    ui.offset_entry.setText(defaults['offset'])
+                if 'token' in defaults:
+                    ui.token_entry.setText(defaults['token'])
+                if 'resolution' in defaults:
+                    ui.resolution_entry.setText(defaults['resolution'])
+        except Exception:
+            pass
     
     return (MainWindow, ui, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
@@ -31,6 +53,7 @@ def main():
 
     def toggle_load_button():
         load_button.setEnabled(bool(ui.lineEdit.text()))  # Enable if lineEdit has text
+        ui.captureImage.setEnabled(bool(ui.lineEdit.text()))  # Enable Capture Image button as well
 
     ui.lineEdit.textChanged.connect(toggle_load_button)  # Connect textChanged signal
     toggle_load_button()  # Initial check to set the correct state of load_button
@@ -39,32 +62,32 @@ def main():
         global input_image_path, file_name, image
         try:
             clear_canvas(canvas)
-            input_image_path, file_name = select_image(console_text)
-            if not input_image_path:
-                print("No image selected. Exiting.")  # Changed from console_text
-                return
-            print(f"Loaded image: {input_image_path}")  # Changed from console_text
-            image = cv2.imread(input_image_path)
-            if image is None:
-                print("Failed to load image.")  # Changed from console_text
-                return
-            
-            display_image_on_canvas(image, canvas, 1, "Original")
-            
             folder_name = ui.lineEdit.text().strip()  # Get folder name from lineEdit
             if not folder_name:
                 console_text.setText("Project name is empty. Please enter a valid name.")
                 return
-            
             design_files_folder = os.path.join(os.path.dirname(__file__), folder_name)
             os.makedirs(design_files_folder, exist_ok=True)
+            # Pass default directory to select_image
+            input_image_path, file_name = select_image(console_text, default_dir=design_files_folder)
+            if not input_image_path:
+                print("No image selected. Exiting.")
+                return
+            print(f"Loaded image: {input_image_path}")
+            image = cv2.imread(input_image_path)
+            if image is None:
+                print("Failed to load image.")
+                return
+
+            display_image_on_canvas(image, canvas, 1, "Original")
+
             design_file_path = os.path.join(design_files_folder, os.path.basename(input_image_path))
             if not os.path.exists(design_file_path):
                 cv2.imwrite(design_file_path, image)
                 console_text.setText(f"Copied image to: {design_file_path}")
-            
+
             process_image()  # Automatically run process_image after loading the image
-            process_button.setEnabled(True)  # Enable the process button
+            process_button.setEnabled(True)
         except Exception as e:
             console_text.setText(f"Error loading image: {str(e)}")
             print(traceback.format_exc())
@@ -96,10 +119,34 @@ def main():
             console_text.setText(f"Error processing image: {str(e)}")
             print(traceback.format_exc())
 
+    def save_defaults():
+        try:
+            defaults_path = os.path.join(os.path.dirname(__file__), "default_settings.txt")
+            with open(defaults_path, "w") as f:
+                f.write(f"threshold={threshold_entry.text()}\n")
+                f.write(f"offset={offset_entry.text()}\n")
+                f.write(f"token={token_entry.text()}\n")
+                f.write(f"resolution={resolution_entry.text()}\n")
+            console_text.setText("Defaults saved.")
+        except Exception as e:
+            console_text.setText(f"Error saving defaults: {str(e)}")
+
+    def launch_capture_image():
+        folder_name = ui.lineEdit.text().strip()
+        if not folder_name:
+            console_text.setText("Project name is empty. Please enter a valid name.")
+            return
+        project_folder = os.path.join(os.path.dirname(__file__), folder_name)
+        # Launch capture_image.py with project_folder as argument
+        import subprocess
+        subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), 'src', 'capture_image.py'), project_folder])
+
     load_button.clicked.connect(load_image)
     process_button.clicked.connect(process_image)
     import_button.clicked.connect(lambda: import_to_openscad(import_button.dxf_path, import_button.gridx_size, import_button.gridy_size, console_text, file_name, import_button.folder_name))
     exit_button.clicked.connect(lambda: exit_application(console_text))
+    ui.SaveDefault.clicked.connect(save_defaults)
+    ui.captureImage.clicked.connect(launch_capture_image)
     
     window.showMaximized()  # Show the main window in maximized view
     app.exec_()
