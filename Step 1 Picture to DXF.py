@@ -48,6 +48,12 @@ def create_main_window():
 def main():
     CALIBRATION_FILE = '/src/calibration_data.pkl'
     global threshold_entry, offset_entry, token_entry, resolution_entry, input_image_path, file_name, console_text, image
+    # Enable high DPI scaling for better text/UI scaling on Windows
+    from PyQt5 import QtCore
+    if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication([])
     window, ui, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text = create_main_window()
 

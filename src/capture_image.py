@@ -7,6 +7,8 @@ import numpy as np
 from PyQt5 import QtWidgets, QtGui, QtCore
 from capture_image_ui import Ui_Dialog
 import subprocess
+import threading
+import contextlib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 CALIBRATION_FILE = os.path.join(PROJECT_ROOT, 'raw photos', 'calibration_files', 'calibration_data.pkl')
@@ -21,6 +23,9 @@ def load_calibration_data(calibration_file):
     return data['camera_matrix'], data['distortion_coefficients']
 
 def undistort_image(img, mtx, dist):
+    # If calibration data is missing, return the raw image
+    if mtx is None or dist is None:
+        return img
     h, w = img.shape[:2]
     newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 1, (w, h))
     dst = cv2.undistort(img, mtx, dist, None, newcameramtx)
@@ -28,16 +33,58 @@ def undistort_image(img, mtx, dist):
     dst = dst[y:y+h, x:x+w]
     return dst
 
-def find_available_cameras(max_test=5):
+@contextlib.contextmanager
+def suppress_stderr():
+    """Context manager to suppress stderr (for OpenCV warnings)."""
+    import sys, os
+    stderr = sys.stderr
+    devnull = open(os.devnull, 'w')
+    sys.stderr = devnull
+    try:
+        yield
+    finally:
+        sys.stderr = stderr
+        devnull.close()
+
+def try_read_frame(cap, timeout=2.0):
+    """Try to read a frame from cap with a timeout (in seconds)."""
+    result = {'ret': False, 'frame': None}
+    def grab():
+        result['ret'], result['frame'] = cap.read()
+    t = threading.Thread(target=grab)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return False, None
+    return result['ret'], result['frame']
+
+def find_available_cameras(max_test=5, open_timeout=2.0, read_timeout=1.5):
+    """
+    Try to open each camera index up to max_test.
+    Skip indices that hang or error by using timeouts.
+    Suppress OpenCV warnings during detection.
+    """
     available = []
     for i in range(max_test):
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            ret, _ = cap.read()
-            if ret:
-                print(f"Found camera at index {i}")
-                available.append(i)
-            cap.release()
+        cap = None
+        try:
+            with suppress_stderr():
+                start_time = time.time()
+                cap = cv2.VideoCapture(i)
+                while not cap.isOpened() and (time.time() - start_time) < open_timeout:
+                    time.sleep(0.1)
+                if not cap.isOpened():
+                    continue
+                # Try to read a frame with a timeout using a thread
+                ret, _ = try_read_frame(cap, timeout=read_timeout)
+                if ret:
+                    print(f"Found camera at index {i}")
+                    available.append(i)
+        except Exception as e:
+            print(f"Camera index {i} caused an exception: {e}")
+        finally:
+            if cap is not None:
+                cap.release()
     return available
 
 def cache_camera_settings(idx, width, height):
@@ -133,6 +180,8 @@ class CaptureImageDialog(QtWidgets.QDialog):
         self.cached = load_cached_camera_settings()
         self.setWindowTitle("Capture Image")
         self.running = True
+        self.failed_frame_count = 0  # Track consecutive frame failures
+        self.max_failed_frames = 1   # Switch camera after this many failures
 
         # Connect UI signals
         self.ui.buttonCaptureImage.clicked.connect(self.capture_image)
@@ -172,9 +221,16 @@ class CaptureImageDialog(QtWidgets.QDialog):
         self.timer.start(30)
 
     def update_frame(self):
-        ret, frame = self.cap.read()
+        # Try to read a frame with a timeout
+        ret, frame = try_read_frame(self.cap, timeout=2.0)
         if not ret:
+            self.failed_frame_count += 1
+            if self.failed_frame_count >= self.max_failed_frames:
+                print("Frame grab failed or timed out, switching camera.")
+                self.switch_camera()
+                self.failed_frame_count = 0
             return
+        self.failed_frame_count = 0
         undistorted = undistort_image(frame, self.mtx, self.dist)
         # Resize for display
         display_size = (self.ui.canvasCamera.width(), self.ui.canvasCamera.height())
@@ -256,6 +312,11 @@ class CaptureImageDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.critical(self, "Error", f"Could not rename or open image: {e}")
 
 def main(project_folder=None):
+    # Enable high DPI scaling for better text/UI scaling on Windows
+    if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication(sys.argv)
     save_folder = get_save_folder(project_folder)
     dlg = CaptureImageDialog(save_folder)
