@@ -97,8 +97,8 @@ height_internal = 0;
 enable_zsnap = false;
 
 /* [Magnet Parameters] */
-magnet_diameter =10; // Diameter of the magnet holes
-magnet_depth = 5; // Depth of the magnet holes
+magnet_diameter = 10; // Diameter of the magnet holes
+magnet_height = 5; // Height of the magnet holes
 refined_holes = false;
 magnet_holes = false;
 screw_holes = false;
@@ -206,4 +206,4 @@ if (include_label) {
 
 render(convexity = 2)
 // Draw the base with holes
-gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew);
+gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew, magnet_diameter = magnet_diameter, magnet_height = magnet_height);

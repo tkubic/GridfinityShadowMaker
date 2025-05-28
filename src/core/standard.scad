@@ -1,4 +1,3 @@
-
 // lower base chamfer "radius"
 r_c1 = 0.8;
 // bottom thiccness of bin
@@ -27,10 +26,12 @@ TOLLERANCE = 0.01;
 // ****************************************
 LAYER_HEIGHT = 0.2;
 MAGNET_HEIGHT = 2;
-
-SCREW_HOLE_RADIUS = 3 / 2;
 MAGNET_HOLE_RADIUS = 6.5 / 2;
 MAGNET_HOLE_DEPTH = MAGNET_HEIGHT + (LAYER_HEIGHT * 2);
+
+SCREW_HOLE_RADIUS = 3 / 2;
+//MAGNET_HOLE_RADIUS = 6.5 / 2;
+//MAGNET_HOLE_DEPTH = MAGNET_HEIGHT + (LAYER_HEIGHT * 2);
 
 // distance of hole from side of bin
 d_hole_from_side=8;

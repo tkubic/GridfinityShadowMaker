@@ -265,7 +265,7 @@ module assert_hole_options_valid(hole_options) {
  * @pram hole_options @see bundle_hole_options
  * @param o offset Grows or shrinks the final shapes.  Similar to `scale`, but in mm.
  */
-module block_base_hole(hole_options, o=0) {
+module block_base_hole(hole_options, o=0, magnet_diameter, magnet_height) {
     assert_hole_options_valid(hole_options);
     assert(is_num(o));
 
@@ -278,12 +278,12 @@ module block_base_hole(hole_options, o=0) {
     supportless = hole_options[5];
 
     screw_radius = SCREW_HOLE_RADIUS - (o/2);
-    magnet_radius = MAGNET_HOLE_RADIUS - (o/2);
+    magnet_radius = magnet_diameter/2 - (o/2);
     magnet_inner_radius = MAGNET_HOLE_CRUSH_RIB_INNER_RADIUS - (o/2);
     screw_depth = BASE_HEIGHT - o;
     // If using supportless / printable mode, need to add additional layers, so they can be removed later.
     supportless_additional_layers = screw_hole ? 2 : 3;
-    magnet_depth = MAGNET_HOLE_DEPTH - o +
+    magnet_depth = magnet_height - o +
         (supportless ? supportless_additional_layers*LAYER_HEIGHT : 0);
 
     union() {

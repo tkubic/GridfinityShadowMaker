@@ -28,3 +28,4 @@ raw photos/calibration_files/calibration_data.pkl
 raw photos/calibration_files/camera_matrix.txt
 raw photos/calibration_files/distortion_coefficients.txt
 camera_settings_cache.pkl
+Step 2 DXF to STL.json

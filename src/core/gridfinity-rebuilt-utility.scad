@@ -222,7 +222,7 @@ module cut_move(x, y, w, h) {
  * @param grid_dimensions [length, width] of a single Gridfinity base.
  * @param thumbscrew Enable "gridfinity-refined" thumbscrew hole in the center of each base unit. This is a ISO Metric Profile, 15.0mm size, M15x1.5 designation.
  */
-module gridfinityBase(grid_size, grid_dimensions=GRID_DIMENSIONS_MM, hole_options=bundle_hole_options(), off=0, final_cut=true, only_corners=false, thumbscrew=false) {
+module gridfinityBase(grid_size, grid_dimensions=GRID_DIMENSIONS_MM, hole_options=bundle_hole_options(), off=0, final_cut=true, only_corners=false, thumbscrew=false, magnet_diameter,magnet_height) {
     assert(is_list(grid_dimensions) && len(grid_dimensions) == 2 &&
         grid_dimensions.x > 0 && grid_dimensions.y > 0);
     assert(is_list(grid_size) && len(grid_size) == 2 &&
@@ -277,13 +277,13 @@ module gridfinityBase(grid_size, grid_dimensions=GRID_DIMENSIONS_MM, hole_option
                 }
             }
 
-            _base_holes(hole_options, off, grid_size_mm);
+            _base_holes(hole_options, off, grid_size_mm, magnet_diameter, magnet_height);
             _base_preview_fix();
         }
     }
     else {
         pattern_linear(final_grid_size.x, final_grid_size.y, base_center_distance_mm.x, base_center_distance_mm.y)
-        block_base(hole_options, off, individual_base_size_mm, thumbscrew=thumbscrew);
+        block_base(hole_options, off, individual_base_size_mm, thumbscrew=thumbscrew, magnet_diameter=magnet_diameter, magnet_height=magnet_height);
     }
 }
 
@@ -406,7 +406,7 @@ module _base_thumbscrew() {
  * @param hole_options @see bundle_hole_options
  * @param offset @see block_base_hole.offset
  */
-module _base_holes(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS) {
+module _base_holes(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS, magnet_diameter, magnet_height) {
     hole_position = foreach_add(
         base_bottom_dimensions(top_dimensions)/2,
         -HOLE_DISTANCE_FROM_BOTTOM_EDGE
@@ -419,7 +419,7 @@ module _base_holes(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS) {
         i = sign(cos(a+1));
         translate([i * hole_position.x, j * hole_position.y, 0])
         rotate([0, 0, a])
-        block_base_hole(hole_options, offset);
+        block_base_hole(hole_options, offset, magnet_diameter, magnet_height);
     }
 }
 
@@ -430,7 +430,7 @@ module _base_holes(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS) {
  * @param top_dimensions [x, y] size of a single base.  Only set if deviating from the standard!
  * @param thumbscrew Enable "gridfinity-refined" thumbscrew hole in the center of each base unit. This is a ISO Metric Profile, 15.0mm size, M15x1.5 designation.
  */
-module block_base(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS, thumbscrew=false) {
+module block_base(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS, thumbscrew=false, magnet_diameter, magnet_height) {
     assert(is_list(top_dimensions) && len(top_dimensions) == 2);
     assert(is_bool(thumbscrew));
 
@@ -442,7 +442,7 @@ module block_base(hole_options, offset=0, top_dimensions=BASE_TOP_DIMENSIONS, th
         if (thumbscrew) {
             _base_thumbscrew();
         }
-        _base_holes(hole_options, offset, top_dimensions);
+        _base_holes(hole_options, offset, top_dimensions, magnet_diameter, magnet_height);
         _base_preview_fix();
     }
 }
