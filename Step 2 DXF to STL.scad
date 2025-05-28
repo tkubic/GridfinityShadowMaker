@@ -90,6 +90,15 @@ place_tab = 0;
 //style_lip = 1; //[0: Regular lip, 1:remove lip subtractively, 2: remove lip and retain height]
 scoop = 1; //[0:0.1:1]
 only_corners = false;
+
+// determine what the variable "gridz" applies to based on your use case
+gridz_define = 0;
+height_internal = 0;
+enable_zsnap = false;
+
+/* [Magnet Parameters] */
+magnet_diameter =10; // Diameter of the magnet holes
+magnet_depth = 5; // Depth of the magnet holes
 refined_holes = false;
 magnet_holes = false;
 screw_holes = false;
@@ -98,10 +107,6 @@ chamfer_holes = true;
 printable_hole_top = true;
 enable_thumbscrew = false;
 hole_options = bundle_hole_options(refined_holes, magnet_holes, screw_holes, crush_ribs, chamfer_holes, printable_hole_top);
-// determine what the variable "gridz" applies to based on your use case
-gridz_define = 0;
-height_internal = 0;
-enable_zsnap = false;
 
 // Function to create the finger slot
 module finger_slot(width = 80, start_pos = 0, rotation = 0) {
