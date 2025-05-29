@@ -84,15 +84,15 @@ enable_thumbscrew = false;
 
 /* [Magnet Parameters] */
 magnet_holes = false;
-magnet_diameter = 6; // Diameter of the magnet holes
-magnet_height = 3; // Height of the magnet holes
+magnet_diameter = 6.1; // Diameter of the magnet holes
+magnet_height = 2.9; // Height of the magnet holes
 chamfer_holes = true;
 hole_options = bundle_hole_options(refined_holes, magnet_holes, screw_holes, crush_ribs, chamfer_holes, printable_hole_top);
 
 /* [Magnet Post] */
 include_post = false; // true or false
-magnet_post_diameter = 6; // [1:0.1:30]
-magnet_post_height = 3;   // [1:0.1:13] 
+magnet_post_diameter = 6.1; // [1:0.1:30]
+magnet_post_height = 2.9;   // [1:0.1:13] 
 magnet_post_position = [0, 0]; // [x, y]
 post_cut_depth = 1; // Depth of the magnet post
 
