@@ -41,26 +41,7 @@ slot_rotation = 90; // 10
 // Variable for cut depth
 cut_depth = 10; // 1
 
-/* [Label Cutout] */
-include_cutout = false; // true or false
-cutout_height = 1.8;
-include_label = false; // true or false
-label_height = 11; // 1
-label_width = 80; // 5
-label_thickness = 4;
-label_clearance = 0.1; //
-label_position_x = 0; // 10
-label_position_y = 0; // 10
 
-text_thickness = 0.6; // height of the text in mm
-text_size = 9; // size of the text
-input_text_value = "Custom Text"; // Input text value
-
-// Label Rotation
-label_rotation = 0;
-
-// Label Position Options
-label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 
 /* [Hidden] */
 text_font = "Arial Rounded MT Bold:style=Regular"; 
@@ -95,18 +76,47 @@ only_corners = false;
 gridz_define = 0;
 height_internal = 0;
 enable_zsnap = false;
+refined_holes = false;
+crush_ribs = false;
+screw_holes = false;
+printable_hole_top = false;
+enable_thumbscrew = false;
 
 /* [Magnet Parameters] */
-magnet_diameter = 10; // Diameter of the magnet holes
-magnet_height = 5; // Height of the magnet holes
-refined_holes = false;
 magnet_holes = false;
-screw_holes = false;
-crush_ribs = true;
+magnet_diameter = 6; // Diameter of the magnet holes
+magnet_height = 3; // Height of the magnet holes
 chamfer_holes = true;
-printable_hole_top = true;
-enable_thumbscrew = false;
 hole_options = bundle_hole_options(refined_holes, magnet_holes, screw_holes, crush_ribs, chamfer_holes, printable_hole_top);
+
+/* [Magnet Post] */
+include_post = false; // true or false
+magnet_post_diameter = 6; // [1:0.1:30]
+magnet_post_height = 3;   // [1:0.1:13] 
+magnet_post_position = [0, 0]; // [x, y]
+post_cut_depth = 1; // Depth of the magnet post
+
+
+/* [Label Cutout] */
+include_cutout = false; // true or false
+cutout_height = 1.8;
+include_label = false; // true or false
+label_height = 11; // 1
+label_width = 80; // 5
+label_thickness = 4;
+label_clearance = 0.1; //
+label_position_x = 0; // 10
+label_position_y = 0; // 10
+
+text_thickness = 0.6; // height of the text in mm
+text_size = 9; // size of the text
+input_text_value = "Custom Text"; // Input text value
+
+// Label Rotation
+label_rotation = 0;
+
+// Label Position Options
+label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 
 // Function to create the finger slot
 module finger_slot(width = 80, start_pos = 0, rotation = 0) {
@@ -120,58 +130,86 @@ module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     }
 }
 
+// Outer difference to cut the post hole through everything
 difference() {
-    // Base object to cut from
-    gridfinityInit(gridx, gridy, height(gridz, gridz_define, style_lip, enable_zsnap), height_internal, sl = style_lip) {
-        if (divx > 0 && divy > 0) {
-            cutEqual(n_divx = divx, n_divy = divy, style_tab = style_tab, scoop_weight = scoop, place_tab = place_tab);
-        } else if (cdivx > 0 && cdivy > 0) {
-            cutCylinders(n_divx = cdivx, n_divy = cdivy, cylinder_diameter = cd, cylinder_height = ch, coutout_depth = c_depth, orientation = c_orientation, chamfer = c_chamfer);
+    // Main model
+    union() {
+        difference() {
+            // Base object to cut from
+            gridfinityInit(gridx, gridy, height(gridz, gridz_define, style_lip, enable_zsnap), height_internal, sl = style_lip) {
+                if (divx > 0 && divy > 0) {
+                    cutEqual(n_divx = divx, n_divy = divy, style_tab = style_tab, scoop_weight = scoop, place_tab = place_tab);
+                } else if (cdivx > 0 && cdivy > 0) {
+                    cutCylinders(n_divx = cdivx, n_divy = cdivy, cylinder_diameter = cd, cylinder_height = ch, coutout_depth = c_depth, orientation = c_orientation, chamfer = c_chamfer);
+                }
+            }
+
+            // Position, rotate, and extrude the DXF shape to perform the cut
+            translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) {
+                rotate([0, 0, dxf_rotation]) {
+                    linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) {
+                        scale([25.4, 25.4, 1]) {
+                            import(dxf_file_path);
+                        }
+                    }
+                }
+            }
+
+            // Add the finger slots
+            for (i = [0 : num_slots - 1]) {
+                finger_slot(slot_width, start_positions[i], slot_rotation);
+            }
+
+            // Add label slot if include_label is true
+            if (include_label) {
+                if (label_position_option == "bottom") {
+                    translate([0 + label_position_x, -gridy * 42 / 2 + label_height / 2 + 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                        rotate([0, 0, label_rotation]) {
+                            cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
+                        }
+                    }
+                } else if (label_position_option == "top") {
+                    translate([0 + label_position_x, gridy * 42 / 2 - label_height / 2 - 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                        rotate([0, 0, label_rotation]) {
+                            cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
+                        }
+                    }
+                } else if (label_position_option == "right") {
+                    translate([gridx * 42 / 2 - label_height / 2 - 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                        rotate([0, 0, label_rotation]) {
+                            cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
+                        }
+                    }
+                } else if (label_position_option == "left") {
+                    translate([-gridx * 42 / 2 + label_height / 2 + 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                        rotate([0, 0, label_rotation]) {
+                            cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Conditionally extrude the magnet post cylinder from z=7 to gridz*7
+        if (include_post) {
+            translate([magnet_post_position[0], magnet_post_position[1], 7]) {
+                cylinder(
+                    h = gridz*7 - 7 - post_cut_depth,
+                    r = magnet_post_diameter/2 + 3,
+                    center = false
+                );
+            }
         }
     }
 
-    // Position, rotate, and extrude the DXF shape to perform the cut
-    translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) { // Use the array to adjust the x and y position
-        rotate([0, 0, dxf_rotation]) { // Rotate the DXF file
-            linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) { // Cut downward by the variable cut_depth
-                scale([25.4, 25.4, 1]) { // Scale from inches to mm
-                    import(dxf_file_path);
-                }
-            }
-        }
-    }
-
-    // Add the finger slots
-    for (i = [0 : num_slots - 1]) {
-        finger_slot(slot_width, start_positions[i], slot_rotation);
-    }
-
-    // Add label slot if include_label is true
-    if (include_label) {
-        if (label_position_option == "bottom") {
-            translate([0 + label_position_x, -gridy * 42 / 2 + label_height / 2 + 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
-                rotate([0, 0, label_rotation]) {
-                    cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
-                }
-            }
-        } else if (label_position_option == "top") {
-            translate([0 + label_position_x, gridy * 42 / 2 - label_height / 2 - 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
-                rotate([0, 0, label_rotation]) {
-                    cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
-                }
-            }
-        } else if (label_position_option == "right") {
-            translate([gridx * 42 / 2 - label_height / 2 - 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
-                rotate([0, 0, label_rotation]) {
-                    cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
-                }
-            }
-        } else if (label_position_option == "left") {
-            translate([-gridx * 42 / 2 + label_height / 2 + 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
-                rotate([0, 0, label_rotation]) {
-                    cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
-                }
-            }
+    // Subtract cylinder at the top (cuts through everything)
+    if (include_post) {
+        translate([magnet_post_position[0], magnet_post_position[1], gridz*7 - post_cut_depth - magnet_post_height]) {
+            cylinder(
+                h = magnet_post_height + .01,
+                r = magnet_post_diameter/2,
+                center = false
+            );
         }
     }
 }
@@ -183,6 +221,28 @@ if (include_cutout) {
             scale([25.4, 25.4, 1]) {
                 import(dxf_file_path);
             }
+        }
+    }
+}
+
+// Conditionally extrude the magnet post cylinder from z=7 to gridz*7
+if (include_post) {
+    difference() {
+        // Main magnet post
+        translate([magnet_post_position[0], magnet_post_position[1], 7]) {
+            cylinder(
+                h = gridz*7 - 7 - post_cut_depth,
+                r = magnet_post_diameter/2 + 3,
+                center = false
+            );
+        }
+        // Subtract cylinder at the top
+        translate([magnet_post_position[0], magnet_post_position[1], gridz*7 - post_cut_depth - magnet_post_height]) {
+            cylinder(
+                h = magnet_post_height + .01,
+                r = magnet_post_diameter/2,
+                center = false
+            );
         }
     }
 }
