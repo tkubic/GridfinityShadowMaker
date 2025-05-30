@@ -8,6 +8,7 @@ import threading
 import os
 from datetime import datetime
 import sys
+import shutil
 
 def create_main_window():
     MainWindow = QtWidgets.QMainWindow()
@@ -74,6 +75,11 @@ def main():
                 return
             design_files_folder = os.path.join(os.path.dirname(__file__), folder_name)
             os.makedirs(design_files_folder, exist_ok=True)
+            # Copy src folder into the project folder if not already present
+            src_src = os.path.join(os.path.dirname(__file__), "src")
+            dst_src = os.path.join(design_files_folder, "src")
+            if not os.path.exists(dst_src):
+                shutil.copytree(src_src, dst_src)
             # Pass default directory to select_image
             input_image_path, file_name = select_image(console_text, default_dir=design_files_folder)
             if not input_image_path:

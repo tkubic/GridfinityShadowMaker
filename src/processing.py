@@ -223,8 +223,8 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         updated_scad_content = updated_scad_content.replace('gridy = 2;', f'gridy = {gridy_size};')
         updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
-        updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-utility.scad>', 'use <../src/core/gridfinity-rebuilt-utility.scad>')
-        updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-holes.scad>', 'use <../src/core/gridfinity-rebuilt-holes.scad>')
+        #updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-utility.scad>', 'use <../src/core/gridfinity-rebuilt-utility.scad>')
+        #updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-holes.scad>', 'use <../src/core/gridfinity-rebuilt-holes.scad>')
         
         # Save the SCAD file in the folder specified by folder_name
         script_directory = os.path.dirname(os.path.abspath(__file__))
