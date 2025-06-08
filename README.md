@@ -76,4 +76,4 @@ Download and install either OrcaSlicer from [OrcaSlicer releases](https://github
 
 
 ## Credits
-This project uses code from [kennetek's gridfinity-rebuilt-openscad](https://github.com/kennetek/gridfinity-rebuilt-openscad) project for creating the Gridfinity base bins.
+This project uses code from [ostat's gridfinity-extended-openscad](https://github.com/ostat/gridfinity_extended_openscad) project for creating the Gridfinity base bins.

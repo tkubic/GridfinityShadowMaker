@@ -219,12 +219,10 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
                 
         updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')
-        updated_scad_content = updated_scad_content.replace('gridx = 5;', f'gridx = {gridx_size};')
-        updated_scad_content = updated_scad_content.replace('gridy = 2;', f'gridy = {gridy_size};')
+        updated_scad_content = updated_scad_content.replace('width = [5, 0];', f'width = [{gridx_size}, 0];')
+        updated_scad_content = updated_scad_content.replace('depth = [2, 0];', f'depth = [{gridy_size}, 0];')
         updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
-        #updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-utility.scad>', 'use <../src/core/gridfinity-rebuilt-utility.scad>')
-        #updated_scad_content = updated_scad_content.replace('use <src/core/gridfinity-rebuilt-holes.scad>', 'use <../src/core/gridfinity-rebuilt-holes.scad>')
         
         # Save the SCAD file in the folder specified by folder_name
         script_directory = os.path.dirname(os.path.abspath(__file__))

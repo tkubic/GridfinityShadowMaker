@@ -1,38 +1,33 @@
-use <src/core/gridfinity-rebuilt-utility.scad>
-use <src/core/gridfinity-rebuilt-holes.scad>
+use <src/modules/module_gridfinity_cup.scad>
 
 // ===== PARAMETERS ===== //
+/* [General Settings] */
+// [units,mm] units or mm, ex: [2,0] or [0,84]
+width = [5, 0]; // .1
+// [units,mm] units or mm, ex: [2,0] or [0,84]
+depth = [2, 0]; // .1
+// [units,mm] units or mm, ex: [6,0] or [0,42]
+height = [6, 0]; // .1
+lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
-/* [Setup Parameters] */
-
-// ===== IMPLEMENTATION ===== //
-/* [DXF file path] */
-// Define a variable for the DXF file path 
+/* [DXF Options] */
+// DXF file path 
 dxf_file_path = "examples/example.dxf";
-
-/* [DXF Position] */
-// Array to adjust the x and y position of the DXF file
+// Adjust the x and y position of the DXF file
 dxf_position = [0, 0]; // [x, y]
 
 // [DXF Rotation]
-// Variable to adjust the rotation of the DXF file
+// DXF rotation angle in degrees
 dxf_rotation = 0; // Rotation angle in degrees
 
-/* [General Settings] */
-// number of bases along x-axis
-gridx = 5; //.5
-// number of bases along y-axis
-gridy = 2; //.5
-// bin height. See bin height information and "gridz_define" below.
-gridz = 6; //1
-style_lip = 1; //[0: Regular lip, 1:remove lip subtractively]
+
 
 /* [Finger Slot Options] */
 // Number of finger slots
 num_slots = 1; //[0:1:4] //.5
 // Width of each slot
 slot_width = 40; // 10
-// Array of start positions relative to the x-axis
+// Start positions of the slots
 start_positions = [0, -50, 100, 0]; // .1
 // Rotation angle of the slots
 slot_rotation = 90; // 10
@@ -41,53 +36,26 @@ slot_rotation = 90; // 10
 // Variable for cut depth
 cut_depth = 10; // 1
 
+/* [Base Options] */
+half_pitch = false;
+enable_magnets = false;
+magnet_size = [6.1, 3.2];  // .1
+//size of center magnet, diameter and height. 
+center_magnet_size = [0,0]; // .1
+//Only add attachments (magnets and screw) to box corners (prints faster).
+box_corner_attachments_only = false;
 
-
-/* [Hidden] */
-text_font = "Arial Rounded MT Bold:style=Regular"; 
-$fa = 8;
-$fs = 0.25; // .01
-// number of X Divisions (set to zero to have solid bin)
-divx = 0;
-// number of Y Divisions (set to zero to have solid bin)
-divy = 0;
-// number of cylindrical X Divisions (mutually exclusive to Linear Compartments)
-cdivx = 0;
-// number of cylindrical Y Divisions (mutually exclusive to Linear Compartments)
-cdivy = 0;
-// orientation
-c_orientation = 2; // [0: x direction, 1: y direction, 2: z direction]
-// diameter of cylindrical cut outs
-cd = 10; // .1
-// cylinder height
-ch = 1;  //.1
-// spacing to lid
-c_depth = 1;
-// chamfer around the top rim of the holes
-c_chamfer = 0.5; // .1
-
-style_tab = 1; //[0:Full,1:Auto,2:Left,3:Center,4:Right,5:None]
-place_tab = 0;
-//style_lip = 1; //[0: Regular lip, 1:remove lip subtractively, 2: remove lip and retain height]
-scoop = 1; //[0:0.1:1]
-only_corners = false;
-
-// determine what the variable "gridz" applies to based on your use case
-gridz_define = 0;
-height_internal = 0;
-enable_zsnap = false;
-refined_holes = false;
-crush_ribs = false;
-screw_holes = false;
-printable_hole_top = false;
-enable_thumbscrew = false;
-
-/* [Magnet Parameters] */
-magnet_holes = false;
-magnet_diameter = 6.1; // Diameter of the magnet holes
-magnet_height = 2.9; // Height of the magnet holes
-chamfer_holes = true;
-hole_options = bundle_hole_options(refined_holes, magnet_holes, screw_holes, crush_ribs, chamfer_holes, printable_hole_top);
+/* [Bottom Text] */
+// Add bin size to bin bottom
+text_1 = false;
+// Font Size of text, in mm (0 will auto size)
+text_size = 0; // 0.1
+// Depth of text, in mm
+text_depth = 0.3; // 0.01
+// Add free-form text line to bin bottom (printing date, serial, etc)
+text_2 = false;
+// Actual text to add
+text_2_text = "Gridfinity Extended";
 
 /* [Magnet Post] */
 include_post = false; // true or false
@@ -109,8 +77,8 @@ label_position_x = 0; // 10
 label_position_y = 0; // 10
 
 text_thickness = 0.6; // height of the text in mm
-text_size = 9; // size of the text
 input_text_value = "Custom Text"; // Input text value
+label_text_size = 6; // Size of the text on the label in mm
 
 // Label Rotation
 label_rotation = 0;
@@ -118,34 +86,100 @@ label_rotation = 0;
 // Label Position Options
 label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 
+/* [Hidden] */
+// [Hidden] - gridfinity_bin.scad compatibility
+// These are required for gridfinity_cup
+filled_in = "enabled";
+render_position = "center"; //[default,center,zero]
+enable_screws = false;
+magnet_easy_release = "off";
+screw_size = [3, 6];
+hole_overhang_remedy = 2;
+floor_thickness = 0.7;
+cavity_floor_radius = -1;
+efficient_floor = "off";
+flat_base = "off";
+spacer = false;
+flat_base_rounded_radius = -1;
+flat_base_rounded_easyPrint = -1;
+fa = 6;
+fs = 0.4;
+fn = 0;
+force_render = true;
+minimum_printable_pad_size = 0.2;
+text_font = "Aldo";
+
+module end_of_customizer_opts() {}
+
+//Some online generators do not like direct setting of fa,fs,fn
+$fa = fa; 
+$fs = fs; 
+$fn = fn;  
+
 // Function to create the finger slot
 module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     rotate([0, 0, rotation]) {
         translate([
             start_pos - width / 2, 
             -250, 
-            gridz*7-cut_depth+1]) { 
-            cube([width, 500, gridz * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
+            height[0]*7-cut_depth+1]) { 
+            cube([width, 500, height[0] * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
         }
     }
 }
 
 // Outer difference to cut the post hole through everything
+// Set render_position globally for gridfinity_cup centering
+
 difference() {
     // Main model
     union() {
         difference() {
             // Base object to cut from
-            gridfinityInit(gridx, gridy, height(gridz, gridz_define, style_lip, enable_zsnap), height_internal, sl = style_lip) {
-                if (divx > 0 && divy > 0) {
-                    cutEqual(n_divx = divx, n_divy = divy, style_tab = style_tab, scoop_weight = scoop, place_tab = place_tab);
-                } else if (cdivx > 0 && cdivy > 0) {
-                    cutCylinders(n_divx = cdivx, n_divy = cdivy, cylinder_diameter = cd, cylinder_height = ch, coutout_depth = c_depth, orientation = c_orientation, chamfer = c_chamfer);
-                }
-            }
+            set_environment(
+                width = width,
+                depth = depth,
+                height = height,
+                render_position = render_position,
+                force_render = force_render)
+            gridfinity_cup(
+                width=width, depth=depth, height=height,
+                filled_in="enabled",
+                lip_settings = LipSettings(
+                    lipStyle = lip_style, // use user-set lip style
+                    lipSideReliefTrigger = [1,1],
+                    lipTopReliefHeight = -1,
+                    lipTopReliefWidth = -1,
+                    lipNotch = false,
+                    lipClipPosition = "disabled",
+                    lipNonBlocking = false),
+                cupBase_settings = CupBaseSettings(
+                    magnetSize = enable_magnets?magnet_size:[0,0],
+                    magnetEasyRelease = magnet_easy_release, 
+                    centerMagnetSize = center_magnet_size, 
+                    screwSize = enable_screws?screw_size:[0,0],
+                    holeOverhangRemedy = hole_overhang_remedy, 
+                    cornerAttachmentsOnly = box_corner_attachments_only,
+                    floorThickness = floor_thickness,
+                    cavityFloorRadius = cavity_floor_radius,
+                    efficientFloor=efficient_floor,
+                    halfPitch=half_pitch,
+                    flatBase=flat_base,
+                    spacer=spacer,
+                    minimumPrintablePadSize=minimum_printable_pad_size,
+                    flatBaseRoundedRadius = flat_base_rounded_radius,
+                    flatBaseRoundedEasyPrint = flat_base_rounded_easyPrint),
+                cupBaseTextSettings = CupBaseTextSettings(
+                    baseTextLine1Enabled = text_1,
+                    baseTextLine2Enabled = text_2,
+                    baseTextLine2Value = text_2_text,
+                    baseTextFontSize = text_size,
+                    baseTextFont = text_font,
+                    baseTextDepth = text_depth)
+            );
 
             // Position, rotate, and extrude the DXF shape to perform the cut
-            translate([dxf_position[0], dxf_position[1], gridz*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) {
+            translate([dxf_position[0], dxf_position[1], height[0]*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) {
                 rotate([0, 0, dxf_rotation]) {
                     linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) {
                         scale([25.4, 25.4, 1]) {
@@ -163,25 +197,25 @@ difference() {
             // Add label slot if include_label is true
             if (include_label) {
                 if (label_position_option == "bottom") {
-                    translate([0 + label_position_x, -gridy * 42 / 2 + label_height / 2 + 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                    translate([0 + label_position_x, -depth[0] * 42 / 2 + label_height / 2 + 5 + label_position_y, height[0] * 7 - label_thickness / 2]) {
                         rotate([0, 0, label_rotation]) {
                             cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
                         }
                     }
                 } else if (label_position_option == "top") {
-                    translate([0 + label_position_x, gridy * 42 / 2 - label_height / 2 - 5 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                    translate([0 + label_position_x, depth[0] * 42 / 2 - label_height / 2 - 5 + label_position_y, height[0] * 7 - label_thickness / 2]) {
                         rotate([0, 0, label_rotation]) {
                             cube([label_width + label_clearance, label_height + label_clearance, label_thickness], center = true);
                         }
                     }
                 } else if (label_position_option == "right") {
-                    translate([gridx * 42 / 2 - label_height / 2 - 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                    translate([width[0] * 42 / 2 - label_height / 2 - 5 + label_position_x, 0 + label_position_y, height[0] * 7 - label_thickness / 2]) {
                         rotate([0, 0, label_rotation]) {
                             cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
                         }
                     }
                 } else if (label_position_option == "left") {
-                    translate([-gridx * 42 / 2 + label_height / 2 + 5 + label_position_x, 0 + label_position_y, gridz * 7 - label_thickness / 2]) {
+                    translate([-width[0] * 42 / 2 + label_height / 2 + 5 + label_position_x, 0 + label_position_y, height[0] * 7 - label_thickness / 2]) {
                         rotate([0, 0, label_rotation]) {
                             cube([label_height + label_clearance, label_width + label_clearance, label_thickness], center = true);
                         }
@@ -190,11 +224,11 @@ difference() {
             }
         }
 
-        // Conditionally extrude the magnet post cylinder from z=7 to gridz*7
+        // Conditionally extrude the magnet post cylinder from z=7 to height[0]*7
         if (include_post) {
             translate([magnet_post_position[0], magnet_post_position[1], 7]) {
                 cylinder(
-                    h = gridz*7 - 7 - post_cut_depth,
+                    h = height[0]*7 - 7 - post_cut_depth,
                     r = magnet_post_diameter/2 + 3,
                     center = false
                 );
@@ -204,7 +238,7 @@ difference() {
 
     // Subtract cylinder at the top (cuts through everything)
     if (include_post) {
-        translate([magnet_post_position[0], magnet_post_position[1], gridz*7 - post_cut_depth - magnet_post_height]) {
+        translate([magnet_post_position[0], magnet_post_position[1], height[0]*7 - post_cut_depth - magnet_post_height]) {
             cylinder(
                 h = magnet_post_height + .01,
                 r = magnet_post_diameter/2,
@@ -214,9 +248,9 @@ difference() {
     }
 }
 
-// Conditionally extrude the DXF at x=0 y=gridy*42+5
+// Conditionally extrude the DXF if include_cutout is true
 if (include_cutout) {
-    translate([0, gridy*42+5, 0]) {
+    translate([0, depth[0]*42+5, 0]) {
         linear_extrude(height = cutout_height) {
             scale([25.4, 25.4, 1]) {
                 import(dxf_file_path);
@@ -225,19 +259,19 @@ if (include_cutout) {
     }
 }
 
-// Conditionally extrude the magnet post cylinder from z=7 to gridz*7
+// Conditionally extrude the magnet post cylinder from z=7 to height[0]*7
 if (include_post) {
     difference() {
         // Main magnet post
         translate([magnet_post_position[0], magnet_post_position[1], 7]) {
             cylinder(
-                h = gridz*7 - 7 - post_cut_depth,
+                h = height[0]*7 - 7 - post_cut_depth,
                 r = magnet_post_diameter/2 + 3,
                 center = false
             );
         }
         // Subtract cylinder at the top
-        translate([magnet_post_position[0], magnet_post_position[1], gridz*7 - post_cut_depth - magnet_post_height]) {
+        translate([magnet_post_position[0], magnet_post_position[1], height[0]*7 - post_cut_depth - magnet_post_height]) {
             cylinder(
                 h = magnet_post_height + .01,
                 r = magnet_post_diameter/2,
@@ -248,22 +282,18 @@ if (include_post) {
 }
 
 render(convexity = 2)
-// Conditionally extrude the label at x=0 y=-gridy*42+5
+// Conditionally extrude the label if include_label is true
 if (include_label) {
-    // Adjust the position of the label based on gridy
-    translate([0, -gridy*42/2-5-label_height/2, label_thickness/2]) {
+    // Adjust the position of the label based on depth[0]
+    translate([0, -depth[0]*42/2-5-label_height/2, label_thickness/2]) {
         union() {
             cube([label_width, label_height, label_thickness], center = true);
             // Add text on top of the label
             translate([0, 0,label_thickness/2]) {
                 linear_extrude(height = text_thickness) {
-                    text(input_text_value, size = text_size, font = text_font, halign = "center", valign = "center");
+                    text(input_text_value, size = label_text_size, font = text_font, halign = "center", valign = "center");
                 }
             }
         }
     }
 }
-
-render(convexity = 2)
-// Draw the base with holes
-gridfinityBase([gridx, gridy], hole_options = hole_options, only_corners = only_corners, thumbscrew = enable_thumbscrew, magnet_diameter = magnet_diameter, magnet_height = magnet_height);
