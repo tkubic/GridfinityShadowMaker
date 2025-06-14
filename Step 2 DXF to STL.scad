@@ -23,6 +23,7 @@ dxf_rotation = 0; // Rotation angle in degrees
 
 
 /* [Finger Slot Options] */
+use_finger_slots = true; // true or false
 // Number of finger slots
 num_slots = 1; //[0:1:4] //.5
 // Width of each slot
@@ -63,6 +64,13 @@ magnet_post_diameter = 6.1; // [1:0.1:30]
 magnet_post_height = 2.9;   // [1:0.1:13] 
 magnet_post_position = [0, 0]; // [x, y]
 post_cut_depth = 1; // Depth of the magnet post
+
+/* [Section Adjustments] */
+use_section_cut = false; // true or false
+section_cut_depth = [20,15,10]; // [1:2:100] // Cutout depth for each section
+section_width = 40; // [5:5:100] 
+section_position = 0; // [-200:5:200]
+section_angle = 0; // [0:5:90] 
 
 
 /* [Label Cutout] */
@@ -128,6 +136,53 @@ module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     }
 }
 
+// --- Sectioned DXF modules copied from sections.scad ---
+module extrude_dxf_section(dxf_file_path, cut_depth) {
+    linear_extrude(height = cut_depth) {
+        scale([25.4, 25.4, 1]) {
+            import(dxf_file_path);
+        }
+    }
+}
+
+module three_section_shape(width, depth, section_width, section_cut_depth, section_position=0, section_angle=0) {
+    total_width = width[0] * 42;
+    total_depth = depth[0] * 42;
+    center_w = section_width;
+    pos = max(-200, min(200, section_position));
+    center_x = (total_width - center_w) / 2 + pos;
+    left_w = max(0, center_x);
+    right_w = max(0, total_width - (center_x + center_w));
+
+    // Rotate about the center of the bounding box
+    translate([0, 0, 0]) {
+        rotate([0, 0, section_angle]) {
+            translate([-total_width/2, min(-total_depth/2,-total_width/2), 0]) {
+                // Left section
+                if (left_w > 0)
+                    translate([0, 0, max(section_cut_depth)-section_cut_depth[0]])
+                        cube([left_w, max(total_depth, total_width), section_cut_depth[0]+1], center = false);
+
+                // Center section
+                translate([left_w, 0, max(section_cut_depth)-section_cut_depth[1]])
+                    cube([center_w, max(total_depth, total_width), section_cut_depth[1]+1], center = false);
+
+                // Right section
+                if (right_w > 0)
+                    translate([left_w + center_w, 0, max(section_cut_depth)-section_cut_depth[2]])
+                        cube([right_w, max(total_depth, total_width), section_cut_depth[2]+1], center = false);
+            }
+        }
+    }
+}
+
+module dxf_three_section_shape(width, depth, section_width, section_cut_depth, dxf_file_path, section_position=0, section_angle=0) {
+    intersection() {
+        three_section_shape(width, depth, section_width, section_cut_depth, section_position, section_angle);
+        extrude_dxf_section(dxf_file_path, max(section_cut_depth));
+    }
+}
+
 // Outer difference to cut the post hole through everything
 // Set render_position globally for gridfinity_cup centering
 
@@ -179,19 +234,24 @@ difference() {
             );
 
             // Position, rotate, and extrude the DXF shape to perform the cut
-            translate([dxf_position[0], dxf_position[1], height[0]*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) {
+            translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
                 rotate([0, 0, dxf_rotation]) {
-                    linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) {
-                        scale([25.4, 25.4, 1]) {
-                            import(dxf_file_path);
-                        }
+                    if (use_section_cut) {
+                        dxf_three_section_shape(
+                            width, depth, section_width, section_cut_depth,
+                            dxf_file_path, section_position, section_angle
+                        );
+                    } else {
+                        extrude_dxf_section(dxf_file_path, cut_depth+1+(include_cutout ? cutout_height : 0));
                     }
                 }
             }
 
             // Add the finger slots
-            for (i = [0 : num_slots - 1]) {
-                finger_slot(slot_width, start_positions[i], slot_rotation);
+            if (use_finger_slots) {
+                for (i = [0 : num_slots - 1]) {
+                    finger_slot(slot_width, start_positions[i], slot_rotation);
+                }
             }
 
             // Add label slot if include_label is true
