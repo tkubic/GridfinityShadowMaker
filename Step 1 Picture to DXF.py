@@ -98,13 +98,20 @@ def main():
                 cv2.imwrite(design_file_path, image)
                 console_text.setText(f"Copied image to: {design_file_path}")
 
-            process_image()  # Automatically run process_image after loading the image
+            # Always get splitDXF from UI
+            splitDXF = ui.splitDXF.isChecked()
+            process_image(splitDXF=splitDXF)  # Automatically run process_image after loading the image
             process_button.setEnabled(True)
         except Exception as e:
             console_text.setText(f"Error loading image: {str(e)}")
             print(traceback.format_exc())
 
-    def process_image():
+    # Disable import_to_openscad button when splitDXF is toggled
+    def on_splitdxf_toggled():
+        import_button.setEnabled(False)
+    ui.splitDXF.toggled.connect(on_splitdxf_toggled)
+
+    def process_image(splitDXF=None):
         global image
         if image is None:
             console_text.setText("No image loaded. Please load or capture an image first.")
@@ -120,7 +127,10 @@ def main():
             if diameter is None or threshold_input is None:
                 return  # Return to main loop if the user selects "no"
             contours, offset_image = find_contours(image, diameter, threshold_input, canvas, console_text)
-            dxf_path, gridx_size, gridy_size = save_contours_as_dxf(contours, file_name, float(token_entry.text()) / diameter, console_text, folder_name)
+            # Always get splitDXF from UI if not explicitly passed
+            if splitDXF is None:
+                splitDXF = ui.splitDXF.isChecked()
+            dxf_path, gridx_size, gridy_size = save_contours_as_dxf(contours, file_name, float(token_entry.text()) / diameter, console_text, folder_name, splitDXF=splitDXF)
             console_text.setText(f"Processing image\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
             import_button.setEnabled(True)
             import_button.dxf_path = dxf_path
@@ -154,8 +164,8 @@ def main():
         subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), 'src', 'capture_image.py'), project_folder])
 
     load_button.clicked.connect(load_image)
-    process_button.clicked.connect(process_image)
-    import_button.clicked.connect(lambda: import_to_openscad(import_button.dxf_path, import_button.gridx_size, import_button.gridy_size, console_text, file_name, import_button.folder_name))
+    process_button.clicked.connect(lambda: process_image(splitDXF=ui.splitDXF.isChecked()))
+    import_button.clicked.connect(lambda: import_to_openscad(import_button.dxf_path, import_button.gridx_size, import_button.gridy_size, console_text, file_name, import_button.folder_name, ui.splitDXF.isChecked()))
     exit_button.clicked.connect(lambda: exit_application(console_text))
     ui.SaveDefault.clicked.connect(save_defaults)
     ui.captureImage.clicked.connect(launch_capture_image)

@@ -15,8 +15,6 @@ lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not sta
 dxf_file_path = "examples/example.dxf";
 // Adjust the x and y position of the DXF file
 dxf_position = [0, 0]; // [x, y]
-
-// [DXF Rotation]
 // DXF rotation angle in degrees
 dxf_rotation = 0; // Rotation angle in degrees
 
@@ -97,6 +95,7 @@ label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 /* [Hidden] */
 // [Hidden] - gridfinity_bin.scad compatibility
 // These are required for gridfinity_cup
+multiple_dxf = false;
 filled_in = "enabled";
 render_position = "center"; //[default,center,zero]
 enable_screws = false;
@@ -146,8 +145,8 @@ module extrude_dxf_section(dxf_file_path, cut_depth) {
 }
 
 module three_section_shape(width, depth, section_width, section_cut_depth, section_position=0, section_angle=0) {
-    total_width = width[0] * 42;
-    total_depth = depth[0] * 42;
+    total_width = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
+    total_depth = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
     center_w = section_width;
     pos = max(-200, min(200, section_position));
     center_x = (total_width - center_w) / 2 + pos;
@@ -234,15 +233,32 @@ difference() {
             );
 
             // Position, rotate, and extrude the DXF shape to perform the cut
-            translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
-                rotate([0, 0, dxf_rotation]) {
-                    if (use_section_cut) {
-                        dxf_three_section_shape(
-                            width, depth, section_width, section_cut_depth,
-                            dxf_file_path, section_position, section_angle
-                        );
-                    } else {
-                        extrude_dxf_section(dxf_file_path, cut_depth+1+(include_cutout ? cutout_height : 0));
+            if (!multiple_dxf) {
+                translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
+                    rotate([0, 0, dxf_rotation]) {
+                        if (use_section_cut) {
+                            dxf_three_section_shape(
+                                width, depth, section_width, section_cut_depth,
+                                dxf_file_path, section_position, section_angle
+                            );
+                        } else {
+                            extrude_dxf_section(dxf_file_path, cut_depth+1+(include_cutout ? cutout_height : 0));
+                        }
+                    }
+                }
+            } else {
+                for (i = [0 : len(dxf_file_paths) - 1]) {
+                    translate([dxf_position[0], dxf_position[1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
+                        rotate([0, 0, dxf_rotation]) {
+                            if (use_section_cut) {
+                                dxf_three_section_shape(
+                                    width, depth, section_width, section_cut_depth,
+                                    dxf_file_paths[i], section_position, section_angle
+                                );
+                            } else {
+                                extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + 1 + (include_cutout ? cutout_height : 0));
+                            }
+                        }
                     }
                 }
             }
