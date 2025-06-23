@@ -8,6 +8,10 @@ width = [5, 0]; // .1
 depth = [2, 0]; // .1
 // [units,mm] units or mm, ex: [6,0] or [0,42]
 height = [6, 0]; // .1
+// === Chamfered DXF Extrusion Option === //
+use_chamfered_extrude = false; // Set to true to use chamfered extrusion
+chamfer_height = 2;      // mm, height of chamfer
+
 lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
 /* [DXF Options] */
@@ -135,11 +139,40 @@ module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     }
 }
 
+
+
+// Chamfered extrusion module (from wrenches chamfer.scad)
+module chamfered_extrude(
+    dxf,
+    base_height,
+    chamfer_height
+) {
+    linear_extrude(height=base_height)
+        scale([25.4, 25.4])
+            import(dxf);
+    translate([0,0,base_height])
+        minkowski() {
+            linear_extrude(height=0.01)
+                scale([25.4, 25.4])
+                    import(dxf);
+            rotate_extrude(convexity=10)
+                polygon([[0,0],[chamfer_height,0],[0,-chamfer_height]]);
+        }
+}
+
 // --- Sectioned DXF modules copied from sections.scad ---
 module extrude_dxf_section(dxf_file_path, cut_depth) {
-    linear_extrude(height = cut_depth) {
-        scale([25.4, 25.4, 1]) {
-            import(dxf_file_path);
+    if (use_chamfered_extrude) {
+        chamfered_extrude(
+            dxf=dxf_file_path,
+            base_height=cut_depth,
+            chamfer_height=chamfer_height
+        );
+    } else {
+        linear_extrude(height = cut_depth) {
+            scale([25.4, 25.4, 1]) {
+                import(dxf_file_path);
+            }
         }
     }
 }

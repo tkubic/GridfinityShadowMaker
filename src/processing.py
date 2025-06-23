@@ -232,7 +232,7 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             dxf_file_paths = [p.replace("\\", "/") for p in dxf_path]
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
             # Add a cut depth array, defaulting to the same value as cut_depth for each DXF
-            dxf_cut_depths_scad = f'dxf_cut_depths = [{", ".join(["5"]*len(dxf_file_paths))}];\n'
+            dxf_cut_depths_scad = f'dxf_cut_depths = [{", ".join(["10"]*len(dxf_file_paths))}];\n'
             updated_scad_content = scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
                 dxf_paths_scad + dxf_cut_depths_scad + '// dxf_file_path replaced by dxf_file_paths'
