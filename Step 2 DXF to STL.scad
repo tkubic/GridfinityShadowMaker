@@ -217,7 +217,7 @@ module dxf_three_section_shape(width, depth, section_width, section_cut_depth, d
 
 // Outer difference to cut the post hole through everything
 // Set render_position globally for gridfinity_cup centering
-
+render(convexity = 2)
 difference() {
     // Main model
     union() {
@@ -390,7 +390,7 @@ if (include_post) {
     }
 }
 
-render(convexity = 2)
+
 // Conditionally extrude the label if include_label is true
 if (include_label) {
     // Adjust the position of the label based on depth[0]
