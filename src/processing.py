@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 import traceback
 import time
+import concurrent.futures
 from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
 from src.ui import Ui_MainWindow  # type: ignore # Import Ui_MainWindow
@@ -159,17 +160,13 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
 
         if splitDXF:
             output_paths = []
-            for idx, contour in enumerate(filtered_contours):
-                doc = ezdxf.new()
-                msp = doc.modelspace()
-                points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
-                if points[0] != points[-1]:
-                    points.append((points[0][0], points[0][1]))
-                msp.add_lwpolyline(points)
-                single_name = f"{file_name}_contour_{idx+1}"
-                output_path = save_dxf_file(doc, single_name, folder_name)
-                output_paths.append(output_path)
-                time.sleep(1)  # Pause to allow Windows to flush the file
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(save_single_dxf, contour, scale_factor, center_x, center_y, file_name, idx, folder_name)
+                    for idx, contour in enumerate(filtered_contours)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    output_paths.append(future.result())
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             console_text.setText(f"Saved {len(output_paths)} DXF files: {output_paths}")
             return output_paths, gridx_size, gridy_size
@@ -347,3 +344,14 @@ def display_image_on_canvas(image, canvas, region, caption):
     except Exception as e:
         print(f"Error displaying image on canvas: {str(e)}")
         print(traceback.format_exc())
+
+def save_single_dxf(contour, scale_factor, center_x, center_y, file_name, idx, folder_name):
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
+    if points[0] != points[-1]:
+        points.append((points[0][0], points[0][1]))
+    msp.add_lwpolyline(points)
+    single_name = f"{file_name}_contour_{idx+1}"
+    output_path = save_dxf_file(doc, single_name, folder_name)
+    return output_path

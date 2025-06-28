@@ -494,7 +494,7 @@
          </size>
         </property>
         <property name="checked">
-         <bool>false</bool>
+         <bool>true</bool>
         </property>
         <property name="tristate">
          <bool>false</bool>

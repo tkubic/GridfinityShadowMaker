@@ -227,7 +227,7 @@ class Ui_MainWindow(object):
         self.splitDXF.setFont(font)
         self.splitDXF.setLayoutDirection(QtCore.Qt.RightToLeft)
         self.splitDXF.setIconSize(QtCore.QSize(0, 0))
-        self.splitDXF.setChecked(False)
+        self.splitDXF.setChecked(True)
         self.splitDXF.setTristate(False)
         self.splitDXF.setObjectName("splitDXF")
         self.gridLayout.addWidget(self.splitDXF, 5, 0, 1, 1)
