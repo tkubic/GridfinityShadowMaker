@@ -62,8 +62,19 @@ Want a walkthrough of the process? Check out the YouTube tutorial for a step-by-
 Clone or download a copy of this repository. You can click the green "Code" button above and select "Download ZIP"
 #### **OpenSCAD**: 
 Download and install the latest nightly version of OpenSCAD from [OpenSCAD Nightly Builds](https://openscad.org/downloads.html#snapshots).
+
+**Important OpenSCAD Settings:**
+- Go to `Edit` > `Preferences` > `Advanced` > `3D Rendering` and set the **Backend** to **Manifold** for best compatibility and performance.
+- Under `Design`, ensure the checkbox for **Automatic Reload and Preview** is enabled. This will automatically update your model when you save changes to your SCAD file.
+
 #### **OrcaSlicer or Bambu Studio**: 
 Download and install either OrcaSlicer from [OrcaSlicer releases](https://github.com/SoftFever/OrcaSlicer/releases) or Bambu Studio from [Bambu Studio](https://bambulab.com/en/download/studio).
+
+**Bambu Studio Setup:**
+- After installing a fresh copy of Bambu Studio, you can run the `profile control.py` script found in the `Printer Setup` folder. This will remove all but one profile and preset Bambu Studio to the standards used for making the shadowboards.
+
+**Keeping Your Desktop Version Updated:**
+- You can run the `github_sync_gridfinity.py` script at any time. This will copy everything needed to your desktop and sync your desktop version with GitHub to get the latest updates.
 
 #### **Python**: 
 1. **Setup Python**:
