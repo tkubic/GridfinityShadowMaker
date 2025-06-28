@@ -231,11 +231,23 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         if splitDXF and isinstance(dxf_path, list):
             dxf_file_paths = [p.replace("\\", "/") for p in dxf_path]
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
-            # Add a cut depth array, defaulting to the same value as cut_depth for each DXF
-            dxf_cut_depths_scad = f'dxf_cut_depths = [{", ".join(["10"]*len(dxf_file_paths))}];\n'
+            # Split dxf_cut_depths into arrays of max size 4
+            cut_depths = ["10"] * len(dxf_file_paths)
+            cut_depth_arrays = [cut_depths[i:i+4] for i in range(0, len(cut_depths), 4)]
+            dxf_cut_depths_scad = ""
+            concat_line = ""
+            if len(cut_depth_arrays) == 1:
+                dxf_cut_depths_scad = f'dxf_cut_depths = [{", ".join(cut_depth_arrays[0])}];\n'
+            else:
+                array_names = []
+                for idx, arr in enumerate(cut_depth_arrays):
+                    name = f'dxf_cut_depths_{idx+1}'
+                    array_names.append(name)
+                    dxf_cut_depths_scad += f'{name} = [{", ".join(arr)}];\n'
+                concat_line = f'dxf_cut_depths = concat({", ".join(array_names)});\n'
             updated_scad_content = scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
-                dxf_paths_scad + dxf_cut_depths_scad + '// dxf_file_path replaced by dxf_file_paths'
+                dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
             )
         else:
             dxf_path = dxf_path.replace("\\", "/")

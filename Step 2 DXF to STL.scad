@@ -9,8 +9,8 @@ depth = [2, 0]; // .1
 // [units,mm] units or mm, ex: [6,0] or [0,42]
 height = [6, 0]; // .1
 // === Chamfered DXF Extrusion Option === //
-use_chamfered_extrude = false; // Set to true to use chamfered extrusion
-chamfer_height = 2;      // mm, height of chamfer
+use_chamfered_extrude = true; // Set to true to use chamfered extrusion
+chamfer_height = 5;      // mm, height of chamfer
 
 lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
@@ -69,10 +69,10 @@ post_cut_depth = 1; // Depth of the magnet post
 
 /* [Section Adjustments] */
 use_section_cut = false; // true or false
-section_cut_depth = [20,15,10]; // [1:2:100] // Cutout depth for each section
-section_width = 40; // [5:5:100] 
-section_position = 0; // [-200:5:200]
-section_angle = 0; // [0:5:90] 
+section_cut_depth = [20,15,10];
+section_width = 40;
+section_position = 0;
+section_angle = 0; 
 
 
 /* [Label Cutout] */
