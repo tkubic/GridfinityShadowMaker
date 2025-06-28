@@ -76,10 +76,12 @@ def main():
             design_files_folder = os.path.join(os.path.dirname(__file__), folder_name)
             os.makedirs(design_files_folder, exist_ok=True)
             # Copy src folder into the project folder if not already present
+            # Overwrite src folder in the project folder even if it already exists
             src_src = os.path.join(os.path.dirname(__file__), "src")
             dst_src = os.path.join(design_files_folder, "src")
-            if not os.path.exists(dst_src):
-                shutil.copytree(src_src, dst_src)
+            if os.path.exists(dst_src):
+                shutil.rmtree(dst_src)
+            shutil.copytree(src_src, dst_src)
             # Pass default directory to select_image
             input_image_path, file_name = select_image(console_text, default_dir=design_files_folder)
             if not input_image_path:
