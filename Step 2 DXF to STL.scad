@@ -8,6 +8,10 @@ width = [5, 0]; // .1
 depth = [2, 0]; // .1
 // [units,mm] units or mm, ex: [6,0] or [0,42]
 height = [6, 0]; // .1
+// === Chamfered DXF Extrusion Option === //
+use_chamfered_extrude = false; // Set to true to use chamfered extrusion
+chamfer_height = 2;      // mm, height of chamfer
+
 lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
 /* [DXF Options] */
@@ -15,14 +19,13 @@ lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not sta
 dxf_file_path = "examples/example.dxf";
 // Adjust the x and y position of the DXF file
 dxf_position = [0, 0]; // [x, y]
-
-// [DXF Rotation]
 // DXF rotation angle in degrees
 dxf_rotation = 0; // Rotation angle in degrees
 
 
 
 /* [Finger Slot Options] */
+use_finger_slots = true; // true or false
 // Number of finger slots
 num_slots = 1; //[0:1:4] //.5
 // Width of each slot
@@ -64,6 +67,13 @@ magnet_post_height = 2.9;   // [1:0.1:13]
 magnet_post_position = [0, 0]; // [x, y]
 post_cut_depth = 1; // Depth of the magnet post
 
+/* [Section Adjustments] */
+use_section_cut = false; // true or false
+section_cut_depth = [20,15,10]; // [1:2:100] // Cutout depth for each section
+section_width = 40; // [5:5:100] 
+section_position = 0; // [-200:5:200]
+section_angle = 0; // [0:5:90] 
+
 
 /* [Label Cutout] */
 include_cutout = false; // true or false
@@ -89,6 +99,7 @@ label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 /* [Hidden] */
 // [Hidden] - gridfinity_bin.scad compatibility
 // These are required for gridfinity_cup
+multiple_dxf = false;
 filled_in = "enabled";
 render_position = "center"; //[default,center,zero]
 enable_screws = false;
@@ -128,9 +139,85 @@ module finger_slot(width = 80, start_pos = 0, rotation = 0) {
     }
 }
 
+
+
+// Chamfered extrusion module (from wrenches chamfer.scad)
+module chamfered_extrude(
+    dxf,
+    base_height,
+    chamfer_height
+) {
+    linear_extrude(height=base_height)
+        scale([25.4, 25.4])
+            import(dxf);
+    translate([0,0,base_height])
+        minkowski() {
+            linear_extrude(height=0.01)
+                scale([25.4, 25.4])
+                    import(dxf);
+            rotate_extrude(convexity=10)
+                polygon([[0,0],[chamfer_height,0],[0,-chamfer_height]]);
+        }
+}
+
+// --- Sectioned DXF modules copied from sections.scad ---
+module extrude_dxf_section(dxf_file_path, cut_depth) {
+    if (use_chamfered_extrude) {
+        chamfered_extrude(
+            dxf=dxf_file_path,
+            base_height=cut_depth,
+            chamfer_height=chamfer_height
+        );
+    } else {
+        linear_extrude(height = cut_depth) {
+            scale([25.4, 25.4, 1]) {
+                import(dxf_file_path);
+            }
+        }
+    }
+}
+
+module three_section_shape(width, depth, section_width, section_cut_depth, section_position=0, section_angle=0) {
+    total_width = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
+    total_depth = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
+    center_w = section_width;
+    pos = max(-200, min(200, section_position));
+    center_x = (total_width - center_w) / 2 + pos;
+    left_w = max(0, center_x);
+    right_w = max(0, total_width - (center_x + center_w));
+
+    // Rotate about the center of the bounding box
+    translate([0, 0, 0]) {
+        rotate([0, 0, section_angle]) {
+            translate([-total_width/2, min(-total_depth/2,-total_width/2), 0]) {
+                // Left section
+                if (left_w > 0)
+                    translate([0, 0, max(section_cut_depth)-section_cut_depth[0]])
+                        cube([left_w, max(total_depth, total_width), section_cut_depth[0]+1], center = false);
+
+                // Center section
+                translate([left_w, 0, max(section_cut_depth)-section_cut_depth[1]])
+                    cube([center_w, max(total_depth, total_width), section_cut_depth[1]+1], center = false);
+
+                // Right section
+                if (right_w > 0)
+                    translate([left_w + center_w, 0, max(section_cut_depth)-section_cut_depth[2]])
+                        cube([right_w, max(total_depth, total_width), section_cut_depth[2]+1], center = false);
+            }
+        }
+    }
+}
+
+module dxf_three_section_shape(width, depth, section_width, section_cut_depth, dxf_file_path, section_position=0, section_angle=0) {
+    intersection() {
+        three_section_shape(width, depth, section_width, section_cut_depth, section_position, section_angle);
+        extrude_dxf_section(dxf_file_path, max(section_cut_depth));
+    }
+}
+
 // Outer difference to cut the post hole through everything
 // Set render_position globally for gridfinity_cup centering
-
+render(convexity = 2)
 difference() {
     // Main model
     union() {
@@ -179,19 +266,41 @@ difference() {
             );
 
             // Position, rotate, and extrude the DXF shape to perform the cut
-            translate([dxf_position[0], dxf_position[1], height[0]*7-cut_depth-+ (include_cutout ? cutout_height : 0)]) {
-                rotate([0, 0, dxf_rotation]) {
-                    linear_extrude(height = cut_depth+1+ (include_cutout ? cutout_height : 0)) {
-                        scale([25.4, 25.4, 1]) {
-                            import(dxf_file_path);
+            if (!multiple_dxf) {
+                translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
+                    rotate([0, 0, dxf_rotation]) {
+                        if (use_section_cut) {
+                            dxf_three_section_shape(
+                                width, depth, section_width, section_cut_depth,
+                                dxf_file_path, section_position, section_angle
+                            );
+                        } else {
+                            extrude_dxf_section(dxf_file_path, cut_depth+1+(include_cutout ? cutout_height : 0));
+                        }
+                    }
+                }
+            } else {
+                for (i = [0 : len(dxf_file_paths) - 1]) {
+                    translate([dxf_position[0], dxf_position[1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
+                        rotate([0, 0, dxf_rotation]) {
+                            if (use_section_cut) {
+                                dxf_three_section_shape(
+                                    width, depth, section_width, section_cut_depth,
+                                    dxf_file_paths[i], section_position, section_angle
+                                );
+                            } else {
+                                extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + 1 + (include_cutout ? cutout_height : 0));
+                            }
                         }
                     }
                 }
             }
 
             // Add the finger slots
-            for (i = [0 : num_slots - 1]) {
-                finger_slot(slot_width, start_positions[i], slot_rotation);
+            if (use_finger_slots) {
+                for (i = [0 : num_slots - 1]) {
+                    finger_slot(slot_width, start_positions[i], slot_rotation);
+                }
             }
 
             // Add label slot if include_label is true
@@ -281,7 +390,7 @@ if (include_post) {
     }
 }
 
-render(convexity = 2)
+
 // Conditionally extrude the label if include_label is true
 if (include_label) {
     // Adjust the position of the label based on depth[0]

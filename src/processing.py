@@ -7,6 +7,7 @@ import os
 import tempfile
 import subprocess
 import traceback
+import time
 from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
 from src.ui import Ui_MainWindow  # type: ignore # Import Ui_MainWindow
@@ -137,39 +138,54 @@ def save_dxf_file(doc, file_name, folder_name):
     doc.saveas(output_path)
     return file_name + ".dxf"
 
-def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder_name):
+def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder_name, splitDXF=False):
     try:
         max_p2d_contour, max_p2d_ratio = find_max_p2d_ratio_contour(contours)
         if max_p2d_contour is None:
             console_text.setText("No valid contours found.")
             return None, None, None
-        doc = ezdxf.new()
-        msp = doc.modelspace()
 
         filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_p2d_contour)]
-        
         if not filtered_contours:
             console_text.setText("No valid contours found after filtering.")
             return None, None, None
 
-        # Calculate the bounding box for the remaining contours
+        # Calculate the bounding box for the remaining contours (for consistent origin)
         all_points = np.vstack([contour.reshape(-1, 2) for contour in filtered_contours])
         min_x, min_y = np.min(all_points, axis=0)
         max_x, max_y = np.max(all_points, axis=0)
         center_x = (min_x + max_x) / 2
         center_y = (min_y + max_y) / 2
 
-        for contour in filtered_contours:
-            points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
-            if points[0] != points[-1]:
-                points.append((points[0][0], points[0][1]))
-            polyline = msp.add_lwpolyline(points)
-            
-        output_path = save_dxf_file(doc, file_name, folder_name)
-        gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
-        pyperclip.copy(output_path)
-        console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
-        return output_path, gridx_size, gridy_size
+        if splitDXF:
+            output_paths = []
+            for idx, contour in enumerate(filtered_contours):
+                doc = ezdxf.new()
+                msp = doc.modelspace()
+                points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
+                if points[0] != points[-1]:
+                    points.append((points[0][0], points[0][1]))
+                msp.add_lwpolyline(points)
+                single_name = f"{file_name}_contour_{idx+1}"
+                output_path = save_dxf_file(doc, single_name, folder_name)
+                output_paths.append(output_path)
+                time.sleep(1)  # Pause to allow Windows to flush the file
+            gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
+            console_text.setText(f"Saved {len(output_paths)} DXF files: {output_paths}")
+            return output_paths, gridx_size, gridy_size
+        else:
+            doc = ezdxf.new()
+            msp = doc.modelspace()
+            for contour in filtered_contours:
+                points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
+                if points[0] != points[-1]:
+                    points.append((points[0][0], points[0][1]))
+                msp.add_lwpolyline(points)
+            output_path = save_dxf_file(doc, file_name, folder_name)
+            gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
+            pyperclip.copy(output_path)
+            console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
+            return output_path, gridx_size, gridy_size
     except Exception as e:
         console_text.setText(f"Error saving DXF: {str(e)}")
         print(traceback.format_exc())
@@ -204,26 +220,36 @@ def select_image(console_text, default_dir=None):
         print(traceback.format_exc())
         return None, None
 
-def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name):
+def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name, splitDXF=False):
     try:
         global scad_file_path  # Use the global variable to keep track of the SCAD file
         scad_template_path = os.path.join(os.path.dirname(__file__), "..", "Step 2 DXF to STL.scad")
         with open(scad_template_path, 'r') as file:
             scad_content = file.read()
         
-        # Use forward slashes for the file path
-        dxf_path = dxf_path.replace("\\", "/")
+        # Use forward slashes for the file path(s)
+        if splitDXF and isinstance(dxf_path, list):
+            dxf_file_paths = [p.replace("\\", "/") for p in dxf_path]
+            dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
+            # Add a cut depth array, defaulting to the same value as cut_depth for each DXF
+            dxf_cut_depths_scad = f'dxf_cut_depths = [{", ".join(["10"]*len(dxf_file_paths))}];\n'
+            updated_scad_content = scad_content.replace(
+                'dxf_file_path = "examples/example.dxf";',
+                dxf_paths_scad + dxf_cut_depths_scad + '// dxf_file_path replaced by dxf_file_paths'
+            )
+        else:
+            dxf_path = dxf_path.replace("\\", "/")
+            updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')
         
         # Determine slot rotation and width based on gridx_size and gridy_size
         slot_rotation = 0 if gridx_size > gridy_size else 90
         slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
-                
-        updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')
         updated_scad_content = updated_scad_content.replace('width = [5, 0];', f'width = [{gridx_size}, 0];')
         updated_scad_content = updated_scad_content.replace('depth = [2, 0];', f'depth = [{gridy_size}, 0];')
         updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
-        
+        updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(splitDXF).lower()};')
+
         # Save the SCAD file in the folder specified by folder_name
         script_directory = os.path.dirname(os.path.abspath(__file__))
         design_files_directory = os.path.join(script_directory, "..", folder_name)
