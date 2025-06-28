@@ -49,6 +49,12 @@ def main():
         clone_or_pull_repo(REPO_URL, tmpdir)
         print("Copying files and folders to Desktop...")
         copy_items(tmpdir, DESKTOP, FILES_TO_COPY, FOLDERS_TO_COPY)
+        # Copy this script to the Desktop as well
+        script_path = os.path.abspath(__file__)
+        script_name = os.path.basename(script_path)
+        dest_script = os.path.join(DESKTOP, script_name)
+        shutil.copy2(script_path, dest_script)
+        print(f"Copied script itself to Desktop as {script_name}")
         print("Done.")
 
 if __name__ == "__main__":
