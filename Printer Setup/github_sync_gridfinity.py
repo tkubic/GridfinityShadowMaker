@@ -36,10 +36,17 @@ def copy_items(src_dir, dest_dir, files, folders):
         src_folder = os.path.join(src_dir, folder)
         dest_folder = os.path.join(dest_dir, folder)
         if os.path.exists(src_folder):
-            if os.path.exists(dest_folder):
-                shutil.rmtree(dest_folder)
-            shutil.copytree(src_folder, dest_folder)
-            print(f"Copied folder {folder}")
+            # Ensure destination folder exists
+            os.makedirs(dest_folder, exist_ok=True)
+            for root, dirs, files in os.walk(src_folder):
+                rel_path = os.path.relpath(root, src_folder)
+                dest_root = os.path.join(dest_folder, rel_path) if rel_path != '.' else dest_folder
+                os.makedirs(dest_root, exist_ok=True)
+                for file in files:
+                    src_file_path = os.path.join(root, file)
+                    dest_file_path = os.path.join(dest_root, file)
+                    shutil.copy2(src_file_path, dest_file_path)
+            print(f"Copied/updated folder {folder}")
         else:
             print(f"Folder not found in repo: {folder}")
 
