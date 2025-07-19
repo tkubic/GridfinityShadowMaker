@@ -147,9 +147,18 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             return None, None, None
 
         filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_p2d_contour)]
+        # Filter out small contours (area < 1000)
+        filtered_contours = [contour for contour in filtered_contours if cv2.contourArea(contour) >= 1000]
         if not filtered_contours:
             console_text.setText("No valid contours found after filtering.")
             return None, None, None
+
+        # Print area and perimeter of each contour for debugging
+        print("Contour sizes (area, perimeter):")
+        for idx, contour in enumerate(filtered_contours):
+            area = cv2.contourArea(contour)
+            perimeter = cv2.arcLength(contour, True)
+            print(f"  Contour {idx+1}: Area = {area:.2f}, Perimeter = {perimeter:.2f}")
 
         # Calculate the bounding box for the remaining contours (for consistent origin)
         all_points = np.vstack([contour.reshape(-1, 2) for contour in filtered_contours])
