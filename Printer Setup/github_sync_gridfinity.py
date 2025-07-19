@@ -69,12 +69,15 @@ def main():
         repo_dir = download_and_extract_zip(REPO_URL, tmpdir)
         print("Copying files and folders to Desktop...")
         copy_items(repo_dir, DESKTOP, FILES_TO_COPY, FOLDERS_TO_COPY)
-        # Copy this script to the Desktop as well (overwrite in place)
+        # Copy this script to the Desktop as well (overwrite in place, unless already running from Desktop)
         script_path = os.path.abspath(__file__)
         script_name = os.path.basename(script_path)
         dest_script = os.path.join(DESKTOP, script_name)
-        shutil.copy2(script_path, dest_script)
-        print(f"Copied script itself to Desktop as {script_name}")
+        if os.path.normcase(os.path.normpath(script_path)) != os.path.normcase(os.path.normpath(dest_script)):
+            shutil.copy2(script_path, dest_script)
+            print(f"Copied script itself to Desktop as {script_name}")
+        else:
+            print("Script is already running from the Desktop; skipping self-copy.")
         print("Done.")
 
 if __name__ == "__main__":
