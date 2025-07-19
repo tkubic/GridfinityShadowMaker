@@ -265,9 +265,17 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             section_cut_depth_concat = f'section_cut_depth = [{', '.join(section_cut_depth_names)}];\n'
             section_parameters_concat = f'section_parameters = [{', '.join(section_param_names)}];\n'
 
+            # Generate position_1, position_2, ... and position array
+            position_lines = []
+            for idx in range(len(dxf_file_paths)):
+                position_lines.append(f'position_{idx+1} = [0,0,0]; // .1')
+            position_array = f'position = [{', '.join([f"position_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
+            # Replace the position = [[0, 0, 0]]; // .1 line
+            updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
+
             # Insert all blocks inside /* [Section Adjustments] */ in the requested order
             scad_block = dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
-            updated_scad_content = scad_content.replace(
+            updated_scad_content = updated_scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
                 scad_block
             )
@@ -291,8 +299,7 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         # Determine slot rotation and width based on gridx_size and gridy_size
         slot_rotation = 0 if gridx_size > gridy_size else 90
         slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
-        updated_scad_content = updated_scad_content.replace('width = [5, 0];', f'width = [{gridx_size}, 0];')
-        updated_scad_content = updated_scad_content.replace('depth = [2, 0];', f'depth = [{gridy_size}, 0];')
+        updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gridx_size}, {gridy_size}, 6];')
         updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
         updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(splitDXF).lower()};')
