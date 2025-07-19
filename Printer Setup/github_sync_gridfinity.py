@@ -4,6 +4,7 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+import sys
 
 # Configuration
 REPO_URL = "https://github.com/tkubic/GridfinityShadowMaker.git"
@@ -68,7 +69,7 @@ def main():
         repo_dir = download_and_extract_zip(REPO_URL, tmpdir)
         print("Copying files and folders to Desktop...")
         copy_items(repo_dir, DESKTOP, FILES_TO_COPY, FOLDERS_TO_COPY)
-        # Copy this script to the Desktop as well
+        # Copy this script to the Desktop as well (overwrite in place)
         script_path = os.path.abspath(__file__)
         script_name = os.path.basename(script_path)
         dest_script = os.path.join(DESKTOP, script_name)
@@ -78,6 +79,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-print("\nAll done! You can now close this window.")
-input("\nPress Enter to exit...")
+    print("\nAll done! You can now close this window.")
+    input("\nPress Enter to exit...")
