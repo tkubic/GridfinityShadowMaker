@@ -242,10 +242,39 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                     array_names.append(name)
                     dxf_cut_depths_scad += f'{name} = [{", ".join(arr)}];\n'
                 concat_line = f'dxf_cut_depths = concat({", ".join(array_names)});\n'
+
+            # Generate section_cut_depth_N and section_parameters_N arrays, then concatenate
+            section_cut_depth_names = []
+            section_param_names = []
+            section_blocks = []
+            for idx in range(len(dxf_file_paths)):
+                cut_name = f'section_cut_depth_{idx+1}'
+                param_name = f'section_parameters_{idx+1}'
+                section_cut_depth_names.append(cut_name)
+                section_param_names.append(param_name)
+                section_blocks.append(f'{cut_name} = [20, 15, 10];\n{param_name} = [40, 0, 0];')
+            section_cut_depth_concat = f'section_cut_depth = [{', '.join(section_cut_depth_names)}];\n'
+            section_parameters_concat = f'section_parameters = [{', '.join(section_param_names)}];\n'
+
+            # Insert all blocks inside /* [Section Adjustments] */ in the requested order
+            scad_block = dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
             updated_scad_content = scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
-                dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
+                scad_block
             )
+
+            section_marker = '/* [Section Adjustments] */'
+            if section_marker in updated_scad_content:
+                parts = updated_scad_content.split(section_marker, 1)
+                # Always keep use_section_cut as the first line after the marker
+                after_marker = parts[1]
+                # Remove any old section_cut_depth/section_parameters lines (optional, for cleanliness)
+                # Compose the new block
+                new_block = '\nuse_section_cut = false; // true or false\n'
+                for block in section_blocks:
+                    new_block += block + '\n'
+                new_block += section_cut_depth_concat + section_parameters_concat
+                updated_scad_content = parts[0] + section_marker + new_block + after_marker
         else:
             dxf_path = dxf_path.replace("\\", "/")
             updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')

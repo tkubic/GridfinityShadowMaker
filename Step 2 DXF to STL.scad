@@ -39,6 +39,12 @@ slot_rotation = 90; // 10
 // Variable for cut depth
 cut_depth = 10; // 1
 
+/* [Section Adjustments] */
+//use_section_cut = false; // true or false
+//section_cut_depth = [20,15,10];
+// section_parameters = [[section_width, section_position, section_angle], ...]
+
+
 /* [Base Options] */
 half_pitch = false;
 enable_magnets = false;
@@ -66,14 +72,6 @@ magnet_post_diameter = 6.1; // [1:0.1:30]
 magnet_post_height = 2.9;   // [1:0.1:13] 
 magnet_post_position = [0, 0]; // [x, y]
 post_cut_depth = 1; // Depth of the magnet post
-
-/* [Section Adjustments] */
-use_section_cut = false; // true or false
-section_cut_depth = [20,15,10];
-section_width = 40;
-section_position = 0;
-section_angle = 0; 
-
 
 /* [Label Cutout] */
 include_cutout = false; // true or false
@@ -177,7 +175,10 @@ module extrude_dxf_section(dxf_file_path, cut_depth) {
     }
 }
 
-module three_section_shape(width, depth, section_width, section_cut_depth, section_position=0, section_angle=0) {
+module three_section_shape(width, depth, section_cut_depth, section_parameters) {
+    section_width = section_parameters[0];
+    section_position = section_parameters[1];
+    section_angle = section_parameters[2];
     total_width = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
     total_depth = max(width[0],depth[0]) * 42*sqrt(2); // sqrt(2) to account for diagonal
     center_w = section_width;
@@ -208,9 +209,9 @@ module three_section_shape(width, depth, section_width, section_cut_depth, secti
     }
 }
 
-module dxf_three_section_shape(width, depth, section_width, section_cut_depth, dxf_file_path, section_position=0, section_angle=0) {
+module dxf_three_section_shape(width, depth, section_cut_depth, section_parameters, dxf_file_path) {
     intersection() {
-        three_section_shape(width, depth, section_width, section_cut_depth, section_position, section_angle);
+        three_section_shape(width, depth, section_cut_depth, section_parameters);
         extrude_dxf_section(dxf_file_path, max(section_cut_depth));
     }
 }
@@ -267,12 +268,12 @@ difference() {
 
             // Position, rotate, and extrude the DXF shape to perform the cut
             if (!multiple_dxf) {
-                translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
+                translate([dxf_position[0], dxf_position[1], height[0]*7-(use_section_cut ? max(section_cut_depth[0]) : cut_depth)-(include_cutout ? cutout_height : 0)]) {
                     rotate([0, 0, dxf_rotation]) {
                         if (use_section_cut) {
                             dxf_three_section_shape(
-                                width, depth, section_width, section_cut_depth,
-                                dxf_file_path, section_position, section_angle
+                                width, depth, section_cut_depth[0], section_parameters[0],
+                                dxf_file_path
                             );
                         } else {
                             extrude_dxf_section(dxf_file_path, cut_depth+1+(include_cutout ? cutout_height : 0));
@@ -281,15 +282,15 @@ difference() {
                 }
             } else {
                 for (i = [0 : len(dxf_file_paths) - 1]) {
-                    translate([dxf_position[0], dxf_position[1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
+                    translate([dxf_position[0], dxf_position[1], height[0]*7 - (use_section_cut ? max(section_cut_depth[i]) : dxf_cut_depths[i]) - (include_cutout ? cutout_height : 0)]) {
                         rotate([0, 0, dxf_rotation]) {
                             if (use_section_cut) {
                                 dxf_three_section_shape(
-                                    width, depth, section_width, section_cut_depth,
-                                    dxf_file_paths[i], section_position, section_angle
+                                    width, depth, section_cut_depth[i], section_parameters[i],
+                                    dxf_file_paths[i]
                                 );
                             } else {
-                                extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + 1 + (include_cutout ? cutout_height : 0));
+                                extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + (include_cutout ? cutout_height : 0));
                             }
                         }
                     }

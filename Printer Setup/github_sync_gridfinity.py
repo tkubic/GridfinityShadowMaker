@@ -1,7 +1,8 @@
 import os
 import shutil
 import tempfile
-import subprocess
+import urllib.request
+import zipfile
 from pathlib import Path
 
 # Configuration
@@ -19,9 +20,20 @@ FOLDERS_TO_COPY = [
 # Get Desktop path
 DESKTOP = str(Path.home() / "Desktop")
 
-def clone_or_pull_repo(repo_url, dest_dir):
-    # Always clone into a fresh temp directory, so just clone
-    subprocess.run(["git", "clone", repo_url, dest_dir], check=True)
+
+def download_and_extract_zip(repo_url, dest_dir):
+    # Download the zip from GitHub (main branch)
+    zip_url = repo_url.rstrip('.git') + '/archive/refs/heads/main.zip'
+    zip_path = os.path.join(dest_dir, 'repo.zip')
+    print(f"Downloading {zip_url}...")
+    urllib.request.urlretrieve(zip_url, zip_path)
+    print("Extracting zip...")
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(dest_dir)
+    # The extracted folder will be <repo>-main
+    repo_name = os.path.basename(repo_url.rstrip('/').replace('.git',''))
+    extracted_dir = os.path.join(dest_dir, f"{repo_name}-main")
+    return extracted_dir
 
 def copy_items(src_dir, dest_dir, files, folders):
     for file in files:
@@ -52,10 +64,10 @@ def copy_items(src_dir, dest_dir, files, folders):
 
 def main():
     with tempfile.TemporaryDirectory() as tmpdir:
-        print(f"Cloning or updating repo in {tmpdir}...")
-        clone_or_pull_repo(REPO_URL, tmpdir)
+        print(f"Downloading and extracting repo in {tmpdir}...")
+        repo_dir = download_and_extract_zip(REPO_URL, tmpdir)
         print("Copying files and folders to Desktop...")
-        copy_items(tmpdir, DESKTOP, FILES_TO_COPY, FOLDERS_TO_COPY)
+        copy_items(repo_dir, DESKTOP, FILES_TO_COPY, FOLDERS_TO_COPY)
         # Copy this script to the Desktop as well
         script_path = os.path.abspath(__file__)
         script_name = os.path.basename(script_path)
