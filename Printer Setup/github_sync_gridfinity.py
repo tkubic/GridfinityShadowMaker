@@ -78,3 +78,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+print("\nAll done! You can now close this window.")
+input("\nPress Enter to exit...")
