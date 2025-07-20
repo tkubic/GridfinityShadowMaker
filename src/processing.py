@@ -311,6 +311,28 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             # Replace the position = [[0, 0, 0]]; // .1 line
             updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
 
+            # --- FINGER SLOT OPTIONS ---
+            # Generate per-slot variables and arrays for finger slots
+            # Interleave slot_shape_N, slot_params_N, slot_pos_N for each slot
+            slot_lines = []
+            for idx in range(len(dxf_file_paths)):
+                slot_lines.append(f'slot_shape_{idx+1} = "scoop"; // [none, rectangle, oval, scoop, triangle, keyhole, teardrop]')
+                slot_lines.append(f'slot_params_{idx+1} = [80, 40, 9, 0]; // length (mm), width (mm), height (mm), rotation (deg)')
+                slot_lines.append(f'slot_pos_{idx+1} = [{pos_xy[idx][0]:.6f},{pos_xy[idx][1]:.6f}]; // Translation position [x, y] in mm')
+            slot_shape_array = f'slot_shape = [{', '.join([f"slot_shape_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
+            slot_params_array = f'slot_params = [{', '.join([f"slot_params_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
+            slot_pos_array = f'slot_pos = [{', '.join([f"slot_pos_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
+            # Always start the block with use_finger_slots = true;
+            finger_slot_block = 'use_finger_slots = true; // true or false\n' + '\n'.join(slot_lines + [slot_shape_array, slot_params_array, slot_pos_array])
+            # Replace the finger slot options block
+            import re
+            updated_scad_content = re.sub(
+                r'/\* \[Finger Slot Options\] \*/.*?slot_pos = \[.*?\];',
+                '/* [Finger Slot Options] */\n' + finger_slot_block,
+                updated_scad_content,
+                flags=re.DOTALL
+            )
+
             # Insert all blocks inside /* [Section Adjustments] */ in the requested order
             scad_block = dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
             updated_scad_content = updated_scad_content.replace(
@@ -321,10 +343,7 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             section_marker = '/* [Section Adjustments] */'
             if section_marker in updated_scad_content:
                 parts = updated_scad_content.split(section_marker, 1)
-                # Always keep use_section_cut as the first line after the marker
                 after_marker = parts[1]
-                # Remove any old section_cut_depth/section_parameters lines (optional, for cleanliness)
-                # Compose the new block
                 new_block = '\nuse_section_cut = false; // true or false\n'
                 for block in section_blocks:
                     new_block += block + '\n'
@@ -335,11 +354,11 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')
         
         # Determine slot rotation and width based on gridx_size and gridy_size
-        slot_rotation = 0 if gridx_size > gridy_size else 90
-        slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
+        #slot_rotation = 0 if gridx_size > gridy_size else 90
+        #slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
         updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gridx_size}, {gridy_size}, 6];')
-        updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
-        updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
+        #updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
+        #updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
         updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(splitDXF).lower()};')
 
         # Save the SCAD file in the folder specified by folder_name

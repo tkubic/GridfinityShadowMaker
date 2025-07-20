@@ -30,3 +30,5 @@ if __name__ == "__main__":
     fix_ui_file('ui.py')
     fix_ui_file('capture_image_ui.py')
     print("ui.py and capture_image_ui.py have been generated and fixed.")
+    print("\nAll done! You can now close this window.")
+    input("\nPress Enter to exit...")

@@ -1,0 +1,15 @@
+{
+    "fileFormatVersion": "1",
+    "parameterSets": {
+        "New set 1": {
+            "shape": "teardrop",
+            "slot_params": "[60, 20, 20, 0]",
+            "slot_pos": "[0, 0]"
+        },
+        "New set 2": {
+            "shape": "rectangle",
+            "slot_params": "[30, 14, 20, 0]",
+            "slot_pos": "[0, 0]"
+        }
+    }
+}

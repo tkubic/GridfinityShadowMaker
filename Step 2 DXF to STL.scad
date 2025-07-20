@@ -1,4 +1,5 @@
 use <src/modules/module_gridfinity_cup.scad>
+use <src/modules/module_finger_slot.scad>
 
 // ===== PARAMETERS ===== //
 /* [General Settings] */
@@ -21,38 +22,31 @@ lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not sta
 dxf_file_path = "examples/example.dxf";
 // [x position, y position, rotation degrees]
 position = [[0, 0, 0]]; // .1
-//dxf_position = [position[0], position[1]]; // [x, y]
-//dxf_rotation = position[2]; // Rotation angle in degrees
 
 
 /* [Finger Slot Options] */
 use_finger_slots = true; // true or false
-// Number of finger slots
-num_slots = 1; //[0:1:4] //.5
-// Width of each slot
-slot_width = 40; // 10
-// Start positions of the slots
-start_positions = [0, -50, 100, 0]; // .1
-// Rotation angle of the slots
-slot_rotation = 90; // 10
 
-/* [Cut Depth] */
-// Variable for cut depth
-cut_depth = 10; // 1
+slot_shape_1 = "scoop"; // [none, rectangle, oval, scoop, triangle, keyhole, teardrop]
+// Per-slot parameters: [len, width, height, rot]
+slot_params_1 = [80, 40, 9, 0]; // length (mm), width (mm), height (mm), rotation (deg)
+slot_pos_1 = [0, 0]; // Translation position [x, y] in mm
+
+// Combine per-slot variables into arrays for use in modules
+slot_shape = [slot_shape_1];
+slot_params = [slot_params_1];
+slot_pos = [slot_pos_1];
 
 /* [Section Adjustments] */
-//use_section_cut = false; // true or false
-//section_cut_depth = [20,15,10];
-// section_parameters = [[section_width, section_position, section_angle], ...]
 
 
 /* [Base Options] */
 half_pitch = false;
 enable_magnets = false;
 magnet_size = [6.1, 3.2];  // .1
-//size of center magnet, diameter and height. 
+//size of center magnet, [diameter, height] 
 center_magnet_size = [0,0]; // .1
-//Only add attachments (magnets and screw) to box corners (prints faster).
+//Only add magnets to corners
 box_corner_attachments_only = false;
 
 /* [Bottom Text] */
@@ -125,20 +119,6 @@ module end_of_customizer_opts() {}
 $fa = fa; 
 $fs = fs; 
 $fn = fn;  
-
-// Function to create the finger slot
-module finger_slot(width = 80, start_pos = 0, rotation = 0) {
-    rotate([0, 0, rotation]) {
-        translate([
-            start_pos - width / 2, 
-            -250, 
-            height[0]*7-cut_depth+1]) { 
-            cube([width, 500, height[0] * 7 + 4.4 + 30], center = false); // Adjust the dimensions and position as needed
-        }
-    }
-}
-
-
 
 // Chamfered extrusion module (from wrenches chamfer.scad)
 module chamfered_extrude(
@@ -297,11 +277,12 @@ difference() {
                     }
                 }
             }
-
             // Add the finger slots
             if (use_finger_slots) {
-                for (i = [0 : num_slots - 1]) {
-                    finger_slot(slot_width, start_positions[i], slot_rotation);
+                for (i = [0 : len(slot_shape) - 1]) {
+                    if (slot_shape[i] != "none") {
+                        finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
+                    }
                 }
             }
 

@@ -456,7 +456,7 @@
       <item row="5" column="0">
        <widget class="QCheckBox" name="splitDXF">
         <property name="enabled">
-         <bool>true</bool>
+         <bool>false</bool>
         </property>
         <property name="minimumSize">
          <size>
@@ -480,6 +480,9 @@
          <font>
           <pointsize>12</pointsize>
          </font>
+        </property>
+        <property name="toolTip">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;force true, option to be removed in next update&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
         </property>
         <property name="layoutDirection">
          <enum>Qt::LayoutDirection::RightToLeft</enum>
