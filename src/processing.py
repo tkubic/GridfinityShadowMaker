@@ -152,26 +152,42 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
         if not filtered_contours:
             console_text.setText("No valid contours found after filtering.")
             return None, None, None
-
-        # Print area and perimeter of each contour for debugging
-        print("Contour sizes (area, perimeter):")
-        for idx, contour in enumerate(filtered_contours):
-            area = cv2.contourArea(contour)
-            perimeter = cv2.arcLength(contour, True)
-            print(f"  Contour {idx+1}: Area = {area:.2f}, Perimeter = {perimeter:.2f}")
+        pos_xy = []
+        for contour in filtered_contours:
+            all_points = np.vstack(contour.reshape(-1, 2))
+            min_x, min_y = np.min(all_points, axis=0)
+            max_x, max_y = np.max(all_points, axis=0)
+            center_y = round((min_x + max_x) / 2 ,1)
+            center_x = round((min_y + max_y) / 2 ,1)
+            pos_xy.append([center_x, center_y])
 
         # Calculate the bounding box for the remaining contours (for consistent origin)
         all_points = np.vstack([contour.reshape(-1, 2) for contour in filtered_contours])
         min_x, min_y = np.min(all_points, axis=0)
         max_x, max_y = np.max(all_points, axis=0)
-        center_x = (min_x + max_x) / 2
-        center_y = (min_y + max_y) / 2
-
+        abs_center_x = (min_x + max_x) / 2
+        abs_center_y = (min_y + max_y) / 2
+        offset_pos_xy = []
+        for contour in filtered_contours:
+            all_points = np.vstack(contour.reshape(-1, 2))
+            min_x, min_y = np.min(all_points, axis=0)
+            max_x, max_y = np.max(all_points, axis=0)
+            center_y = round(((min_x + max_x) / 2 - abs_center_x) * scale_factor * 25.4,1)
+            center_x = round(((min_y + max_y) / 2 - abs_center_y) * scale_factor * 25.4,1)
+            offset_pos_xy.append([center_x, center_y])
+        # Save offset_pos_xy to a temp file for use in import_to_openscad
+        try:
+            import pickle
+            temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'offset_pos_xy.pkl')
+            with open(temp_centers_path, 'wb') as f:
+                pickle.dump(offset_pos_xy, f)
+        except Exception as e:
+            print(f"Warning: Could not save offset_pos_xy for OpenSCAD import: {e}")
         if splitDXF:
             output_paths = []
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [
-                    executor.submit(save_single_dxf, contour, scale_factor, center_x, center_y, file_name, idx, folder_name)
+                    executor.submit(save_single_dxf, contour, scale_factor, pos_xy[idx], file_name, idx, folder_name)
                     for idx, contour in enumerate(filtered_contours)
                 ]
                 for future in concurrent.futures.as_completed(futures):
@@ -191,6 +207,9 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             pyperclip.copy(output_path)
             console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
+            
+        
+
             return output_path, gridx_size, gridy_size
     except Exception as e:
         console_text.setText(f"Error saving DXF: {str(e)}")
@@ -236,6 +255,13 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         # Use forward slashes for the file path(s)
         if splitDXF and isinstance(dxf_path, list):
             dxf_file_paths = [p.replace("\\", "/") for p in dxf_path]
+            # Sort dxf_file_paths by contour index in filename (e.g., *_contour_1.dxf, *_contour_2.dxf, ...)
+            import re
+            def contour_index(path):
+                # Match _contour_N.dxf at the end of the filename, regardless of path separator
+                m = re.search(r'_contour_(\d+)\.dxf$', os.path.basename(path))
+                return int(m.group(1)) if m else 0
+            dxf_file_paths.sort(key=contour_index)
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
             # Split dxf_cut_depths into arrays of max size 4
             cut_depths = ["10"] * len(dxf_file_paths)
@@ -265,10 +291,22 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             section_cut_depth_concat = f'section_cut_depth = [{', '.join(section_cut_depth_names)}];\n'
             section_parameters_concat = f'section_parameters = [{', '.join(section_param_names)}];\n'
 
-            # Generate position_1, position_2, ... and position array
+            # Generate position_1, position_2, ... and position array using pos_xy from temp file
+            pos_xy = None
+            try:
+                import pickle
+                temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'offset_pos_xy.pkl')
+                if os.path.exists(temp_centers_path):
+                    with open(temp_centers_path, 'rb') as f:
+                        pos_xy = pickle.load(f)
+            except Exception:
+                pass
+            if not pos_xy or len(pos_xy) != len(dxf_file_paths):
+                # fallback: zeros
+                pos_xy = [[0,0] for _ in range(len(dxf_file_paths))]
             position_lines = []
             for idx in range(len(dxf_file_paths)):
-                position_lines.append(f'position_{idx+1} = [0,0,0]; // .1')
+                position_lines.append(f'position_{idx+1} = [{pos_xy[idx][0]:.6f},{pos_xy[idx][1]:.6f},0]; // .1')
             position_array = f'position = [{', '.join([f"position_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             # Replace the position = [[0, 0, 0]]; // .1 line
             updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
@@ -390,10 +428,14 @@ def display_image_on_canvas(image, canvas, region, caption):
         print(f"Error displaying image on canvas: {str(e)}")
         print(traceback.format_exc())
 
-def save_single_dxf(contour, scale_factor, center_x, center_y, file_name, idx, folder_name):
+def save_single_dxf(contour, scale_factor, pos_xy, file_name, idx, folder_name):
+    center_y, center_x = pos_xy
     doc = ezdxf.new()
     msp = doc.modelspace()
-    points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
+    points = [
+        (point[0][1] * scale_factor - center_y * scale_factor
+         , point[0][0] * scale_factor - center_x * scale_factor
+         ) for point in contour]
     if points[0] != points[-1]:
         points.append((points[0][0], points[0][1]))
     msp.add_lwpolyline(points)
