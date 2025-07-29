@@ -1,8 +1,14 @@
 use <src/modules/module_gridfinity_cup.scad>
 use <src/modules/module_finger_slot.scad>
+use <src/gridfinity_shape_cutter.scad>
 
 // ===== PARAMETERS ===== //
 /* [General Settings] */
+// If height == 0, use circle (width = diameter). If height > 0, use square (width x height)
+// Paste your shape_data from excel here
+// shape_data format: [[x, y, width, height, depth], ...]
+shape_data = [[-1.75,0.0,2.6,0.0,1.32,],[-4.75,0.0,2.6,0.0,1.32,],[0.66,0.81,1.22,0.0,1.5,],[0.66,-0.81,1.22,0.0,1.5,],[2.28,0.81,1.22,0.0,1.5,],[2.28,-0.81,1.22,0.0,1.5,]];
+
 // [width, depth, height]
 size = [5, 2, 6]; // .1 
 // [units,mm] units or mm, ex: [2,0] or [0,84]
@@ -39,6 +45,10 @@ slot_pos = [slot_pos_1];
 
 /* [Section Adjustments] */
 
+
+/* [Shape Cutouts] */
+add_shape_data = false;
+hole_shift = [0, 0]; // Shift holes by this amount in X and Y
 
 /* [Base Options] */
 half_pitch = false;
@@ -284,6 +294,10 @@ difference() {
                         finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
                     }
                 }
+            }
+            // Add shape cutouts if requested
+            if (add_shape_data) {
+                shape_cutouts(shape_data, hole_shift, chamfer_height, height[0]);
             }
 
             // Add label slot if include_label is true
