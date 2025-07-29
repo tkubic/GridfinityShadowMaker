@@ -292,6 +292,8 @@ difference() {
                 for (i = [0 : len(slot_shape) - 1]) {
                     if (slot_shape[i] != "none") {
                         finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
+                        mirror([0,0,1])
+                            finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
                     }
                 }
             }
