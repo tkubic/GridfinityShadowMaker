@@ -17,10 +17,11 @@ scad_file_path = None  # Declare scad_file_path as a global variable
 
 def get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry):
     global offset, token, resolution
-    threshold_input = validate_input(threshold_entry.text(), 110, 0, 255)
+    # Defaults: threshold 145, offset 0.1 (inches), token 3.0 (inches), resolution 20
+    threshold_input = validate_input(threshold_entry.text(), 145, 0, 255)
     offset = validate_input(offset_entry.text(), 0.1)
-    token = validate_input(token_entry.text(), 2.000)
-    resolution = validate_input(resolution_entry.text(), 10)
+    token = validate_input(token_entry.text(), 3.000)
+    resolution = validate_input(resolution_entry.text(), 20)
     return threshold_input
 
 def validate_input(value, default, min_val=None, max_val=None):
@@ -139,7 +140,7 @@ def save_dxf_file(doc, file_name, folder_name):
     doc.saveas(output_path)
     return file_name + ".dxf"
 
-def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder_name, splitDXF=False):
+def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder_name, splitDXF=True):
     try:
         max_p2d_contour, max_p2d_ratio = find_max_p2d_ratio_contour(contours)
         if max_p2d_contour is None:
@@ -199,7 +200,11 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             doc = ezdxf.new()
             msp = doc.modelspace()
             for contour in filtered_contours:
-                points = [(point[0][1] * scale_factor - center_y * scale_factor, point[0][0] * scale_factor - center_x * scale_factor) for point in contour]
+                # Preserve absolute coordinates from the contour. Do not recenter
+                # by subtracting per-contour centers — write points as absolute
+                # pixel positions scaled by `scale_factor` so the DXF reflects
+                # their true positions in image space.
+                points = [(point[0][1] * scale_factor, point[0][0] * scale_factor) for point in contour]
                 if points[0] != points[-1]:
                     points.append((points[0][0], points[0][1]))
                 msp.add_lwpolyline(points)
@@ -451,10 +456,13 @@ def save_single_dxf(contour, scale_factor, pos_xy, file_name, idx, folder_name):
     center_y, center_x = pos_xy
     doc = ezdxf.new()
     msp = doc.modelspace()
+    # Preserve absolute coordinates when writing single-contour DXFs.
+    # Do not subtract the contour center; use scaled image coordinates
+    # directly so the resulting DXF keeps the original placement.
     points = [
-        (point[0][1] * scale_factor - center_y * scale_factor
-         , point[0][0] * scale_factor - center_x * scale_factor
-         ) for point in contour]
+        (point[0][1] * scale_factor, point[0][0] * scale_factor)
+        for point in contour
+    ]
     if points[0] != points[-1]:
         points.append((points[0][0], points[0][1]))
     msp.add_lwpolyline(points)

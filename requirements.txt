@@ -1,0 +1,17 @@
+# Pinned Python dependencies for GridfinityShadowMaker processing
+opencv-python==4.8.0.76
+Pillow==9.5.0
+ezdxf==0.19.2
+numpy==1.26.2
+pyperclip==1.8.2
+colorama==0.4.6
+fonttools==4.41.0
+iniconfig==1.1.1
+packaging==23.1
+pytest==7.4.0
+typing_extensions==4.8.0
+
+# Notes:
+# - These pins are suggested starting points; if installation fails on Windows,
+#   try adjusting opencv-python to a wheel matching your Python/OS or use
+#   platform-specific guidance.

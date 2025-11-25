@@ -1,0 +1,498 @@
+import React from "react";
+import type {
+  BoardConfig,
+  ToolShape,
+  CutType,
+  ScoopType,
+  ShapeType,
+} from "../types";
+import { FONT_OPTIONS } from "../types";
+
+interface InspectorProps {
+  board: BoardConfig;
+  selectedItem: "board" | string;
+  selectedShape: ToolShape | null;
+  editFields: Record<string, string>;
+  setEditFields: (f: Record<string, string>) => void;
+  commitEditField: (key: string) => void;
+  updateShape: (id: string, partial: Partial<ToolShape>) => void;
+  updateBoard: (partial: Partial<BoardConfig>) => void;
+  deleteShape: (id: string) => void;
+  textInputRef: React.RefObject<HTMLInputElement | null>;
+  activeTab?: "trace" | "canvas" | "render";
+  processImageAgain?: (params: { threshold?: number; offset?: number; token?: number; resolution?: number }) => void;
+  traceParams?: { threshold: number; offset: number; token: number; resolution: number };
+  setTraceParams?: (p: { threshold: number; offset: number; token: number; resolution: number }) => void;
+}
+
+export default function Inspector({
+  board,
+  selectedItem,
+  selectedShape,
+  editFields,
+  setEditFields,
+  commitEditField,
+  updateShape,
+  updateBoard,
+  deleteShape,
+  textInputRef,
+  activeTab = "canvas",
+  processImageAgain,
+  traceParams,
+  setTraceParams,
+}: InspectorProps) {
+  // If we're in trace tab, show trace-specific controls in the inspector
+  if (activeTab === "trace") {
+    // trace inputs are lifted into App state via props
+    const threshold = traceParams?.threshold ?? 145;
+    const offset = traceParams?.offset ?? 0.1; // inches
+    const tokenSize = traceParams?.token ?? 3.0; // inches
+    const resolution = traceParams?.resolution ?? 20;
+
+    return (
+      <aside className="panel panel-right">
+        <h2>Trace Inspector</h2>
+        <div className="field">
+          <label>Threshold (0-255)</label>
+          <input type="number" min={0} max={255} value={threshold} onChange={(e) => setTraceParams?.({ threshold: parseInt(e.target.value || '0'), offset: offset, token: tokenSize, resolution })} />
+        </div>
+        <div className="field">
+          <label>Offset (inches)</label>
+          <input type="number" step="0.01" value={offset} onChange={(e) => setTraceParams?.({ threshold, offset: parseFloat(e.target.value || '0'), token: tokenSize, resolution })} />
+        </div>
+        <div className="field">
+          <label>Token Size</label>
+          <input type="number" step="0.1" value={tokenSize} onChange={(e) => setTraceParams?.({ threshold, offset, token: parseFloat(e.target.value || '0'), resolution })} />
+        </div>
+        <div className="field">
+          <label>Resolution</label>
+          <input type="number" step="1" value={resolution} onChange={(e) => setTraceParams?.({ threshold, offset, token: tokenSize, resolution: parseInt(e.target.value || '0') })} />
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button
+            className="action-text-button"
+            onClick={() => processImageAgain?.({ threshold, offset, token: tokenSize, resolution })}
+            title="Process Image Again"
+          >
+            Process Image Again
+          </button>
+        </div>
+      </aside>
+    );
+  }
+  return (
+    <aside className="panel panel-right">
+      <h2>Inspector</h2>
+
+      {selectedItem === "board" && (
+        <>
+          <h3>Board Size</h3>
+          <div className="board-controls">
+            <div className="field">
+              <label>Width (units)</label>
+              <input
+                type="number"
+                min={1}
+                value={board.gridX}
+                onChange={(e) =>
+                  updateBoard({
+                    gridX: Math.max(1, parseInt(e.target.value) || 1),
+                  })
+                }
+              />
+            </div>
+            <div className="field">
+              <label>Depth (units)</label>
+              <input
+                type="number"
+                min={1}
+                value={board.gridY}
+                onChange={(e) =>
+                  updateBoard({
+                    gridY: Math.max(1, parseInt(e.target.value) || 1),
+                  })
+                }
+              />
+            </div>
+            <div className="field">
+              <label>Cell size (mm)</label>
+              <input
+                type="number"
+                min={1}
+                value={board.cellSizeMM}
+                onChange={(e) =>
+                  updateBoard({
+                    cellSizeMM: Math.max(
+                      1,
+                      parseFloat(e.target.value) || board.cellSizeMM
+                    ),
+                  })
+                }
+              />
+            </div>
+            <div className="field">
+              <label>Height (7mm units)</label>
+              <input
+                type="number"
+                min={0}
+                value={board.height7Units ?? 0}
+                onChange={(e) =>
+                  updateBoard({
+                    height7Units: Math.max(0, parseInt(e.target.value) || 0),
+                  })
+                }
+              />
+            </div>
+            <small>1 unit = {board.cellSizeMM} mm</small>
+          </div>
+        </>
+      )}
+
+      {selectedItem !== "board" && !selectedShape && <p>No item selected</p>}
+
+      {selectedShape && selectedItem !== "board" && (
+        <>
+          <h3>{selectedShape.name}</h3>
+
+          <div className="field">
+            <label>Name</label>
+            <input
+              type="text"
+              value={selectedShape.name}
+              onChange={(e) =>
+                updateShape(selectedShape.id, {
+                  name: e.target.value,
+                })
+              }
+            />
+          </div>
+
+          {selectedShape.type === "text" && (
+            <div className="field">
+              <label>Text</label>
+              <input
+                ref={textInputRef}
+                type="text"
+                value={editFields.text ?? (selectedShape.text ?? selectedShape.name)}
+                onChange={(e) => setEditFields({ ...editFields, text: e.target.value })}
+                onBlur={() => updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name });
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+              />
+            </div>
+          )}
+
+          <div className="field">
+            <label>Cut Type</label>
+            <select
+              value={selectedShape.cutType ?? "Cut"}
+              onChange={(e) => {
+                const v = e.target.value as CutType;
+                // update cut type and apply depth defaults/behavior
+                if (v === "Raised") {
+                  updateShape(selectedShape.id, { cutType: v, depthMM: 0.6 });
+                  setEditFields({ ...editFields, cutType: v, depth: (0.6).toFixed(1) });
+                } else if (v === "Cut") {
+                  updateShape(selectedShape.id, { cutType: v, depthMM: 15 });
+                  setEditFields({ ...editFields, cutType: v, depth: (15).toFixed(1) });
+                } else if (v === "Blocker") {
+                  // set blocker depth to (board.height7Units - 1) * 7 mm and grey it out
+                  const boardHeightUnits = board.height7Units ?? 6;
+                  const blockerDepth = Math.max(0, boardHeightUnits - 1) * 7;
+                  updateShape(selectedShape.id, { cutType: v, depthMM: blockerDepth });
+                  setEditFields({ ...editFields, cutType: v, depth: blockerDepth.toFixed(1) });
+                } else {
+                  updateShape(selectedShape.id, { cutType: v });
+                  setEditFields({ ...editFields, cutType: v });
+                }
+              }}
+            >
+              <option value="Cut">Cut</option>
+              <option value="Blocker">Blocker</option>
+              <option value="Raised">Raised</option>
+            </select>
+          </div>
+
+          {selectedShape.type === "text" && (
+            <>
+              <div className="field">
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className={"toggle-btn" + (selectedShape.fontBold ? " active" : "")}
+                    onClick={() => updateShape(selectedShape.id, { fontBold: !selectedShape.fontBold })}
+                    title="Bold"
+                  >
+                    B
+                  </button>
+                  <button
+                    type="button"
+                    className={"toggle-btn" + (selectedShape.fontItalic ? " active" : "")}
+                    onClick={() => updateShape(selectedShape.id, { fontItalic: !selectedShape.fontItalic })}
+                    title="Italic"
+                  >
+                    <i>I</i>
+                  </button>
+                  <button
+                    type="button"
+                    className={"toggle-btn" + (selectedShape.fontUnderline ? " active" : "")}
+                    onClick={() => updateShape(selectedShape.id, { fontUnderline: !selectedShape.fontUnderline })}
+                    title="Underline"
+                  >
+                    <span style={{ textDecoration: "underline" }}>U</span>
+                  </button>
+                </div>
+
+                <label>Font</label>
+                <select
+                  value={editFields.font ?? (selectedShape.fontName ?? "Nunito, Arial, Helvetica, sans-serif")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditFields({ ...editFields, font: v });
+                    updateShape(selectedShape.id, { fontName: v });
+                  }}
+                  onBlur={() => updateShape(selectedShape.id, { fontName: editFields.font ?? selectedShape.fontName })}
+                >
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+
+              </div>
+
+              <div className="field">
+                <label>Font size (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editFields.fontSize ?? ((selectedShape.fontSizeMM ?? 15)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, fontSize: e.target.value })}
+                  onBlur={() => commitEditField("fontSize")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("fontSize"); }}
+                />
+              </div>
+              <div className="field">
+                <label>Depth (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                  onBlur={() => commitEditField("depth")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  style={{ width: "100%" }}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                />
+              </div>
+            </>
+          )}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <div className="field" style={{ flex: 1, minWidth: 0 }}>
+              <label>X (mm)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={editFields.x ?? (selectedShape.x ?? 0).toFixed(1)}
+                onChange={(e) => setEditFields({ ...editFields, x: e.target.value })}
+                style={{ width: "100%" }}
+                onBlur={() => commitEditField("x")}
+                onKeyDown={(e) => { if (e.key === "Enter") commitEditField("x"); }}
+              />
+            </div>
+
+            <div className="field" style={{ flex: 1, minWidth: 0 }}>
+              <label>Y (mm)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={editFields.y ?? (selectedShape.y ?? 0).toFixed(1)}
+                onChange={(e) => setEditFields({ ...editFields, y: e.target.value })}
+                style={{ width: "100%" }}
+                onBlur={() => commitEditField("y")}
+                onKeyDown={(e) => { if (e.key === "Enter") commitEditField("y"); }}
+              />
+            </div>
+          </div>
+
+          {selectedShape.type === "dxf" ? (
+            <>
+              <div className="field">
+                <label>Rotate (deg)</label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                  onBlur={() => commitEditField("rotate")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div className="field">
+                <label>Scale</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0.1}
+                  value={editFields.scale ?? ((selectedShape.scale ?? 1)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, scale: e.target.value })}
+                  onBlur={() => commitEditField("scale")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("scale"); }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div className="field">
+                <label>Depth (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                  onBlur={() => commitEditField("depth")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  style={{ width: "100%" }}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                />
+              </div>
+            </>
+          ) : selectedShape.type === "text" ? null : (
+            <>
+              <div className="field">
+                <label>Type</label>
+                <select
+                  value={selectedShape.type}
+                  onChange={(e) => {
+                    const newType = e.target.value as ShapeType;
+                    
+
+                      if (newType === "rect") {
+                        // default width/height to 20mm when missing
+                        const defaultDim = 20;
+                        updateShape(selectedShape.id, {
+                          type: "rect",
+                          widthMM: selectedShape.widthMM ?? defaultDim,
+                          heightMM: selectedShape.heightMM ?? defaultDim,
+                          scoop: "none",
+                        });
+                      } else if (newType === "oval") {
+                        const defaultDim = 20;
+                        updateShape(selectedShape.id, {
+                          type: "oval",
+                          widthMM: selectedShape.widthMM ?? defaultDim,
+                          heightMM: selectedShape.heightMM ?? defaultDim,
+                        });
+                      }
+                  }}
+                >
+                  <option value="rect">Rectangle</option>
+                  <option value="oval">Circle/Oval</option>
+                </select>
+              </div>
+
+              {(selectedShape.type === "rect" || selectedShape.type === "oval") && (
+                <>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <div className="field" style={{ flex: 1 }}>
+                      <label>Width (mm)</label>
+                      <input
+                        type="number"
+                        value={editFields.width ?? (selectedShape.widthMM ?? 0).toString()}
+                        onChange={(e) => setEditFields({ ...editFields, width: e.target.value })}
+                        onBlur={() => commitEditField("width")}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitEditField("width"); }}
+                      />
+                    </div>
+
+                    <div className="field" style={{ flex: 1 }}>
+                      <label>Height (mm)</label>
+                      <input
+                        type="number"
+                        value={editFields.height ?? (selectedShape.heightMM ?? 0).toString()}
+                        onChange={(e) => setEditFields({ ...editFields, height: e.target.value })}
+                        onBlur={() => commitEditField("height")}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitEditField("height"); }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {selectedShape.type === "rect" && (
+                <div className="field">
+                  <label>Scoop</label>
+                  <select
+                    value={(selectedShape as ToolShape).scoop ?? "none"}
+                    onChange={(e) =>
+                      updateShape(selectedShape.id, {
+                        scoop: e.target.value as ScoopType,
+                      })
+                    }
+                  >
+                    <option value="none">None</option>
+                    <option value="shallow">Shallow</option>
+                    <option value="deep">Deep</option>
+                  </select>
+                </div>
+              )}
+
+              { /* radius removed: oval uses width/height only */ }
+              <div className="field">
+                <label>Rotate (deg)</label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                  onBlur={() => commitEditField("rotate")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div className="field">
+                <label>Depth (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                  onBlur={() => commitEditField("depth")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  style={{ width: "100%" }}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                />
+              </div>
+            </>
+          )}
+
+          <div
+            style={{
+              paddingTop: 12,
+              borderTop: "1px solid rgba(255,255,255,0.04)",
+              marginTop: 12,
+            }}
+          >
+            <button
+              className="delete-shape-button"
+              onClick={() => selectedShape && deleteShape(selectedShape.id)}
+              style={{
+                background: "#880000",
+                color: "white",
+                border: "none",
+                padding: "8px 12px",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              Delete Shape
+            </button>
+          </div>
+        </>
+      )}
+    </aside>
+  );
+}

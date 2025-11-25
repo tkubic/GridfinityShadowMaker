@@ -1,0 +1,262 @@
+/* Load Nunito as a rounded substitute for Arial Rounded MT Bold */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap');
+
+/* Root layout */
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+
+
+/* Top bar */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid #ddd;
+  background: #f7f7f7;
+}
+
+.app-title {
+  font-weight: 600;
+}
+
+/* Main 3-column area */
+.app-main {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* allows flex children to shrink */
+}
+
+/* Generic panel */
+.panel {
+  padding: 8px;
+  background: #fafafa;
+  box-sizing: border-box;
+}
+
+/* Left panel: Tools */
+.panel-left {
+  width: 220px;
+  border-right: 1px solid #e0e0e0;
+}
+
+/* Right panel: Board & Inspector */
+.panel-right {
+  width: 260px;
+  border-left: 1px solid #e0e0e0;
+}
+
+/* Center canvas container */
+.canvas-container {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center; /* center the SVG horizontally */
+  align-items: stretch;     /* allow children to stretch to full height */
+  background: #f0f0f0;
+  overflow: auto;
+  min-height: 0; /* allow flex children to shrink properly */
+    width: auto;
+    /* Allow center area to expand to remaining flex space; remove rigid max-width so
+      large screens don't show excessive white space. If horizontal scrolling
+      becomes an issue on small screens, we can add a responsive breakpoint. */
+    max-width: none;
+}
+
+/* SVG board */
+.board-svg {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid #ccc;
+  background: white;
+}
+
+.board-rect {
+  fill: #000000;
+}
+
+.board-grid-line {
+  stroke: #e0e0e0;
+  stroke-width: 1;
+}
+
+/* Shapes */
+.shape-rect,
+.shape-circle {
+  cursor: pointer;
+}
+
+.shape-selected {
+  outline: 2px dashed rgba(255,255,102,0.6);
+}
+
+/* Tool list */
+.tool-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.tool-list-item {
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tool-list-item:hover {
+  background: #e9e9e9;
+}
+
+.tool-list-item.selected {
+  background: #d0e4ff;
+}
+
+/* Fields in right panel */
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.field label {
+  font-size: 0.8rem;
+  color: #555;
+  margin-bottom: 2px;
+}
+
+.field input {
+  padding: 4px 6px;
+  font-size: 0.9rem;
+}
+
+/* preview removed per user request */
+
+.toggle-btn {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+}
+.toggle-btn:active {
+  transform: translateY(1px);
+}
+.toggle-btn.active {
+  background: #ddd;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.08);
+}
+
+/* Top tabs */
+.tab-btn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.tab-btn.active {
+  border: 2px solid #000; /* black border to indicate selection */
+  background: #fff;
+}
+
+.board-controls {
+  margin-bottom: 12px;
+}
+
+.board-controls h3 {
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid #ddd;
+}
+
+/* Trace canvas layout */
+.trace-canvas {
+  display: flex;
+  gap: 12px;
+  padding: 24px;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: stretch; /* let panes stretch to fill width */
+  align-items: stretch; /* stretch panes to fill vertical space */
+  flex: 1 1 auto;
+}
+.image-pane {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0; /* allow shrinking inside flex */
+}
+.image-label {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.image-placeholder {
+  border: 1px dashed #bbb;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  flex: 1 1 auto; /* fill remaining vertical space */
+  min-height: 0;
+}
+
+.section-header {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+/* Single-line action that looks like a button with an embossed effect */
+.action-text-button {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid #000; /* black border as requested */
+  border-radius: 6px;
+  background: linear-gradient(#ffffff, #e9e9e9); /* subtle emboss */
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.6), 0 2px 3px rgba(0,0,0,0.08);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1; /* single-line appearance */
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.action-text-button:active {
+  transform: translateY(1px);
+}
+
+.action-text-button.small {
+  padding: 4px 8px;
+  height: 28px;
+  font-size: 0.9rem;
+}
+/* Prevent button text from wrapping; use ellipsis when space constrained */
+.action-text-button,
+.action-text-button.small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-left hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 10px 0;
+}
