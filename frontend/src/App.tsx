@@ -350,10 +350,12 @@ function App() {
           const cy = (minY + maxY) / 2;
           const relPaths = parsedPaths.map((path) => path.map((p) => ({ x: p.x - cx, y: p.y - cy })));
 
+            // Use filename without extension as the display name
+            const baseName = file.name.replace(/\.[^/.]+$/, "");
             const newShape: ToolShape = {
               id,
               type: "dxf",
-              name: `DXF - ${file.name}`,
+              name: `DXF - ${baseName}`,
               dxfName: file.name,
               x: Math.round(cx * 10) / 10,
               y: Math.round(cy * 10) / 10,
@@ -555,6 +557,112 @@ function App() {
             <RenderCanvas />
           )}
         </main>
+        {/* Export controls for the Canvas tab */}
+        {activeTab === 'canvas' && (
+          <div style={{ padding: 8, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <button
+              onClick={async () => {
+                try {
+                  const items: any[] = [];
+                  function rotatePoint(px: number, py: number, deg: number) {
+                    const r = (deg * Math.PI) / 180.0;
+                    const cosr = Math.cos(r);
+                    const sinr = Math.sin(r);
+                    return { x: px * cosr - py * sinr, y: px * sinr + py * cosr };
+                  }
+
+                  for (const s of project.shapes) {
+                    if (s.type === 'dxf') {
+                      // Prefer embedded parsed polylines (client-side) so exports work
+                      // even when the original DXF file isn't available on the server.
+                      if (s.dxfPaths && s.dxfPaths.length) {
+                        const scale = s.scale ?? 1;
+                        const rotDeg = s.rotateDeg || 0;
+                        const polylines = s.dxfPaths.map((path: any) =>
+                          path.map((p: any) => {
+                            const sx = (p.x || 0) * scale;
+                            const sy = (p.y || 0) * scale;
+                            // invert rotation direction to match canvas expectation
+                            const rpt = rotatePoint(sx, sy, -rotDeg);
+                            return { x: (s.x || 0) + rpt.x, y: (s.y || 0) + rpt.y };
+                          })
+                        );
+                        items.push({ name: s.name || s.id, polylines, posXYRot: [0, 0, 0] });
+                        continue;
+                      }
+                      if (s.dxfName) {
+                        items.push({ name: s.name || s.id, dxfPaths: [s.dxfName], posXYRot: [s.x || 0, s.y || 0, s.rotateDeg || 0], scale: s.scale ?? 1 });
+                        continue;
+                      }
+                      continue;
+                    }
+
+                    // primitives and text -> polylines
+                    // For rectangles the stored x,y may be bottom-left on the canvas;
+                    // convert to center-origin for export so DXFs are centered around shape.x/y
+                    let cx = s.x || 0;
+                    let cy = s.y || 0;
+                    const rot = s.rotateDeg || 0;
+                    const polylines: Array<Array<{ x: number; y: number }>> = [];
+                    if (s.type === 'rect') {
+                      const w = s.widthMM || 0;
+                      const h = s.heightMM || 0;
+                      const halfW = w / 2;
+                      const halfH = h / 2;
+                      // shape.x/shape.y are already center-origin; no conversion needed
+                      const corners = [
+                        { x: -halfW, y: -halfH },
+                        { x: halfW, y: -halfH },
+                        { x: halfW, y: halfH },
+                        { x: -halfW, y: halfH },
+                      ].map((p) => rotatePoint(p.x, p.y, rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
+                      polylines.push(corners);
+                    } else if (s.type === 'oval') {
+                      const w = s.widthMM || 20;
+                      const h = s.heightMM || 20;
+                      const rx = w / 2;
+                      const ry = h / 2;
+                      const segments = 64;
+                      const pts: Array<{ x: number; y: number }> = [];
+                      for (let i = 0; i < segments; i++) {
+                        const t = (i / segments) * 2 * Math.PI;
+                        const px = rx * Math.cos(t);
+                        const py = ry * Math.sin(t);
+                        const rpt = rotatePoint(px, py, rot);
+                        pts.push({ x: rpt.x + cx, y: rpt.y + cy });
+                      }
+                      polylines.push(pts);
+                    } else if (s.type === 'text') {
+                      // send text for server-side vectorization (glyph outlines)
+                      items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
+                      continue;
+                    }
+
+                    if (polylines.length) items.push({ name: s.name || s.id, polylines, posXYRot: [0, 0, 0] });
+                  }
+
+                  const payload = { projectName: project.name, items };
+                  const r = await fetch('http://localhost:5000/export-dxfs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                  const j = await r.json();
+                  if (!r.ok) {
+                    alert('Export DXFs failed: ' + (j && j.error ? j.error : r.statusText));
+                    return;
+                  }
+                  if (j && j.ok) {
+                    alert('DXF files written to project processing_output/');
+                  } else {
+                    alert('Export DXFs completed with unknown result; check server logs.');
+                  }
+                } catch (e) {
+                  console.error('output dxfs failed', e);
+                  alert('Output DXFs failed: ' + (e && (e as Error).message ? (e as Error).message : String(e)));
+                }
+              }}
+            >
+              Output DXF's
+            </button>
+          </div>
+        )}
 
         <Inspector
           board={board}

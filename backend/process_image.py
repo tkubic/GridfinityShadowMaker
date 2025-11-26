@@ -11,8 +11,9 @@ def usage():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('input_path')
-    parser.add_argument('out_dir')
+    parser.add_argument('input_path', nargs='?')
+    parser.add_argument('out_dir', nargs='?')
+    parser.add_argument('--export-dxfs', type=str, default=None, help='Directory to read .poly.json/.text.json and write DXF files')
     parser.add_argument('--projectdir', type=str, default=None)
     parser.add_argument('--workfolder', type=str, default=None)
     parser.add_argument('--threshold', type=float, default=None)
@@ -23,7 +24,14 @@ def main():
 
     inp = args.input_path
     out = args.out_dir
-    os.makedirs(out, exist_ok=True)
+    # If export-dxfs mode is used, treat the provided export-dxfs path as the directory to operate on
+    if args.export_dxfs:
+        export_dir = args.export_dxfs
+        os.makedirs(export_dir, exist_ok=True)
+        do_export_dxfs(export_dir, args.projectdir)
+        sys.exit(0)
+    if out:
+        os.makedirs(out, exist_ok=True)
 
     try:
         # If a workfolder is provided, switch cwd so processing writes into project folder
@@ -246,6 +254,236 @@ def main():
     except Exception as e:
         print('processing failed:', e)
         sys.exit(1)
+
+
+def do_export_dxfs(export_dir, projectdir=None):
+    """Read .poly.json and .text.json files from export_dir and write DXF files."""
+    try:
+        import ezdxf
+    except Exception as e:
+        print('ezdxf is required for export-dxfs mode:', e)
+        return
+
+    files = os.listdir(export_dir)
+    for f in files:
+        lower = f.lower()
+        full = os.path.join(export_dir, f)
+        try:
+            if lower.endswith('.poly.json'):
+                with open(full, 'r', encoding='utf8') as fh:
+                    import json
+                    data = json.load(fh)
+                    polylines = data.get('polylines', [])
+                    # write DXF
+                    doc = ezdxf.new()
+                    msp = doc.modelspace()
+                    for poly in polylines:
+                        pts = []
+                        for p in poly:
+                            # expect {x,y} in mm
+                            x = float(p.get('x', 0))
+                            y = float(p.get('y', 0))
+                            pts.append((x, y))
+                        if pts and pts[0] != pts[-1]:
+                            pts.append(pts[0])
+                        if pts:
+                            msp.add_lwpolyline(pts)
+                    # Name DXF by stripping the '.poly.json' suffix to get the original shape name
+                    if f.lower().endswith('.poly.json'):
+                        base = f[:-len('.poly.json')]
+                    else:
+                        base = os.path.splitext(f)[0]
+                    outname = base + '.dxf'
+                    outpath = os.path.join(export_dir, outname)
+                    doc.saveas(outpath)
+                    print('Wrote DXF from polyjson:', outpath)
+            elif lower.endswith('.text.json'):
+                # simple placeholder: create a box representing text extents
+                with open(full, 'r', encoding='utf8') as fh:
+                    import json
+                    data = json.load(fh)
+                    cx, cy, rot = 0.0, 0.0, 0.0
+                    if isinstance(data.get('posXYRot'), (list, tuple)):
+                        cx = float(data['posXYRot'][0])
+                        cy = float(data['posXYRot'][1])
+                        rot = float(data['posXYRot'][2] if len(data['posXYRot'])>2 else 0.0)
+                    fontsize = float(data.get('fontSize', data.get('fontSizeMM', 15)))
+                    w = fontsize * len(str(data.get('text','')))
+                    h = fontsize
+                    hw = w/2; hh = h/2
+                    corners = [(cx-hw, cy-hh), (cx+hw, cy-hh), (cx+hw, cy+hh), (cx-hw, cy+hh), (cx-hw, cy-hh)]
+                    doc = ezdxf.new()
+                    msp = doc.modelspace()
+                    msp.add_lwpolyline(corners)
+                    if f.lower().endswith('.text.json'):
+                        base = f[:-len('.text.json')]
+                    else:
+                        base = os.path.splitext(f)[0]
+                    outname = base + '.dxf'
+                    outpath = os.path.join(export_dir, outname)
+                    doc.saveas(outpath)
+                    print('Wrote placeholder DXF for text:', outpath)
+            else:
+                # skip other files (copy of original dxf will already be present)
+                continue
+        except Exception as e:
+            print('Failed processing', full, e)
+
+    # After writing simple DXFs, check for a manifest that requests transforms
+    manifest_path = os.path.join(export_dir, 'export_manifest.json')
+    if os.path.exists(manifest_path):
+        try:
+            import json
+            with open(manifest_path, 'r', encoding='utf8') as mf:
+                manifest = json.load(mf)
+        except Exception as e:
+            print('Failed to read export_manifest.json', e)
+            manifest = None
+
+        if manifest:
+            for entry in manifest:
+                try:
+                    name = entry.get('name')
+                    src = entry.get('src')
+                    pos = entry.get('posXYRot', [0, 0, 0])
+                    scale = float(entry.get('scale', 1.0))
+                    src_path = os.path.join(export_dir, src)
+                    if not os.path.exists(src_path):
+                        print('Manifest src not found:', src_path)
+                        continue
+                    # Read source DXF and collect points
+                    try:
+                        import ezdxf
+                    except Exception as e:
+                        print('ezdxf needed for DXF transform:', e)
+                        continue
+
+                    try:
+                        doc = ezdxf.readfile(src_path)
+                    except Exception as e:
+                        print('Failed to read source DXF for transform:', src_path, e)
+                        continue
+
+                    msp = doc.modelspace()
+                    pts = []
+                    for e in msp:
+                        etype = e.dxftype()
+                        if etype == 'LWPOLYLINE' or etype == 'POLYLINE':
+                            try:
+                                for p in e.get_points():
+                                    x = float(p[0]); y = float(p[1])
+                                    pts.append((x, y))
+                            except Exception:
+                                # fallback for POLYLINE vertices
+                                try:
+                                    for v in e.vertices():
+                                        pts.append((float(v.dxf.x), float(v.dxf.y)))
+                                except Exception:
+                                    pass
+                        elif etype == 'LINE':
+                            try:
+                                pts.append((float(e.dxf.start.x), float(e.dxf.start.y)))
+                                pts.append((float(e.dxf.end.x), float(e.dxf.end.y)))
+                            except Exception:
+                                pass
+                        elif etype == 'CIRCLE':
+                            try:
+                                pts.append((float(e.dxf.center.x), float(e.dxf.center.y)))
+                            except Exception:
+                                pass
+
+                    if not pts:
+                        print('No geometry points found in', src_path, '; copying without transform')
+                        # just copy as-is to name
+                        outpath = os.path.join(export_dir, f"{name}.dxf")
+                        try:
+                            import shutil
+                            shutil.copyfile(src_path, outpath)
+                            print('Copied DXF without transform to', outpath)
+                        except Exception as e:
+                            print('Failed to copy DXF', e)
+                        continue
+
+                    # compute bounding-box center (use as transform origin)
+                    xs = [p[0] for p in pts]
+                    ys = [p[1] for p in pts]
+                    minx = min(xs); maxx = max(xs)
+                    miny = min(ys); maxy = max(ys)
+                    sx = (minx + maxx) / 2.0
+                    sy = (miny + maxy) / 2.0
+
+                    # target center from pos (assumed mm)
+                    tx = float(pos[0]) if len(pos) > 0 else 0.0
+                    ty = float(pos[1]) if len(pos) > 1 else 0.0
+                    deg = float(pos[2]) if len(pos) > 2 else 0.0
+                    import math
+                    rad = math.radians(deg)
+                    cosr = math.cos(rad)
+                    sinr = math.sin(rad)
+
+                    # create new DXF and transform geometry
+                    newdoc = ezdxf.new()
+                    newmsp = newdoc.modelspace()
+
+                    for e in msp:
+                        etype = e.dxftype()
+                        if etype in ('LWPOLYLINE', 'POLYLINE'):
+                            pts_in = []
+                            try:
+                                iter_pts = e.get_points()
+                            except Exception:
+                                try:
+                                    iter_pts = [ (v.dxf.x, v.dxf.y) for v in e.vertices() ]
+                                except Exception:
+                                    iter_pts = []
+                            for p in iter_pts:
+                                x = float(p[0]); y = float(p[1])
+                                # center, scale, rotate, translate
+                                dx = (x - sx) * scale
+                                dy = (y - sy) * scale
+                                rx = dx * cosr - dy * sinr
+                                ry = dx * sinr + dy * cosr
+                                fx = rx + tx
+                                fy = ry + ty
+                                pts_in.append((fx, fy))
+                            if pts_in:
+                                if pts_in[0] != pts_in[-1]:
+                                    pts_in.append(pts_in[0])
+                                newmsp.add_lwpolyline(pts_in)
+                        elif etype == 'LINE':
+                            try:
+                                x1 = float(e.dxf.start.x); y1 = float(e.dxf.start.y)
+                                x2 = float(e.dxf.end.x); y2 = float(e.dxf.end.y)
+                                for (x,y) in ((x1,y1),(x2,y2)):
+                                    dx = (x - sx) * scale; dy = (y - sy) * scale
+                                dx1 = (x1 - sx) * scale; dy1 = (y1 - sy) * scale
+                                rx1 = dx1 * cosr - dy1 * sinr; ry1 = dx1 * sinr + dy1 * cosr
+                                fx1 = rx1 + tx; fy1 = ry1 + ty
+                                dx2 = (x2 - sx) * scale; dy2 = (y2 - sy) * scale
+                                rx2 = dx2 * cosr - dy2 * sinr; ry2 = dx2 * sinr + dy2 * cosr
+                                fx2 = rx2 + tx; fy2 = ry2 + ty
+                                newmsp.add_line((fx1, fy1), (fx2, fy2))
+                            except Exception:
+                                pass
+                        elif etype == 'CIRCLE':
+                            try:
+                                cx = float(e.dxf.center.x); cy = float(e.dxf.center.y)
+                                r = float(e.dxf.radius) * scale
+                                dx = (cx - sx) * scale; dy = (cy - sy) * scale
+                                rcx = dx * cosr - dy * sinr; rcy = dx * sinr + dy * cosr
+                                fcx = rcx + tx; fcy = rcy + ty
+                                newmsp.add_circle((fcx, fcy), r)
+                            except Exception:
+                                pass
+
+                    outpath = os.path.join(export_dir, f"{name}.dxf")
+                    try:
+                        newdoc.saveas(outpath)
+                        print('Wrote transformed DXF for', name, '->', outpath)
+                    except Exception as e:
+                        print('Failed to save transformed DXF', e)
+                except Exception as e:
+                    print('Error processing manifest entry', entry, e)
 
 
 if __name__ == '__main__':

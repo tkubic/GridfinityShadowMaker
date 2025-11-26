@@ -5,6 +5,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const app = express();
+
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
 // Enable simple CORS for local development
@@ -262,6 +263,154 @@ app.post('/save-project', (req, res) => {
   } catch (e) {
     console.error('Failed to save project gsm', e);
     return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e) });
+  }
+});
+
+// Export multiple DXFs per canvas item into project processing_output
+app.post('/export-dxfs', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectName = String(body.projectName || 'default_project').replace(/[<>:\"/\\|?*\x00-\x1F]/g, '_') || 'default_project';
+    const items = Array.isArray(body.items) ? body.items : [];
+    const repoRoot = path.join(__dirname, '..');
+    const projectFolder = path.join(repoRoot, projectName);
+    if (!fs.existsSync(projectFolder)) fs.mkdirSync(projectFolder, { recursive: true });
+    const out = path.join(projectFolder, 'processing_output');
+    if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
+
+    const results = [];
+    const manifest = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const safeName = (it.name || `item_${i}`).replace(/[^a-z0-9_\-\.]/gi, '_');
+      if (it.polylines) {
+        const polyPath = path.join(out, `${safeName}.poly.json`);
+        fs.writeFileSync(polyPath, JSON.stringify({ polylines: it.polylines }, null, 2), 'utf8');
+        results.push({ type: 'polyjson', path: polyPath });
+      } else if (it.dxfPaths && it.dxfPaths.length) {
+        for (const d of it.dxfPaths) {
+          const candidates = [];
+          if (path.isAbsolute(d)) candidates.push(d);
+          // check project folder and processing_output
+          candidates.push(path.join(projectFolder, d));
+          candidates.push(path.join(projectFolder, 'processing_output', d));
+          // repo root candidates
+          candidates.push(path.join(repoRoot, d));
+          candidates.push(path.join(repoRoot, 'assets', d));
+          candidates.push(path.join(repoRoot, 'frontend', 'public', d));
+          candidates.push(path.join(repoRoot, 'frontend', 'src', 'assets', d));
+
+          let found = null;
+          for (const c of candidates) {
+            if (fs.existsSync(c)) {
+              found = c;
+              break;
+            }
+          }
+          if (found) {
+            // copy original file using its original basename into processing_output
+            const base = path.basename(found);
+            const dstBase = base;
+            const dst = path.join(out, dstBase);
+            try {
+              fs.copyFileSync(found, dst);
+            } catch (e) {
+              console.error('failed to copy referenced dxf', found, e);
+            }
+            // record manifest entry so python can apply transform to the copied DXF
+            manifest.push({ name: safeName, src: dstBase, posXYRot: it.posXYRot || (it.posXYRot === undefined ? [it.x || 0, it.y || 0, it.rotateDeg || 0] : it.posXYRot), scale: it.scale || 1 });
+            results.push({ type: 'dxf', path: dst });
+          } else {
+            // As a last resort, search the repository recursively for the filename
+            const search = (dir, name) => {
+              try {
+                const list = fs.readdirSync(dir);
+                for (const f of list) {
+                  const p = path.join(dir, f);
+                  try {
+                    const st = fs.lstatSync(p);
+                    if (st.isDirectory()) {
+                      const r = search(p, name);
+                      if (r) return r;
+                    } else if (f === name) {
+                      return p;
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+              } catch (e) {
+                return null;
+              }
+              return null;
+            };
+            // tolerant search: match by substring (case-insensitive) as fallback
+            const searchTolerant = (dir, nameLower) => {
+              try {
+                const list = fs.readdirSync(dir);
+                for (const f of list) {
+                  const p = path.join(dir, f);
+                  try {
+                    const st = fs.lstatSync(p);
+                    if (st.isDirectory()) {
+                      const r = searchTolerant(p, nameLower);
+                      if (r) return r;
+                    } else if (f.toLowerCase().includes(nameLower) || nameLower.includes(f.toLowerCase())) {
+                      return p;
+                    }
+                  } catch (e) {}
+                }
+              } catch (e) { return null; }
+              return null;
+            };
+            const recursiveFound = search(repoRoot, d);
+            const recursiveFound2 = recursiveFound || searchTolerant(repoRoot, String(d).toLowerCase());
+              if (recursiveFound) {
+              const base2 = path.basename(recursiveFound);
+              const dst2 = path.join(out, base2);
+              try { fs.copyFileSync(recursiveFound, dst2); manifest.push({ name: safeName, src: base2, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1 }); results.push({ type: 'dxf', path: dst2, foundBy: 'recursive' }); } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
+            } else if (recursiveFound2) {
+              const base2 = path.basename(recursiveFound2);
+              const dst2 = path.join(out, base2);
+              try { fs.copyFileSync(recursiveFound2, dst2); manifest.push({ name: safeName, src: base2, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1 }); results.push({ type: 'dxf', path: dst2, foundBy: 'recursive_tolerant' }); } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
+            } else {
+              console.warn('Referenced DXF not found in candidates for', d, 'checked', candidates);
+              results.push({ type: 'missing', requested: d, checked: candidates });
+            }
+          }
+        }
+      } else if (it.type === 'text') {
+        const txtPath = path.join(out, `${safeName}.text.json`);
+        fs.writeFileSync(txtPath, JSON.stringify(it, null, 2), 'utf8');
+        results.push({ type: 'textjson', path: txtPath });
+      }
+    }
+
+    // spawn python helper to convert .poly.json and .text.json to DXF using existing processing code
+    // write manifest for referenced DXF transforms
+    if (manifest.length) {
+      try {
+        fs.writeFileSync(path.join(out, 'export_manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+      } catch (e) {
+        console.error('failed to write export_manifest.json', e);
+      }
+    }
+
+    const py = spawn('python', [path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot], { stdio: 'inherit' });
+    py.on('close', (code) => {
+      if (code === 0) {
+        return res.json({ ok: true, results });
+      }
+      return res.status(500).json({ error: 'python helper failed', code });
+    });
+    py.on('error', (err) => {
+      console.error('python spawn error', err);
+      return res.status(500).json({ error: 'python spawn error', detail: String(err) });
+    });
+
+  } catch (err) {
+    console.error('export-dxfs handler error', err);
+    return res.status(500).json({ error: 'export-dxfs failed', detail: String(err) });
   }
 });
 

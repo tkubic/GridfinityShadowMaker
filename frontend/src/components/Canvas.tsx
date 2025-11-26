@@ -41,7 +41,7 @@ export default function Canvas({
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Delete or Backspace should remove the selected shape when present
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (e.key === 'Delete') {
         if (selectedItem && selectedItem !== 'board') {
           e.preventDefault();
           deleteShape(selectedItem as string);
@@ -111,13 +111,14 @@ export default function Canvas({
         const isSelected = selectedItem === shape.id;
 
         if (shape.type === "rect") {
+          // Render rectangles with shape.x/shape.y as the center (consistent with ovals and text)
           const wPx = (shape.widthMM || 0) * scaleX;
           const hPx = (shape.heightMM || 0) * scaleY;
-          const xPx = shape.x * scaleX;
-          const yPx = boardPxHeight - shape.y * scaleY - hPx;
+          const cx = shape.x * scaleX;
+          const cy = boardPxHeight - shape.y * scaleY;
+          const xPx = cx - wPx / 2;
+          const yPx = cy - hPx / 2;
           const rotDeg = shape.rotateDeg ?? 0;
-          const cx = xPx + wPx / 2;
-          const cy = yPx + hPx / 2;
           return (
             <rect
               key={shape.id}
