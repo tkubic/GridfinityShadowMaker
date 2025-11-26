@@ -411,10 +411,13 @@ app.post('/export-dxfs', async (req, res) => {
               if (fs.existsSync(c)) { found = c; break; }
             }
             if (found) {
-              const base = path.basename(found);
-              const dst = path.join(out, base);
+              const ext = path.extname(found) || '.dxf';
+              // Preserve the original filename when copying so downstream
+              // tools (and generated SCAD) reference the expected names.
+              const dstName = path.basename(found);
+              const dst = path.join(out, dstName);
               try { fs.copyFileSync(found, dst); } catch (e) { console.error('failed to copy referenced dxf', found, e); }
-              manifest.push({ name: safeName, src: base, posXYRot: it.posXYRot || (it.posXYRot === undefined ? [it.x || 0, it.y || 0, it.rotateDeg || 0] : it.posXYRot), scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
+              manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || (it.posXYRot === undefined ? [it.x || 0, it.y || 0, it.rotateDeg || 0] : it.posXYRot), scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
               results.push({ type: 'dxf', path: dst });
               continue;
             }
@@ -461,9 +464,23 @@ app.post('/export-dxfs', async (req, res) => {
             const recursiveFound = search(repoRoot, d);
             const recursiveFound2 = recursiveFound || searchTolerant(repoRoot, String(d).toLowerCase());
             if (recursiveFound) {
-              try { fs.copyFileSync(recursiveFound, path.join(out, path.basename(recursiveFound))); manifest.push({ name: safeName, src: path.basename(recursiveFound), posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null }); results.push({ type: 'dxf', path: path.join(out, path.basename(recursiveFound)), foundBy: 'recursive' }); } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
+              try {
+                const ext = path.extname(recursiveFound) || '.dxf';
+                const dstName = path.basename(recursiveFound);
+                const dstPath = path.join(out, dstName);
+                fs.copyFileSync(recursiveFound, dstPath);
+                manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
+                results.push({ type: 'dxf', path: dstPath, foundBy: 'recursive' });
+              } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
             } else if (recursiveFound2) {
-              try { fs.copyFileSync(recursiveFound2, path.join(out, path.basename(recursiveFound2))); manifest.push({ name: safeName, src: path.basename(recursiveFound2), posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null }); results.push({ type: 'dxf', path: path.join(out, path.basename(recursiveFound2)), foundBy: 'recursive_tolerant' }); } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
+              try {
+                const ext = path.extname(recursiveFound2) || '.dxf';
+                const dstName = path.basename(recursiveFound2);
+                const dstPath = path.join(out, dstName);
+                fs.copyFileSync(recursiveFound2, dstPath);
+                manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
+                results.push({ type: 'dxf', path: dstPath, foundBy: 'recursive_tolerant' });
+              } catch (e) { results.push({ type: 'missing', requested: d, checked: candidates, error: String(e) }); }
             } else {
               console.warn('Referenced DXF not found in candidates for', d, 'checked', candidates);
               results.push({ type: 'missing', requested: d, checked: candidates });

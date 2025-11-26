@@ -462,9 +462,11 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             if not pos_xy or len(pos_xy) != len(dxf_file_paths):
                 # fallback: zeros
                 pos_xy = [[0,0] for _ in range(len(dxf_file_paths))]
+            # Force all positions to origin (0,0,0) to ensure OpenSCAD places
+            # shapes at the project origin. The user requested hardcoded zeros.
             position_lines = []
             for idx in range(len(dxf_file_paths)):
-                position_lines.append(f'position_{idx+1} = [{pos_xy[idx][0]:.6f},{pos_xy[idx][1]:.6f},0]; // .1')
+                position_lines.append(f'position_{idx+1} = [0.000000, 0.000000, 0]; // .1')
             position_array = f'position = [{', '.join([f"position_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             # Replace the position = [[0, 0, 0]]; // .1 line
             updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
@@ -476,7 +478,8 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             for idx in range(len(dxf_file_paths)):
                 slot_lines.append(f'slot_shape_{idx+1} = "scoop"; // [none, rectangle, oval, scoop, triangle, keyhole, teardrop]')
                 slot_lines.append(f'slot_params_{idx+1} = [80, 40, 9, 0]; // length (mm), width (mm), height (mm), rotation (deg)')
-                slot_lines.append(f'slot_pos_{idx+1} = [{pos_xy[idx][0]:.6f},{pos_xy[idx][1]:.6f}]; // Translation position [x, y] in mm')
+                # Keep slot positions at origin (0,0) when passing to OpenSCAD
+                slot_lines.append(f'slot_pos_{idx+1} = [0, 0]; // Translation position [x, y] in mm')
             slot_shape_array = f'slot_shape = [{', '.join([f"slot_shape_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             slot_params_array = f'slot_params = [{', '.join([f"slot_params_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             slot_pos_array = f'slot_pos = [{', '.join([f"slot_pos_{i+1}" for i in range(len(dxf_file_paths))])}];\n'

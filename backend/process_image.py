@@ -502,9 +502,21 @@ def do_generate_scad(project_folder, projectdir=None):
             except Exception as e:
                 print('Warning: could not copy src into project folder:', e)
 
-        # Read meta.json if present to get dxf_paths and grid sizes
-        meta_path = os.path.join(export_dir, 'meta.json')
+        # Build dxf_paths from the actual .dxf files present in processing_output.
+        # This ensures SCAD generation uses exactly the files available in the
+        # processing_output folder (what the user requested).
         dxf_paths = []
+        try:
+            all_files = sorted(os.listdir(export_dir))
+            for f in all_files:
+                if f.lower().endswith('.dxf'):
+                    dxf_paths.append(os.path.join(export_dir, f))
+        except Exception as e:
+            print('Warning: failed to list processing_output files', e)
+
+        # Try to read grid sizes from meta.json if present (optional), otherwise
+        # we will prefer values from the project's GSM (loaded below).
+        meta_path = os.path.join(export_dir, 'meta.json')
         gridx = None
         gridy = None
         if os.path.exists(meta_path):
@@ -512,21 +524,13 @@ def do_generate_scad(project_folder, projectdir=None):
                 with open(meta_path, 'r', encoding='utf8') as mf:
                     meta = json.load(mf)
                     if meta:
-                        # meta may contain dxf_paths or dxf_path
-                        if 'dxf_paths' in meta and isinstance(meta['dxf_paths'], (list, tuple)):
-                            dxf_paths = [os.path.join(export_dir, os.path.basename(p)) for p in meta['dxf_paths']]
-                        elif 'dxf_path' in meta and meta['dxf_path']:
-                            dxf_paths = [os.path.join(export_dir, os.path.basename(meta['dxf_path']))]
                         gridx = meta.get('gridx_size')
                         gridy = meta.get('gridy_size')
             except Exception as e:
                 print('Warning: failed to read meta.json', e)
 
-        # Fallback: list DXF files in processing_output
-        if not dxf_paths:
-            for f in os.listdir(export_dir):
-                if f.lower().endswith('.dxf'):
-                    dxf_paths.append(os.path.join(export_dir, f))
+        # We'll map per-shape depths from the project's GSM (if present) below
+        # after loading the project file.
 
         # Default grid sizes
         if gridx is None: gridx = None
@@ -559,33 +563,37 @@ def do_generate_scad(project_folder, projectdir=None):
                 bp = project_obj.get('board')
             if bp and isinstance(bp, dict):
                 try:
-                    # board_parameters may include width/depth/height or gridX/gridY/gridZ
-                    if gridx is None:
-                        if 'width' in bp:
-                            gridx = int(bp.get('width'))
-                        elif 'gridX' in bp:
-                            gridx = int(bp.get('gridX'))
-                    if gridy is None:
-                        if 'depth' in bp:
-                            gridy = int(bp.get('depth'))
-                        elif 'gridY' in bp:
-                            gridy = int(bp.get('gridY'))
-                    gridz = None
-                    if 'height' in bp:
-                        try:
-                            gridz = int(bp.get('height'))
-                        except Exception:
+                            if gridx is None:
+                                if 'gridX' in bp:
+                                    gridx = int(bp.get('gridX'))
+                                elif 'width' in bp:
+                                    gridx = int(bp.get('width'))
+                            if gridy is None:
+                                if 'gridY' in bp:
+                                    gridy = int(bp.get('gridY'))
+                                elif 'depth' in bp:
+                                    gridy = int(bp.get('depth'))
                             gridz = None
-                    elif 'gridZ' in bp:
-                        try:
-                            gridz = int(bp.get('gridZ'))
-                        except Exception:
-                            gridz = None
-                    elif 'heightMM' in bp:
-                        try:
-                            gridz = int(bp.get('heightMM'))
-                        except Exception:
-                            gridz = None
+                            if 'height7Units' in bp:
+                                try:
+                                    gridz = int(bp.get('height7Units'))
+                                except Exception:
+                                    gridz = None
+                            elif 'height' in bp:
+                                try:
+                                    gridz = int(bp.get('height'))
+                                except Exception:
+                                    gridz = None
+                            elif 'gridZ' in bp:
+                                try:
+                                    gridz = int(bp.get('gridZ'))
+                                except Exception:
+                                    gridz = None
+                            elif 'heightMM' in bp:
+                                try:
+                                    gridz = int(bp.get('heightMM'))
+                                except Exception:
+                                    gridz = None
                 except Exception:
                     pass
         except Exception:
