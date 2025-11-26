@@ -610,12 +610,13 @@ function App() {
                       const halfW = w / 2;
                       const halfH = h / 2;
                       // shape.x/shape.y are already center-origin; no conversion needed
+                      // invert rotation sign so exported primitive rotation matches canvas
                       const corners = [
                         { x: -halfW, y: -halfH },
                         { x: halfW, y: -halfH },
                         { x: halfW, y: halfH },
                         { x: -halfW, y: halfH },
-                      ].map((p) => rotatePoint(p.x, p.y, rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
+                      ].map((p) => rotatePoint(p.x, p.y, -rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
                       polylines.push(corners);
                     } else if (s.type === 'oval') {
                       const w = s.widthMM || 20;
@@ -628,7 +629,8 @@ function App() {
                         const t = (i / segments) * 2 * Math.PI;
                         const px = rx * Math.cos(t);
                         const py = ry * Math.sin(t);
-                        const rpt = rotatePoint(px, py, rot);
+                        // invert rotation sign so exported primitive rotation matches canvas
+                        const rpt = rotatePoint(px, py, -rot);
                         pts.push({ x: rpt.x + cx, y: rpt.y + cy });
                       }
                       polylines.push(pts);

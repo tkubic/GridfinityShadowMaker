@@ -298,31 +298,10 @@ def do_export_dxfs(export_dir, projectdir=None):
                     doc.saveas(outpath)
                     print('Wrote DXF from polyjson:', outpath)
             elif lower.endswith('.text.json'):
-                # simple placeholder: create a box representing text extents
-                with open(full, 'r', encoding='utf8') as fh:
-                    import json
-                    data = json.load(fh)
-                    cx, cy, rot = 0.0, 0.0, 0.0
-                    if isinstance(data.get('posXYRot'), (list, tuple)):
-                        cx = float(data['posXYRot'][0])
-                        cy = float(data['posXYRot'][1])
-                        rot = float(data['posXYRot'][2] if len(data['posXYRot'])>2 else 0.0)
-                    fontsize = float(data.get('fontSize', data.get('fontSizeMM', 15)))
-                    w = fontsize * len(str(data.get('text','')))
-                    h = fontsize
-                    hw = w/2; hh = h/2
-                    corners = [(cx-hw, cy-hh), (cx+hw, cy-hh), (cx+hw, cy+hh), (cx-hw, cy+hh), (cx-hw, cy-hh)]
-                    doc = ezdxf.new()
-                    msp = doc.modelspace()
-                    msp.add_lwpolyline(corners)
-                    if f.lower().endswith('.text.json'):
-                        base = f[:-len('.text.json')]
-                    else:
-                        base = os.path.splitext(f)[0]
-                    outname = base + '.dxf'
-                    outpath = os.path.join(export_dir, outname)
-                    doc.saveas(outpath)
-                    print('Wrote placeholder DXF for text:', outpath)
+                # Text vectorization is intentionally disabled for now.
+                # Keep the .text.json files (they are written by the server),
+                # but do not generate placeholder DXF files from them.
+                print('Skipping text DXF generation for', full)
             else:
                 # skip other files (copy of original dxf will already be present)
                 continue
