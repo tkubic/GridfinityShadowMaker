@@ -1,4 +1,13 @@
-*.pyc
+# Ignore date-stamped project output folders created by the app
+# Example: GSM-20251125-1741/
+/GSM-202*/
+
+# Common ignores
+node_modules/
+.DS_Store
+__pycache__/
+venv/
+*.pyc*.pyc
 *.pyc
 src/__pycache__/ui.cpython-313.pyc
 *.pyc
