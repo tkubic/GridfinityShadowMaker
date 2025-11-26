@@ -242,6 +242,35 @@ hr {
   transform: translateY(1px);
 }
 
+/* Hover and active states for action buttons: blue border on hover, thicker when pressed */
+.action-text-button {
+  border: 1px solid #000; /* ensure default black border */
+  transition: border-color 120ms ease, border-width 80ms ease, transform 80ms ease;
+}
+.action-text-button:hover {
+  border-color: #0074D9;
+}
+.action-text-button:active {
+  border-width: 2px;
+}
+
+/* Apply same behavior to native button elements that aren't using the action-text-button class */
+button {
+  border: 1px solid #000;
+  background: #fff;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, border-width 80ms ease, transform 80ms ease;
+}
+button:hover {
+  border-color: #0074D9;
+}
+button:active {
+  border-width: 2px;
+  transform: translateY(1px);
+}
+
 .action-text-button.small {
   padding: 4px 8px;
   height: 28px;

@@ -14,6 +14,7 @@ def main():
     parser.add_argument('input_path', nargs='?')
     parser.add_argument('out_dir', nargs='?')
     parser.add_argument('--export-dxfs', type=str, default=None, help='Directory to read .poly.json/.text.json and write DXF files')
+    parser.add_argument('--generate-scad', type=str, default=None, help='Generate SCAD for a project folder using src.processing.import_to_openscad')
     parser.add_argument('--projectdir', type=str, default=None)
     parser.add_argument('--workfolder', type=str, default=None)
     parser.add_argument('--threshold', type=float, default=None)
@@ -30,6 +31,15 @@ def main():
         os.makedirs(export_dir, exist_ok=True)
         do_export_dxfs(export_dir, args.projectdir)
         sys.exit(0)
+    # If generate-scad mode is used, call into src.processing.import_to_openscad
+    if args.generate_scad:
+        project_folder = args.generate_scad
+        try:
+            do_generate_scad(project_folder, args.projectdir)
+            sys.exit(0)
+        except Exception as e:
+            print('generate-scad failed:', e)
+            sys.exit(1)
     if out:
         os.makedirs(out, exist_ok=True)
 
@@ -463,6 +473,168 @@ def do_export_dxfs(export_dir, projectdir=None):
                         print('Failed to save transformed DXF', e)
                 except Exception as e:
                     print('Error processing manifest entry', entry, e)
+
+
+def do_generate_scad(project_folder, projectdir=None):
+    """Generate SCAD for the given project folder by calling src.processing.import_to_openscad.
+    This reads `processing_output/meta.json` (if present) to discover dxf paths
+    and grid sizes, copies repo `src` into the project folder if needed, and
+    invokes the import_to_openscad helper from `src.processing`.
+    """
+    try:
+        import json
+        import shutil
+        export_dir = os.path.join(project_folder, 'processing_output')
+        if not os.path.exists(project_folder):
+            print('Project folder not found:', project_folder)
+            return
+        if not os.path.exists(export_dir):
+            print('processing_output not found in project folder:', export_dir)
+            return
+
+        # Ensure project has a local copy of the repository `src` so OpenSCAD includes work
+        if projectdir:
+            repo_src = os.path.join(projectdir, 'src')
+            dst_src = os.path.join(project_folder, 'src')
+            try:
+                if os.path.exists(repo_src):
+                    shutil.copytree(repo_src, dst_src, dirs_exist_ok=True)
+            except Exception as e:
+                print('Warning: could not copy src into project folder:', e)
+
+        # Read meta.json if present to get dxf_paths and grid sizes
+        meta_path = os.path.join(export_dir, 'meta.json')
+        dxf_paths = []
+        gridx = None
+        gridy = None
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r', encoding='utf8') as mf:
+                    meta = json.load(mf)
+                    if meta:
+                        # meta may contain dxf_paths or dxf_path
+                        if 'dxf_paths' in meta and isinstance(meta['dxf_paths'], (list, tuple)):
+                            dxf_paths = [os.path.join(export_dir, os.path.basename(p)) for p in meta['dxf_paths']]
+                        elif 'dxf_path' in meta and meta['dxf_path']:
+                            dxf_paths = [os.path.join(export_dir, os.path.basename(meta['dxf_path']))]
+                        gridx = meta.get('gridx_size')
+                        gridy = meta.get('gridy_size')
+            except Exception as e:
+                print('Warning: failed to read meta.json', e)
+
+        # Fallback: list DXF files in processing_output
+        if not dxf_paths:
+            for f in os.listdir(export_dir):
+                if f.lower().endswith('.dxf'):
+                    dxf_paths.append(os.path.join(export_dir, f))
+
+        # Default grid sizes
+        if gridx is None: gridx = None
+        if gridy is None: gridy = None
+
+        # Prefer project file values (gsm or project.json) when present
+        try:
+            proj_name = os.path.basename(project_folder.rstrip(os.sep))
+            gsm_path = os.path.join(project_folder, f"{proj_name}.gsm")
+            pj_path = os.path.join(project_folder, 'project.json')
+            project_obj = None
+            if os.path.exists(gsm_path):
+                try:
+                    with open(gsm_path, 'r', encoding='utf8') as f:
+                        import json as _json
+                        project_obj = _json.load(f)
+                except Exception:
+                    project_obj = None
+            elif os.path.exists(pj_path):
+                try:
+                    with open(pj_path, 'r', encoding='utf8') as f:
+                        import json as _json
+                        project_obj = _json.load(f)
+                except Exception:
+                    project_obj = None
+
+            # Prefer `board` (the canonical board data) if present
+            bp = None
+            if project_obj and isinstance(project_obj, dict):
+                bp = project_obj.get('board')
+            if bp and isinstance(bp, dict):
+                try:
+                    # board_parameters may include width/depth/height or gridX/gridY/gridZ
+                    if gridx is None:
+                        if 'width' in bp:
+                            gridx = int(bp.get('width'))
+                        elif 'gridX' in bp:
+                            gridx = int(bp.get('gridX'))
+                    if gridy is None:
+                        if 'depth' in bp:
+                            gridy = int(bp.get('depth'))
+                        elif 'gridY' in bp:
+                            gridy = int(bp.get('gridY'))
+                    gridz = None
+                    if 'height' in bp:
+                        try:
+                            gridz = int(bp.get('height'))
+                        except Exception:
+                            gridz = None
+                    elif 'gridZ' in bp:
+                        try:
+                            gridz = int(bp.get('gridZ'))
+                        except Exception:
+                            gridz = None
+                    elif 'heightMM' in bp:
+                        try:
+                            gridz = int(bp.get('heightMM'))
+                        except Exception:
+                            gridz = None
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Final defaults if still unset
+        if gridx is None: gridx = 5
+        if gridy is None: gridy = 2
+        # Default gridz (height) if not specified
+        try:
+            gridz
+        except NameError:
+            gridz = None
+        if gridz is None:
+            gridz = 6
+
+        # Import src.processing from the repository root (projectdir) so we use canonical code
+        if projectdir:
+            import sys as _sys
+            _sys.path.insert(0, projectdir)
+
+        try:
+            import src.processing as sp  # type: ignore
+        except Exception as e:
+            print('Failed to import src.processing for SCAD generation:', e)
+            return
+
+        class DummyConsole:
+            def setText(self, s):
+                print('console:', s)
+
+        file_name = os.path.basename(project_folder.rstrip(os.sep))
+        folder_name = os.path.basename(project_folder.rstrip(os.sep))
+
+        # Call import_to_openscad. It accepts either a single path or a list.
+        try:
+            if len(dxf_paths) > 1:
+                sp.import_to_openscad(dxf_paths, gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=True, gridz_size=gridz)
+            elif len(dxf_paths) == 1:
+                sp.import_to_openscad(dxf_paths[0], gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=False, gridz_size=gridz)
+            else:
+                # No DXFs; still call to produce a SCAD with defaults
+                sp.import_to_openscad('', gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=False, gridz_size=gridz)
+            scad_path = os.path.join(project_folder, f"{file_name}.scad")
+            print('Generated SCAD:', scad_path)
+        except Exception as e:
+            print('import_to_openscad failed:', e)
+    except Exception as e:
+        print('do_generate_scad failed:', e)
 
 
 if __name__ == '__main__':

@@ -250,16 +250,41 @@ def select_image(console_text, default_dir=None):
         print(traceback.format_exc())
         return None, None
 
-def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name, splitDXF=False):
+def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name, splitDXF=False, gridz_size=None):
     try:
         global scad_file_path  # Use the global variable to keep track of the SCAD file
         scad_template_path = os.path.join(os.path.dirname(__file__), "..", "Step 2 DXF to STL.scad")
         with open(scad_template_path, 'r') as file:
             scad_content = file.read()
         
+        # Determine project folder (design_files_directory) early so the GSM
+        # lookup and other file operations can reference it.
+        script_directory = os.path.dirname(os.path.abspath(__file__))
+        design_files_directory = os.path.join(script_directory, "..", folder_name)
+
         # Use forward slashes for the file path(s)
         if splitDXF and isinstance(dxf_path, list):
-            dxf_file_paths = [p.replace("\\", "/") for p in dxf_path]
+            # Convert absolute paths to project-relative paths (processing_output/...) when possible
+            raw_paths = list(dxf_path)
+            dxf_file_paths = []
+            for p in raw_paths:
+                if not p:
+                    continue
+                # normalize
+                pp = os.path.normpath(p)
+                # If path is inside project folder, make it relative to project folder so SCAD uses relative path
+                try:
+                    if os.path.isabs(pp) and pp.startswith(os.path.normpath(design_files_directory)):
+                        rel = os.path.relpath(pp, design_files_directory).replace('\\', '/')
+                        dxf_file_paths.append(rel)
+                    else:
+                        # keep basename under processing_output if it's just a filename
+                        if os.path.isabs(pp):
+                            dxf_file_paths.append(pp.replace('\\', '/'))
+                        else:
+                            dxf_file_paths.append(pp.replace('\\', '/'))
+                except Exception:
+                    dxf_file_paths.append(pp.replace('\\', '/'))
             # Sort dxf_file_paths by contour index in filename (e.g., *_contour_1.dxf, *_contour_2.dxf, ...)
             import re
             def contour_index(path):
@@ -269,7 +294,135 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             dxf_file_paths.sort(key=contour_index)
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
             # Split dxf_cut_depths into arrays of max size 4
-            cut_depths = ["10"] * len(dxf_file_paths)
+            # Try to load per-DXF cut depths from a temp pickle saved by the server
+            # or from the project's processing_output/export_manifest.json. Fall
+            # back to the historical default of 10 if nothing is found.
+            try:
+                import json
+                cut_depths = None
+                # Look for an exported GSM project snapshot in the project folder.
+                # `design_files_directory` resolves to the project's root folder
+                # (repo root + folder_name), so prefer <project>/<projectName>.gsm
+                gsm_candidates = []
+                gsm_candidates.append(os.path.join(design_files_directory, f"{file_name}.gsm"))
+                gsm_candidates.append(os.path.join(design_files_directory, f"{file_name}.json"))
+                parent_dir = os.path.dirname(design_files_directory)
+                gsm_candidates.append(os.path.join(parent_dir, f"{file_name}.gsm"))
+                # also include any .gsm found in the project folder
+                if os.path.exists(design_files_directory):
+                    for fn in os.listdir(design_files_directory):
+                        if fn.lower().endswith('.gsm'):
+                            gsm_candidates.append(os.path.join(design_files_directory, fn))
+
+                for gp in gsm_candidates:
+                    if not gp or not os.path.exists(gp):
+                        continue
+                    try:
+                        with open(gp, 'r', encoding='utf8') as gf:
+                            gsm_obj = json.load(gf)
+
+                        # gsm_obj may contain the project as { items: [...] } or as a list
+                        items = None
+                        if isinstance(gsm_obj, dict):
+                            items = gsm_obj.get('items') or gsm_obj.get('shapes') or gsm_obj.get('project')
+                        elif isinstance(gsm_obj, list):
+                            items = gsm_obj
+
+                        if not items or not isinstance(items, list):
+                            # not usable
+                            # but still allow reading board parameters below
+                            items = None
+
+                        # If lengths match, use direct ordering; otherwise try map by name
+                        if items and len(items) == len(dxf_file_paths):
+                            cut_depths = []
+                            for it in items:
+                                d = 10
+                                if isinstance(it, dict):
+                                    d = it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or d
+                                try:
+                                    cut_depths.append(int(d))
+                                except Exception:
+                                    cut_depths.append(10)
+                        elif items:
+                            # build name->depth map
+                            name_map = {}
+                            for it in items:
+                                if isinstance(it, dict) and it.get('name'):
+                                    try:
+                                        name_map[it.get('name')] = int(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or 10)
+                                    except Exception:
+                                        name_map[it.get('name')] = 10
+                            cut_depths = []
+                            for pth in dxf_file_paths:
+                                base = os.path.splitext(os.path.basename(pth))[0]
+                                matched = None
+                                for nm, depth_val in name_map.items():
+                                    if nm and (nm in base or base in nm):
+                                        matched = depth_val
+                                        break
+                                cut_depths.append(int(matched) if matched is not None else 10)
+
+                        # Also attempt to read board parameters for size info if present
+                        # (so when import_to_openscad is called without explicit grid sizes
+                        # the GSM can still provide them)
+                        try:
+                            if isinstance(gsm_obj, dict):
+                                # Prefer `board` (canonical) for size info
+                                bp = gsm_obj.get('board')
+                                if bp and isinstance(bp, dict):
+                                    # Prefer explicit gridX/gridY first, then width/depth
+                                    try:
+                                        if 'gridX' in bp:
+                                            gridx_size = int(bp.get('gridX'))
+                                        elif 'width' in bp and (gridx_size is None or gridx_size == 5):
+                                            gridx_size = int(bp.get('width'))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        if 'gridY' in bp:
+                                            gridy_size = int(bp.get('gridY'))
+                                        elif 'depth' in bp and (gridy_size is None or gridy_size == 2):
+                                            gridy_size = int(bp.get('depth'))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        # handle gridZ or various height keys including height7Units
+                                        if 'gridZ' in bp:
+                                            gridz_size = int(bp.get('gridZ'))
+                                        elif 'height7Units' in bp:
+                                            gridz_size = int(bp.get('height7Units'))
+                                        elif 'height' in bp:
+                                            gridz_size = int(bp.get('height'))
+                                        elif 'heightMM' in bp:
+                                            gridz_size = int(bp.get('heightMM'))
+                                        else:
+                                            # fallback: scan for any key that contains 'height'
+                                            for k, v in bp.items():
+                                                if isinstance(k, str) and 'height' in k.lower():
+                                                    try:
+                                                        gridz_size = int(v)
+                                                        break
+                                                    except Exception:
+                                                        continue
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                        if cut_depths and len(cut_depths) == len(dxf_file_paths):
+                            break
+                    except Exception:
+                        continue
+
+                if not cut_depths or len(cut_depths) != len(dxf_file_paths):
+                    cut_depths = [10] * len(dxf_file_paths)
+
+                # Ensure strings for SCAD output
+                cut_depths = [str(int(x)) for x in cut_depths]
+            except Exception:
+                cut_depths = ["10"] * len(dxf_file_paths)
+
             cut_depth_arrays = [cut_depths[i:i+4] for i in range(0, len(cut_depths), 4)]
             dxf_cut_depths_scad = ""
             concat_line = ""
@@ -327,8 +480,8 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             slot_shape_array = f'slot_shape = [{', '.join([f"slot_shape_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             slot_params_array = f'slot_params = [{', '.join([f"slot_params_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             slot_pos_array = f'slot_pos = [{', '.join([f"slot_pos_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
-            # Always start the block with use_finger_slots = true;
-            finger_slot_block = 'use_finger_slots = true; // true or false\n' + '\n'.join(slot_lines + [slot_shape_array, slot_params_array, slot_pos_array])
+            # Always start the block with use_finger_slots = false;
+            finger_slot_block = 'use_finger_slots = false; // true or false\n' + '\n'.join(slot_lines + [slot_shape_array, slot_params_array, slot_pos_array])
             # Replace the finger slot options block
             import re
             updated_scad_content = re.sub(
@@ -354,14 +507,42 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                     new_block += block + '\n'
                 new_block += section_cut_depth_concat + section_parameters_concat
                 updated_scad_content = parts[0] + section_marker + new_block + after_marker
+            # Ensure `size` is replaced with GSM board values (gridX, gridY, height).
+            try:
+                gx = int(gridx_size) if gridx_size is not None else 5
+            except Exception:
+                gx = 5
+            try:
+                gy = int(gridy_size) if gridy_size is not None else 2
+            except Exception:
+                gy = 2
+            try:
+                gz = int(gridz_size) if gridz_size is not None else 6
+            except Exception:
+                gz = 6
+            updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gx}, {gy}, {gz}];')
         else:
-            dxf_path = dxf_path.replace("\\", "/")
-            updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path}";')
+            # Make single DXF path relative to project folder when possible
+            try:
+                dp = os.path.normpath(dxf_path)
+                if os.path.isabs(dp) and dp.startswith(os.path.normpath(design_files_directory)):
+                    rel = os.path.relpath(dp, design_files_directory).replace('\\', '/')
+                    dxf_path_scad = rel
+                else:
+                    dxf_path_scad = dp.replace('\\', '/')
+            except Exception:
+                dxf_path_scad = dxf_path.replace('\\', '/')
+            updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path_scad}";')
         
-        # Determine slot rotation and width based on gridx_size and gridy_size
+            # Determine slot rotation and width based on gridx_size and gridy_size
         #slot_rotation = 0 if gridx_size > gridy_size else 90
         #slot_width = 80 if min(gridx_size, gridy_size) > 2 else 40
-        updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gridx_size}, {gridy_size}, 6];')
+            # Use provided gridz_size when available, otherwise fall back to 6
+            try:
+                zval = int(gridz_size) if gridz_size is not None else 6
+            except Exception:
+                zval = 6
+            updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gridx_size}, {gridy_size}, {zval}];')
         #updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         #updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
         updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(splitDXF).lower()};')

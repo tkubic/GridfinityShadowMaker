@@ -19,7 +19,7 @@ depth = [size[1], 0]; // .1
 height = [size[2], 0]; // .1
 // === Chamfered DXF Extrusion Option === //
 use_chamfered_extrude = true; // Set to true to use chamfered extrusion
-chamfer_height = 5;      // mm, height of chamfer
+chamfer_height = 2;      // mm, height of chamfer
 
 lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
@@ -31,7 +31,7 @@ position = [[0, 0, 0]]; // .1
 
 
 /* [Finger Slot Options] */
-use_finger_slots = true; // true or false
+use_finger_slots = false; // true or false
 
 slot_shape_1 = "scoop"; // [none, rectangle, oval, scoop, triangle, keyhole, teardrop]
 // Per-slot parameters: [len, width, height, rot]
@@ -104,7 +104,7 @@ label_position_option = "bottom"; // ["bottom", "top", "right", "left"]
 // These are required for gridfinity_cup
 multiple_dxf = false;
 filled_in = "enabled";
-render_position = "center"; //[default,center,zero]
+render_position = "zero"; //[default,center,zero]
 enable_screws = false;
 magnet_easy_release = "off";
 screw_size = [3, 6];
@@ -137,12 +137,12 @@ module chamfered_extrude(
     chamfer_height
 ) {
     linear_extrude(height=base_height)
-        scale([25.4, 25.4])
+        scale([1, 1])
             import(dxf);
     translate([0,0,base_height])
         minkowski() {
             linear_extrude(height=0.01)
-                scale([25.4, 25.4])
+                scale([1, 1])
                     import(dxf);
             rotate_extrude(convexity=10)
                 polygon([[0,0],[chamfer_height,0],[0,-chamfer_height]]);
@@ -159,7 +159,7 @@ module extrude_dxf_section(dxf_file_path, cut_depth) {
         );
     } else {
         linear_extrude(height = cut_depth) {
-            scale([25.4, 25.4, 1]) {
+            scale([1, 1, 1]) {
                 import(dxf_file_path);
             }
         }
@@ -358,7 +358,7 @@ difference() {
 if (include_cutout) {
     translate([0, depth[0]*42+5, 0]) {
         linear_extrude(height = cutout_height) {
-            scale([25.4, 25.4, 1]) {
+            scale([1, 1, 1]) {
                 import(dxf_file_path);
             }
         }

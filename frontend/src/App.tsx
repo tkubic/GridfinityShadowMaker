@@ -554,7 +554,7 @@ function App() {
           ) : activeTab === "trace" ? (
             <TraceCanvas images={processedImages ?? undefined} />
           ) : (
-            <RenderCanvas />
+            <RenderCanvas projectName={project.name} />
           )}
         </main>
         {/* Export controls for the Canvas tab */}
@@ -587,11 +587,36 @@ function App() {
                             return { x: (s.x || 0) + rpt.x, y: (s.y || 0) + rpt.y };
                           })
                         );
-                        items.push({ name: s.name || s.id, polylines, posXYRot: [0, 0, 0] });
+                        // include full shape metadata so backend can persist it
+                        items.push({
+                          name: s.name || s.id,
+                          type: s.type,
+                          cutType: s.cutType,
+                          x: s.x || 0,
+                          y: s.y || 0,
+                          rotateDeg: s.rotateDeg || 0,
+                          scale: s.scale || 1,
+                          depthMM: s.depthMM || 0,
+                          widthMM: s.widthMM || 0,
+                          heightMM: s.heightMM || 0,
+                          dxfPaths: polylines,
+                          posXYRot: [0, 0, 0]
+                        });
                         continue;
                       }
                       if (s.dxfName) {
-                        items.push({ name: s.name || s.id, dxfPaths: [s.dxfName], posXYRot: [s.x || 0, s.y || 0, s.rotateDeg || 0], scale: s.scale ?? 1 });
+                        items.push({
+                          name: s.name || s.id,
+                          type: s.type,
+                          cutType: s.cutType,
+                          x: s.x || 0,
+                          y: s.y || 0,
+                          rotateDeg: s.rotateDeg || 0,
+                          scale: s.scale || 1,
+                          depthMM: s.depthMM || 0,
+                          dxfPaths: [s.dxfName],
+                          posXYRot: [s.x || 0, s.y || 0, s.rotateDeg || 0]
+                        });
                         continue;
                       }
                       continue;
@@ -640,10 +665,26 @@ function App() {
                       continue;
                     }
 
-                    if (polylines.length) items.push({ name: s.name || s.id, polylines, posXYRot: [0, 0, 0] });
+                    if (polylines.length) {
+                      items.push({
+                        name: s.name || s.id,
+                        type: s.type || 'poly',
+                        cutType: s.cutType || null,
+                        x: s.x || 0,
+                        y: s.y || 0,
+                        rotateDeg: s.rotateDeg || 0,
+                        scale: s.scale || 1,
+                        depthMM: s.depthMM || 0,
+                        widthMM: s.widthMM || 0,
+                        heightMM: s.heightMM || 0,
+                        polylines,
+                        posXYRot: [0, 0, 0],
+                      });
+                    }
                   }
 
-                  const payload = { projectName: project.name, items };
+                  // Include full project (with `board`) so server preserves UI values
+                  const payload = { projectName: project.name, project: project, items };
                   const r = await fetch('http://localhost:5000/export-dxfs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                   const j = await r.json();
                   if (!r.ok) {
