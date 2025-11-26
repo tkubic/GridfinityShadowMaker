@@ -502,17 +502,56 @@ def do_generate_scad(project_folder, projectdir=None):
             except Exception as e:
                 print('Warning: could not copy src into project folder:', e)
 
-        # Build dxf_paths from the actual .dxf files present in processing_output.
-        # This ensures SCAD generation uses exactly the files available in the
-        # processing_output folder (what the user requested).
+        # Build dxf_paths from the project's GSM file if possible.
+        # Strictly preserve the order of the `shapes` array and use the
+        # shape `name` as the expected DXF filename (append .dxf if missing).
         dxf_paths = []
         try:
-            all_files = sorted(os.listdir(export_dir))
-            for f in all_files:
-                if f.lower().endswith('.dxf'):
-                    dxf_paths.append(os.path.join(export_dir, f))
+            proj_name = os.path.basename(project_folder.rstrip(os.sep))
+            gsm_path = os.path.join(project_folder, f"{proj_name}.gsm")
+            if os.path.exists(gsm_path):
+                try:
+                    import json as _json
+                    with open(gsm_path, 'r', encoding='utf8') as gf:
+                        gsm_obj = _json.load(gf)
+                    shapes = None
+                    if isinstance(gsm_obj, dict):
+                        shapes = gsm_obj.get('shapes') or gsm_obj.get('items') or gsm_obj.get('project')
+                    elif isinstance(gsm_obj, list):
+                        shapes = gsm_obj
+                    if isinstance(shapes, list) and shapes:
+                        for sh in shapes:
+                            try:
+                                if not isinstance(sh, dict):
+                                    continue
+                                # skip explicit text shapes
+                                if str(sh.get('type')).lower() == 'text':
+                                    continue
+                                # Use the UI display name as primary filename
+                                nm = sh.get('name') if sh.get('name') is not None else (sh.get('dxfName') or sh.get('dxf_name') or sh.get('id'))
+                                if nm is None:
+                                    nm = ''
+                                sname = str(nm)
+                                if sname and not sname.lower().endswith('.dxf'):
+                                    sname = f"{sname}.dxf"
+                                # build expected path inside processing_output (no sanitization)
+                                dxf_paths.append(os.path.join(export_dir, sname) if sname else '')
+                            except Exception:
+                                dxf_paths.append('')
+                except Exception as e:
+                    print('Warning: failed to read GSM for DXF ordering', e)
         except Exception as e:
-            print('Warning: failed to list processing_output files', e)
+            print('Warning: failed to build dxf_paths from GSM', e)
+
+        # Fallback: if GSM yielded no entries, fall back to scanning processing_output
+        if not dxf_paths:
+            try:
+                all_files = sorted(os.listdir(export_dir))
+                for f in all_files:
+                    if f.lower().endswith('.dxf'):
+                        dxf_paths.append(os.path.join(export_dir, f))
+            except Exception as e:
+                print('Warning: failed to list processing_output files', e)
 
         # Try to read grid sizes from meta.json if present (optional), otherwise
         # we will prefer values from the project's GSM (loaded below).

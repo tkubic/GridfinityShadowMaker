@@ -285,13 +285,9 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                             dxf_file_paths.append(pp.replace('\\', '/'))
                 except Exception:
                     dxf_file_paths.append(pp.replace('\\', '/'))
-            # Sort dxf_file_paths by contour index in filename (e.g., *_contour_1.dxf, *_contour_2.dxf, ...)
-            import re
-            def contour_index(path):
-                # Match _contour_N.dxf at the end of the filename, regardless of path separator
-                m = re.search(r'_contour_(\d+)\.dxf$', os.path.basename(path))
-                return int(m.group(1)) if m else 0
-            dxf_file_paths.sort(key=contour_index)
+            # Preserve the incoming order from the caller (usually the GSM-derived ordering)
+            # Do not reorder by contour index; the caller controls ordering.
+            # (Previous behavior sorted by contour index which broke GSM ordering.)
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
             # Split dxf_cut_depths into arrays of max size 4
             # Try to load per-DXF cut depths from a temp pickle saved by the server
@@ -345,22 +341,61 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                 except Exception:
                                     cut_depths.append(10)
                         elif items:
-                            # build name->depth map
+                            # build a robust name->depth map using multiple candidate keys
+                            import re as _re
+                            def _norm(s: str) -> str:
+                                if not s:
+                                    return ""
+                                s2 = str(s).lower()
+                                # strip common prefixes like 'dxf - '
+                                s2 = _re.sub(r'^dxf\s*-\s*', '', s2)
+                                # remove non-alphanumeric characters
+                                s2 = _re.sub(r'[^0-9a-z]', '', s2)
+                                return s2
+
                             name_map = {}
                             for it in items:
-                                if isinstance(it, dict) and it.get('name'):
-                                    try:
-                                        name_map[it.get('name')] = int(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or 10)
-                                    except Exception:
-                                        name_map[it.get('name')] = 10
+                                if not isinstance(it, dict):
+                                    continue
+                                depth_val = 10
+                                try:
+                                    depth_val = int(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or 10)
+                                except Exception:
+                                    depth_val = 10
+                                # gather candidate names
+                                candidates = set()
+                                if it.get('dxfName'):
+                                    candidates.add(_norm(os.path.splitext(os.path.basename(it.get('dxfName')))[0]))
+                                if it.get('dxf_name'):
+                                    candidates.add(_norm(os.path.splitext(os.path.basename(it.get('dxf_name')))[0]))
+                                if it.get('name'):
+                                    candidates.add(_norm(it.get('name')))
+                                if it.get('title'):
+                                    candidates.add(_norm(it.get('title')))
+                                # fallback: if no candidate names, try the id
+                                if not candidates and it.get('id'):
+                                    candidates.add(_norm(str(it.get('id'))))
+                                for c in candidates:
+                                    if c:
+                                        name_map[c] = depth_val
+
+                            # Now align depths to the final dxf_file_paths order by matching normalized basenames
                             cut_depths = []
                             for pth in dxf_file_paths:
                                 base = os.path.splitext(os.path.basename(pth))[0]
+                                nb = _norm(base)
                                 matched = None
-                                for nm, depth_val in name_map.items():
-                                    if nm and (nm in base or base in nm):
-                                        matched = depth_val
-                                        break
+                                # exact normalized match first
+                                if nb in name_map:
+                                    matched = name_map[nb]
+                                else:
+                                    # try partial matches (name contained in base or vice versa)
+                                    for nm_key, depth_val in name_map.items():
+                                        if not nm_key:
+                                            continue
+                                        if nm_key in nb or nb in nm_key:
+                                            matched = depth_val
+                                            break
                                 cut_depths.append(int(matched) if matched is not None else 10)
 
                         # Also attempt to read board parameters for size info if present

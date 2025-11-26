@@ -367,12 +367,19 @@ app.post('/export-dxfs', async (req, res) => {
       const it = items[i] || {};
       const safeName = (it.name || `item_${i}`).replace(/[^a-z0-9_\-\.]/gi, '_');
       if (it.polylines) {
-        const polyPath = path.join(out, `${safeName}.poly.json`);
-        // Persist the full shape metadata alongside polylines so SCAD generation
-        // has access to properties like depthMM, cutType, rotateDeg, scale, etc.
+        // Use the exact display name from the UI when writing the poly.json
+        // Do not sanitize; if the filesystem rejects the name the write will
+        // error and we'll record a missing result per your request.
+        const rawBase = it.name || `item_${i}`;
+        const polyPath = path.join(out, `${rawBase}.poly.json`);
         const toWrite = Object.assign({}, it, { polylines: it.polylines });
-        fs.writeFileSync(polyPath, JSON.stringify(toWrite, null, 2), 'utf8');
-        results.push({ type: 'polyjson', path: polyPath });
+        try {
+          fs.writeFileSync(polyPath, JSON.stringify(toWrite, null, 2), 'utf8');
+          results.push({ type: 'polyjson', path: polyPath });
+        } catch (e) {
+          console.error('Failed to write polyjson with UI name', polyPath, e);
+          results.push({ type: 'missing', requested: `${rawBase}.poly.json`, error: String(e) });
+        }
       } else if (it.dxfPaths && it.dxfPaths.length) {
         // dxfPaths can be either filenames or embedded polylines. If the
         // first entry looks like a polyline (array of {x,y}), persist it as
@@ -382,12 +389,18 @@ app.post('/export-dxfs', async (req, res) => {
         // Accept either: [[{x,y},...], ...] (array of polylines) OR [{x,y},...] (single polyline)
         const looksLikePolylines = (Array.isArray(first) && first.length && typeof first[0] === 'object' && ('x' in first[0] || 'y' in first[0])) || (typeof first === 'object' && ('x' in first || 'y' in first));
         if (looksLikePolylines) {
-          const polyPath = path.join(out, `${safeName}.poly.json`);
+          const rawBase = it.name || `item_${i}`;
+          const polyPath = path.join(out, `${rawBase}.poly.json`);
           // normalize to array-of-polylines
           const normalized = Array.isArray(first) && first.length && typeof first[0] === 'object' && ('x' in first[0] || 'y' in first[0]) ? it.dxfPaths : [it.dxfPaths];
           const toWrite = Object.assign({}, it, { polylines: normalized });
-          fs.writeFileSync(polyPath, JSON.stringify(toWrite, null, 2), 'utf8');
-          results.push({ type: 'polyjson', path: polyPath, source: 'embedded_dxfPaths' });
+          try {
+            fs.writeFileSync(polyPath, JSON.stringify(toWrite, null, 2), 'utf8');
+            results.push({ type: 'polyjson', path: polyPath, source: 'embedded_dxfPaths' });
+          } catch (e) {
+            console.error('Failed to write embedded polyjson with UI name', polyPath, e);
+            results.push({ type: 'missing', requested: `${rawBase}.poly.json`, source: 'embedded_dxfPaths', error: String(e) });
+          }
         } else {
           for (let d of it.dxfPaths) {
             if (Array.isArray(d)) d = d.length ? d[0] : '';
@@ -412,13 +425,17 @@ app.post('/export-dxfs', async (req, res) => {
             }
             if (found) {
               const ext = path.extname(found) || '.dxf';
-              // Preserve the original filename when copying so downstream
-              // tools (and generated SCAD) reference the expected names.
-              const dstName = path.basename(found);
+              // Save the referenced DXF using the exact UI-provided name (no sanitize).
+              const dstName = it.name ? `${it.name}${ext}` : path.basename(found);
               const dst = path.join(out, dstName);
-              try { fs.copyFileSync(found, dst); } catch (e) { console.error('failed to copy referenced dxf', found, e); }
-              manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || (it.posXYRot === undefined ? [it.x || 0, it.y || 0, it.rotateDeg || 0] : it.posXYRot), scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
-              results.push({ type: 'dxf', path: dst });
+              try {
+                fs.copyFileSync(found, dst);
+                manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || (it.posXYRot === undefined ? [it.x || 0, it.y || 0, it.rotateDeg || 0] : it.posXYRot), scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
+                results.push({ type: 'dxf', path: dst });
+              } catch (e) {
+                console.error('failed to copy referenced dxf to UI name', found, dst, e);
+                results.push({ type: 'missing', requested: dstName, checked: [found], error: String(e) });
+              }
               continue;
             }
 
@@ -466,7 +483,7 @@ app.post('/export-dxfs', async (req, res) => {
             if (recursiveFound) {
               try {
                 const ext = path.extname(recursiveFound) || '.dxf';
-                const dstName = path.basename(recursiveFound);
+                const dstName = it.name ? `${it.name}${ext}` : path.basename(recursiveFound);
                 const dstPath = path.join(out, dstName);
                 fs.copyFileSync(recursiveFound, dstPath);
                 manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
@@ -475,7 +492,7 @@ app.post('/export-dxfs', async (req, res) => {
             } else if (recursiveFound2) {
               try {
                 const ext = path.extname(recursiveFound2) || '.dxf';
-                const dstName = path.basename(recursiveFound2);
+                const dstName = it.name ? `${it.name}${ext}` : path.basename(recursiveFound2);
                 const dstPath = path.join(out, dstName);
                 fs.copyFileSync(recursiveFound2, dstPath);
                 manifest.push({ name: it.name || safeName, src: dstName, posXYRot: it.posXYRot || [it.x || 0, it.y || 0, it.rotateDeg || 0], scale: it.scale || 1, depthMM: it.depthMM || 0, type: it.type || 'dxf', cutType: it.cutType || null });
