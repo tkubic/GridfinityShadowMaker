@@ -39,6 +39,8 @@ function App() {
 
   // selectedItem: "board" or a shape id
   const [selectedItem, setSelectedItem] = useState<"board" | string>("board");
+  // `selectedItems` holds the multi-selection (ctrl/meta click)
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [shapeCounter, setShapeCounter] = useState<number>(0);
   // local edit fields for inspector inputs (allow typing before commit)
   const [editFields, setEditFields] = useState<Record<string, string>>({});
@@ -214,11 +216,13 @@ function App() {
     selectItem(id);
   }
 
-  function deleteShape(id: string) {
+  function deleteShape(idOrIds: string | string[]) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
     setProject((prev) => ({
       ...prev,
-      shapes: prev.shapes.filter((s) => s.id !== id),
+      shapes: prev.shapes.filter((s) => !ids.includes(s.id)),
     }));
+    setSelectedItems([]);
     selectItem("board");
     setDraggingId(null);
     setDragOffset(null);
@@ -445,14 +449,24 @@ function App() {
       : shapes.find((s) => s.id === selectedItem) || null;
 
   // Helper to select an item and initialize buffered edit fields
-  function selectItem(id: "board" | string) {
+  // `append` toggles membership for multi-select (ctrl/meta click)
+  function selectItem(id: "board" | string, append = false) {
     if (id === "board") {
       setSelectedItem("board");
+      setSelectedItems([]);
       setEditFields({});
       return;
     }
     const s = project.shapes.find((sh) => sh.id === id) || null;
     setSelectedItem(id);
+    if (append) {
+      setSelectedItems((prev) => {
+        if (prev.includes(id)) return prev.filter((x) => x !== id);
+        return [...prev, id];
+      });
+    } else {
+      setSelectedItems([id]);
+    }
     if (!s) {
       setEditFields({});
       return;
@@ -541,6 +555,7 @@ function App() {
               scaleX={scaleX}
               scaleY={scaleY}
               selectedItem={selectedItem}
+              selectedItems={selectedItems}
               selectItem={selectItem}
               updateShape={updateShape}
               draggingId={draggingId}
