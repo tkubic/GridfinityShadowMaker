@@ -7,7 +7,26 @@
     <title>frontend</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">Loading app...</div>
+    <script>
+      // Simple error overlay and initial content to aid debugging when the app
+      // fails to load (shows errors even when the Vite overlay doesn't appear).
+      (function () {
+        function showError(msg) {
+          try {
+            var root = document.getElementById('root');
+            if (!root) return;
+            root.innerHTML = '<pre style="white-space: pre-wrap; color: white; background: #900; padding: 12px;">' + String(msg) + '</pre>';
+          } catch (e) { /* ignore */ }
+        }
+        window.addEventListener('error', function (ev) {
+          showError('Error: ' + (ev && ev.message ? ev.message : String(ev)) + '\nSee console for stack.');
+        });
+        window.addEventListener('unhandledrejection', function (ev) {
+          showError('Unhandled Rejection: ' + (ev && ev.reason ? (ev.reason.message || String(ev.reason)) : String(ev)) + '\nSee console for stack.');
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

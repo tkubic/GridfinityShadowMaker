@@ -26,11 +26,18 @@ export type ToolShape = {
   cutType?: CutType;
   // text-specific
   fontName?: string;
+  // optional explicit font file (filename served from /fonts). When set, the
+  // frontend will try to load `/fonts/<fontFile>` for conversion and display.
+  fontFile?: string;
   fontSizeMM?: number;
   fontBold?: boolean;
   fontItalic?: boolean;
   fontUnderline?: boolean;
   text?: string;
+  // text alignment: controls how text anchor maps to `x,y` when creating/exporting
+  textAlign?: 'left' | 'center' | 'right';
+  // vertical alignment: top/middle/baseline/bottom
+  textValign?: 'top' | 'middle' | 'baseline' | 'bottom';
   // for imported DXF/custom shapes
   scale?: number;
   dxfName?: string;

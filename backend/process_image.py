@@ -268,11 +268,35 @@ def main():
 
 def do_export_dxfs(export_dir, projectdir=None):
     """Read .poly.json and .text.json files from export_dir and write DXF files."""
+    # Try to use ezdxf for robust DXF writing/reading. If it's not available,
+    # fall back to a minimal ASCII DXF writer implemented below so exports
+    # still succeed in environments without ezdxf installed.
     try:
         import ezdxf
     except Exception as e:
-        print('ezdxf is required for export-dxfs mode:', e)
-        return
+        ezdxf = None
+        print('ezdxf not available, will use fallback ASCII DXF writer:', e)
+
+    def write_ascii_dxf_from_polylines(outpath, polylines):
+        """Write a very small ASCII DXF containing POLYLINE/VERTEX or LWPOLYLINE entries.
+        This is intentionally minimal and aims to be consumable by OpenSCAD and other tools.
+        """
+        try:
+            with open(outpath, 'w', encoding='utf8') as fh:
+                fh.write('0\nSECTION\n2\nENTITIES\n')
+                for poly in polylines:
+                    # write as POLYLINE + VERTEX sequence
+                    fh.write('0\nPOLYLINE\n8\n0\n66\n1\n70\n1\n')
+                    for p in poly:
+                        x = float(p.get('x', 0))
+                        y = float(p.get('y', 0))
+                        fh.write('0\nVERTEX\n8\n0\n10\n' + repr(x) + '\n20\n' + repr(y) + '\n')
+                    fh.write('0\nSEQEND\n')
+                fh.write('0\nENDSEC\n0\nEOF\n')
+            return True
+        except Exception as e:
+            print('Fallback ASCII DXF writer failed for', outpath, e)
+            return False
 
     files = os.listdir(export_dir)
     for f in files:
@@ -284,20 +308,6 @@ def do_export_dxfs(export_dir, projectdir=None):
                     import json
                     data = json.load(fh)
                     polylines = data.get('polylines', [])
-                    # write DXF
-                    doc = ezdxf.new()
-                    msp = doc.modelspace()
-                    for poly in polylines:
-                        pts = []
-                        for p in poly:
-                            # expect {x,y} in mm
-                            x = float(p.get('x', 0))
-                            y = float(p.get('y', 0))
-                            pts.append((x, y))
-                        if pts and pts[0] != pts[-1]:
-                            pts.append(pts[0])
-                        if pts:
-                            msp.add_lwpolyline(pts)
                     # Name DXF by stripping the '.poly.json' suffix to get the original shape name
                     if f.lower().endswith('.poly.json'):
                         base = f[:-len('.poly.json')]
@@ -305,8 +315,33 @@ def do_export_dxfs(export_dir, projectdir=None):
                         base = os.path.splitext(f)[0]
                     outname = base + '.dxf'
                     outpath = os.path.join(export_dir, outname)
-                    doc.saveas(outpath)
-                    print('Wrote DXF from polyjson:', outpath)
+                    try:
+                        if ezdxf:
+                            # write DXF using ezdxf for best compatibility
+                            doc = ezdxf.new()
+                            msp = doc.modelspace()
+                            for poly in polylines:
+                                pts = []
+                                for p in poly:
+                                    # expect {x,y} in mm
+                                    x = float(p.get('x', 0))
+                                    y = float(p.get('y', 0))
+                                    pts.append((x, y))
+                                if pts and pts[0] != pts[-1]:
+                                    pts.append(pts[0])
+                                if pts:
+                                    msp.add_lwpolyline(pts)
+                            doc.saveas(outpath)
+                            print('Wrote DXF from polyjson (ezdxf):', outpath)
+                        else:
+                            # fallback ASCII DXF writer
+                            ok = write_ascii_dxf_from_polylines(outpath, polylines)
+                            if ok:
+                                print('Wrote DXF from polyjson (ascii fallback):', outpath)
+                            else:
+                                print('Failed to write DXF for', outpath)
+                    except Exception as e:
+                        print('Failed to write DXF from polyjson:', outpath, e)
             elif lower.endswith('.text.json'):
                 # Text vectorization is intentionally disabled for now.
                 # Keep the .text.json files (they are written by the server),

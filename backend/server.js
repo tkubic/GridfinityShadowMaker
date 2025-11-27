@@ -18,6 +18,35 @@ app.use((req, res, next) => {
   next();
 });
 
+// Serve repository-level fonts directory at /fonts so browser clients can
+// fetch TTF/OTF files when converting text to polylines client-side.
+try {
+  const fontsDir = path.join(__dirname, '..', 'fonts');
+  if (fs.existsSync(fontsDir)) {
+    app.use('/fonts', express.static(fontsDir));
+    console.log('Serving fonts from', fontsDir, 'at /fonts');
+  }
+} catch (e) {
+  console.warn('Fonts directory not served:', e);
+}
+
+// Provide a simple listing of available font files so the frontend can present
+// an accurate font picker mapped to actual TTF/OTF files in the repo.
+app.get('/fonts/list', (req, res) => {
+  try {
+    const fontsDir = path.join(__dirname, '..', 'fonts');
+    if (!fs.existsSync(fontsDir)) return res.json([]);
+    const files = fs.readdirSync(fontsDir).filter((f) => {
+      const ext = path.extname(f).toLowerCase();
+      return ['.ttf', '.otf', '.woff', '.woff2'].includes(ext);
+    });
+    return res.json(files);
+  } catch (e) {
+    console.error('Failed to list fonts', e);
+    return res.status(500).json({ error: 'failed to list fonts' });
+  }
+});
+
 app.use(express.json({ limit: '50mb' }));
 
 // Helper: merge and write GSM snapshot for a project

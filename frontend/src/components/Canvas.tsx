@@ -1,4 +1,6 @@
-import React from "react";
+/** @jsxImportSource react */
+import * as React from "react";
+import * as opentype from "opentype.js";
 import type { BoardConfig, ToolShape } from "../types";
 
 type Props = {
@@ -33,13 +35,45 @@ export default function Canvas({
   selectItem,
   updateShape,
   draggingId,
-  dragOffset,
   setDraggingId,
   setDragOffset,
   FONT_SIZE_CORRECTION,
   textInputRef,
   deleteShape,
 }: Props) {
+  // cache loaded opentype fonts by filename/url
+  const fontCacheRef = React.useRef<Record<string, opentype.Font | null>>({});
+  const [, setFontLoadTick] = React.useState(0);
+  const [fontMetrics, setFontMetrics] = React.useState<Record<string, opentype.Font | null>>({});
+
+  // Load any fonts referenced by shapes (fontFile) so we can compute ascender/descender
+  React.useEffect(() => {
+    const toLoad: string[] = [];
+    for (const s of drawShapes) {
+      const ff = s.fontFile as string | undefined;
+      if (!ff) continue;
+      const url = ff.startsWith('http://') || ff.startsWith('https://') ? ff : `http://localhost:5000/fonts/${ff}`;
+      if (!fontCacheRef.current[url]) {
+        fontCacheRef.current[url] = null; // mark as pending
+        toLoad.push(url);
+      }
+    }
+    if (!toLoad.length) return;
+    for (const url of toLoad) {
+      opentype.load(url, (err: Error | null, font?: opentype.Font) => {
+        if (err) {
+          console.warn('Failed to load font for metrics', url, err);
+          fontCacheRef.current[url] = null;
+        } else {
+          fontCacheRef.current[url] = font ?? null;
+        }
+        // snapshot ref into state so render code can read metrics without touching refs
+        setFontMetrics({ ...fontCacheRef.current });
+        // trigger a re-render so cached metrics are picked up
+        setFontLoadTick((n) => n + 1);
+      });
+    }
+  }, [drawShapes]);
   // refs to manage group dragging
   const groupOffsetsRef = React.useRef<Record<string, { x: number; y: number }>>({});
 
@@ -68,9 +102,58 @@ export default function Canvas({
     const cx = s.x ?? 0;
     const cy = s.y ?? 0;
     const scale = s.scale ?? 1;
-    // fallback sizes
-    const w = (s.widthMM ?? 0) * scale;
-    const h = (s.heightMM ?? 0) * scale;
+    // For text shapes, width/height may not be set. Compute an approximate
+    // bounding box from the font size and text length and convert the
+    // shape's anchor (textAlign/textValign) into a center point so the rest
+    // of the code can treat all shapes as center-anchored.
+    let w: number;
+    let h: number;
+    if (s.type === 'text') {
+      const fontSize = (s.fontSizeMM ?? s.heightMM ?? 15) * (scale);
+      const textLen = (s.text && s.text.length) ? s.text.length : (s.name ? s.name.length : 4);
+      // average glyph width ~0.6 * fontSize (approx). This keeps bbox compact.
+      w = Math.max(1, textLen * fontSize * 0.6);
+      h = Math.max(1, fontSize);
+      // compute center from anchor
+      let centerX = cx;
+      let centerY = cy;
+      const align = s.textAlign || 'center';
+        const valign = s.textValign || 'top';
+      if (align === 'left') centerX = cx + w / 2;
+      else if (align === 'right') centerX = cx - w / 2;
+      // horizontal center stays same for 'center'
+
+      if (valign === 'top') centerY = cy - h / 2;
+      else if (valign === 'bottom') centerY = cy + h / 2;
+      // 'middle' and 'baseline' leave centerY as-is
+
+      const roundedCenterX = Math.round(centerX * 10) / 10;
+      const roundedCenterY = Math.round(centerY * 10) / 10;
+      const centerForCornersX = roundedCenterX;
+      const centerForCornersY = roundedCenterY;
+      // compute local corners relative to centerForCorners
+      const halfW = Math.max(0.01, w / 2);
+      const halfH = Math.max(0.01, h / 2);
+      const local = [
+        { x: -halfW, y: -halfH },
+        { x: halfW, y: -halfH },
+        { x: halfW, y: halfH },
+        { x: -halfW, y: halfH },
+      ];
+      const deg = s.rotateDeg ?? 0;
+      const r = (deg * Math.PI) / 180.0;
+      const cosr = Math.cos(r);
+      const sinr = Math.sin(r);
+      return local.map((p) => {
+        const rx = p.x * cosr - p.y * sinr;
+        const ry = p.x * sinr + p.y * cosr;
+        return { x: Math.round((centerForCornersX + rx) * 10) / 10, y: Math.round((centerForCornersY + ry) * 10) / 10 };
+      });
+    } else {
+      // fallback sizes
+      w = (s.widthMM ?? 0) * scale;
+      h = (s.heightMM ?? 0) * scale;
+    }
     const halfW = Math.max(0.01, w / 2);
     const halfH = Math.max(0.01, h / 2);
     // local corners relative to center
@@ -89,6 +172,37 @@ export default function Canvas({
       const ry = p.x * sinr + p.y * cosr;
       return { x: Math.round((cx + rx) * 10) / 10, y: Math.round((cy + ry) * 10) / 10 };
     });
+  }
+
+  // Compute a text-box (center, width, height, left/top/right/bottom) in board mm
+  function computeTextBox(s: ToolShape) {
+    const scale = s.scale ?? 1;
+    const fontSize = (s.fontSizeMM ?? s.heightMM ?? 15) * (scale);
+    const textLen = (s.text && s.text.length) ? s.text.length : (s.name ? s.name.length : 4);
+    const w = Math.max(1, textLen * fontSize * 0.6);
+    const h = Math.max(1, fontSize);
+
+    let centerX = s.x ?? 0;
+    let centerY = s.y ?? 0;
+    const align = s.textAlign || 'center';
+      const valign = s.textValign || 'top';
+    if (align === 'left') centerX = (s.x ?? 0) + w / 2;
+    else if (align === 'right') centerX = (s.x ?? 0) - w / 2;
+    if (valign === 'top') centerY = (s.y ?? 0) - h / 2;
+    else if (valign === 'bottom') centerY = (s.y ?? 0) + h / 2;
+
+    const halfW = w / 2;
+    const halfH = h / 2;
+    return {
+      centerX: Math.round(centerX * 10) / 10,
+      centerY: Math.round(centerY * 10) / 10,
+      width: w,
+      height: h,
+      left: Math.round((centerX - halfW) * 10) / 10,
+      right: Math.round((centerX + halfW) * 10) / 10,
+      top: Math.round((centerY + halfH) * 10) / 10,
+      bottom: Math.round((centerY - halfH) * 10) / 10,
+    };
   }
 
   // Keyboard handler: delete, arrow moves (shift fine), ctrl+arrow rotate
@@ -206,12 +320,13 @@ export default function Canvas({
     if (!resizingRef.current || !resizingRef.current.id) return;
     const id = resizingRef.current.id;
     const handle = resizingRef.current.handle!;
-    const s = drawShapes.find((d) => d.id === id);
-    if (!s) return;
+    const sLocal = drawShapes.find((d) => d.id === id);
+    if (!sLocal) return;
+    const s = sLocal;
     const pt = getSvgPoint(e); // world mm
 
     // helper: rotate a local point (in mm) to world coords using shape rotation
-    const deg = s.rotateDeg ?? 0;
+    const deg = sLocal.rotateDeg ?? 0;
     const r = (deg * Math.PI) / 180.0;
     const cosr = Math.cos(r);
     const sinr = Math.sin(r);
@@ -222,8 +337,8 @@ export default function Canvas({
       return { x: Math.round((dx * cosr + dy * -sinr) * 10) / 10, y: Math.round((dx * sinr + dy * cosr) * 10) / 10 };
     }
 
-    const halfW = Math.max(0.01, ((s.widthMM ?? 0) * (s.scale ?? 1)) / 2);
-    const halfH = Math.max(0.01, ((s.heightMM ?? 0) * (s.scale ?? 1)) / 2);
+    const halfW = Math.max(0.01, ((sLocal.widthMM ?? 0) * (sLocal.scale ?? 1)) / 2);
+    const halfH = Math.max(0.01, ((sLocal.heightMM ?? 0) * (sLocal.scale ?? 1)) / 2);
 
     // local coordinates for opposite/fixed corner depending on handle
     const localCorners: Record<string, { x: number; y: number }> = {
@@ -310,7 +425,7 @@ export default function Canvas({
 
   // compute axis-aligned bounding box (mm coords) for current multi-selection using shapes' extents
   const selectedShapes = drawShapes.filter((s) => selectedItems.includes(s.id));
-  let bboxRect: JSX.Element | null = null;
+  let bboxRect: React.JSX.Element | null = null;
   let bboxMM: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
   if (selectedShapes.length > 1) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -359,7 +474,7 @@ export default function Canvas({
         const tgt = e.target as Element | null;
         if (!tgt) return;
         // compute world coords for click
-        const pt = getSvgPoint(e as any);
+        const pt = getSvgPoint(e);
         let clickedInsideBBox = false;
         if (bboxMM) {
           const { minX, minY, maxX, maxY } = bboxMM;
@@ -389,7 +504,7 @@ export default function Canvas({
       {drawShapes.map((shape) => {
         const isSelected = selectedItems.includes(shape.id) || selectedItem === shape.id;
 
-        const startDragFor = (e: React.MouseEvent) => {
+        const startDragFor = (e: React.MouseEvent<SVGGraphicsElement, MouseEvent>) => {
           e.stopPropagation();
             const append = e.ctrlKey || e.metaKey;
             // If this shape is already part of a multi-selection and the user did not hold
@@ -540,16 +655,79 @@ export default function Canvas({
         }
 
         if (shape.type === "text") {
-          const xPx = shape.x * scaleX;
-          const yPx = boardPxHeight - shape.y * scaleY;
           const rotDeg = shape.rotateDeg ?? 0;
           const fontSizePx = (shape.fontSizeMM ?? 15) * ((scaleX + scaleY) / 2) * FONT_SIZE_CORRECTION;
+          // Compute text box and choose anchor coordinates based on alignment
+          const tb = computeTextBox(shape);
+          // horizontal anchor: left/start, center/middle, right/end
+          const anchor = (shape.textAlign === 'left') ? 'start' : (shape.textAlign === 'right') ? 'end' : 'middle';
+          // choose x coordinate (in mm) according to align
+          let xMm = (shape.textAlign === 'left') ? tb.left : (shape.textAlign === 'right') ? tb.right : tb.centerX;
+          // choose y coordinate (in mm) according to vertical align (top/middle/bottom/baseline)
+          let yMm: number = tb.centerY;
+          let baseline: 'alphabetic' | 'text-before-edge' | 'middle' | 'text-after-edge' = 'alphabetic';
+          if (shape.textValign === 'top') {
+            // Prefer to compute an exact baseline using font metrics when available:
+            // baselineY = topEdge - ascender
+            let adjusted = false;
+            const ff = shape.fontFile as string | undefined;
+            if (ff) {
+              const fontUrl = ff.startsWith('http://') || ff.startsWith('https://') ? ff : `http://localhost:5000/fonts/${ff}`;
+              const f = fontMetrics[fontUrl];
+              if (f) {
+                try {
+                  const unitsPerEm = f.unitsPerEm || 1000;
+                  const ascUnits = f.ascender || (unitsPerEm * 0.8);
+                  const ascentMm = (ascUnits / unitsPerEm) * (shape.fontSizeMM ?? 15);
+                  const baselineY = tb.top - ascentMm;
+                  yMm = Math.round(baselineY * 10) / 10;
+                  baseline = 'alphabetic';
+                  adjusted = true;
+                } catch {
+                  // fallthrough to fallback
+                }
+              }
+            }
+            if (!adjusted) {
+              yMm = tb.top;
+              baseline = 'text-before-edge';
+            }
+          } else if (shape.textValign === 'middle') {
+            yMm = tb.centerY;
+            baseline = 'middle';
+          } else if (shape.textValign === 'bottom') {
+            yMm = tb.bottom;
+            baseline = 'text-after-edge';
+          } else {
+            // baseline
+            yMm = tb.centerY;
+            baseline = 'alphabetic';
+          }
+
+          // Small visual micro-adjustments (scale with font size) to match
+          // how browsers render fonts vs our bbox math. These are conservative
+          // shifts: 2% of font height vertically and horizontally.
+          const fontSizeMM = shape.fontSizeMM ?? 15;
+          const VERT_ADJUST_FRACTION = 0.032; // 2% of font height
+          const HORIZ_ADJUST_FRACTION = 0.015; // 2% of font height
+          // apply vertical correction for top alignment (move baseline slightly down)
+          if (shape.textValign === 'top') {
+            yMm = Math.round((yMm - fontSizeMM * VERT_ADJUST_FRACTION) * 10) / 10;
+          }
+          // apply small left shift when left-aligned to counter a small right bias
+          if (shape.textAlign === 'left') {
+            xMm = Math.round((xMm - fontSizeMM * HORIZ_ADJUST_FRACTION) * 10) / 10;
+          }
+
+          const xPx = xMm * scaleX;
+          const yPx = boardPxHeight - yMm * scaleY;
+
           return (
             <text
               key={shape.id}
               x={xPx}
               y={yPx}
-              transform={rotDeg ? `rotate(${rotDeg} ${xPx} ${yPx})` : undefined}
+              transform={rotDeg ? `rotate(${rotDeg} ${tb.centerX * scaleX} ${boardPxHeight - tb.centerY * scaleY})` : undefined}
               fill={fillColorFor(shape)}
               fontFamily={shape.fontName ?? "Nunito, Arial, Helvetica, sans-serif"}
               style={{
@@ -559,13 +737,13 @@ export default function Canvas({
                 textDecoration: shape.fontUnderline ? "underline" : "none",
               }}
               fontSize={fontSizePx}
-              textAnchor="middle"
-              dominantBaseline="middle"
+              textAnchor={anchor}
+              dominantBaseline={baseline}
               className={"shape-text" + (isSelected ? " shape-selected" : "")}
               onMouseDown={(e) => {
                 // treat like other shapes but allow double-click handling separately
                 if (e.detail > 1) return;
-                startDragFor(e as any);
+                      startDragFor(e);
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation();

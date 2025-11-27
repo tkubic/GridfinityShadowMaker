@@ -46,6 +46,31 @@ export default function Inspector({
   exportDxfs,
   generateScad,
 }: InspectorProps) {
+  // Limit the inspector to two known font files for now: Verdana and ARLRDBD (Arial Rounded MT Bold)
+  const [availableFonts] = React.useState<string[] | null>([
+    'verdana.ttf',
+    'ARLRDBD.TTF',
+  ]);
+  // When the selected shape has a fontFile registered, ensure the page has a matching @font-face
+  React.useEffect(() => {
+    if (!selectedShape) return;
+    const fname = selectedShape.fontFile as string | undefined;
+    if (!fname) return;
+    const base = fname.replace(/\.[^.]+$/, '');
+    const family = `GSM-${base}`;
+    const styleId = `gsm-font-${base}`;
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      const fontUrl = `http://localhost:5000/fonts/${fname}`;
+      const rules = `@font-face { font-family: '${family}'; src: url('${fontUrl}') format('truetype'); font-weight: 400; font-style: normal; }\n`;
+      style.appendChild(document.createTextNode(rules));
+      document.head.appendChild(style);
+    }
+    // Don't clobber buffered edit fields here — `selectItem` initializes
+    // the buffered `editFields` when a shape is selected. Only register
+    // the @font-face so the inspector select can render correctly.
+  }, [selectedShape, setEditFields]);
   // If we're in trace tab, show trace-specific controls in the inspector
   if (activeTab === "trace") {
     // trace inputs are lifted into App state via props
@@ -283,14 +308,66 @@ export default function Inspector({
                   value={editFields.font ?? (selectedShape.fontName ?? "Nunito, Arial, Helvetica, sans-serif")}
                   onChange={(e) => {
                     const v = e.target.value;
-                    setEditFields({ ...editFields, font: v });
-                    updateShape(selectedShape.id, { fontName: v });
+                    // If the inspector has populated availableFonts, the option value
+                    // will be a filename (e.g. 'verdana.ttf'). In that case we want to
+                    // register a @font-face for display and store both a CSS family
+                    // (in fontName) and the actual filename (in fontFile) for export.
+                    if (availableFonts && availableFonts.includes(v)) {
+                      const fname = v;
+                      const base = fname.replace(/\.[^.]+$/, '');
+                      const family = `GSM-${base}`;
+                      // create (or reuse) a style tag to define the font-family mapping
+                      const styleId = `gsm-font-${base}`;
+                      if (!document.getElementById(styleId)) {
+                        const style = document.createElement('style');
+                        style.id = styleId;
+                        // base face (normal) - point to backend fonts endpoint so browser can fetch the TTF
+                        const fontUrl = `http://localhost:5000/fonts/${fname}`;
+                        let rules = `@font-face { font-family: '${family}'; src: url('${fontUrl}') format('truetype'); font-weight: 400; font-style: normal; }\n`;
+                        // if bold/italic variants present, try to register them too (common suffixes)
+                        const tryNames = [base + 'b', base + 'B', base + 'Bold', base + 'bold', base + 'i', base + 'I', base + 'Italic', base + 'italic', base + '-bold', base + '-italic'];
+                        for (const cand of tryNames) {
+                          if (availableFonts.includes(cand + '.ttf')) {
+                            const url = `/fonts/${cand}.ttf`;
+                            if (/i/i.test(cand)) {
+                              rules += `@font-face { font-family: '${family}'; src: url('${url}') format('truetype'); font-weight: 400; font-style: italic; }\n`;
+                            } else {
+                              rules += `@font-face { font-family: '${family}'; src: url('${url}') format('truetype'); font-weight: 700; font-style: normal; }\n`;
+                            }
+                          }
+                        }
+                        style.appendChild(document.createTextNode(rules));
+                        document.head.appendChild(style);
+                      }
+                      // store filename in the edit field so the select's value matches
+                      setEditFields({ ...editFields, font: fname });
+                      updateShape(selectedShape.id, { fontName: family, fontFile: fname });
+                    } else {
+                      setEditFields({ ...editFields, font: v });
+                      updateShape(selectedShape.id, { fontName: v });
+                    }
                   }}
-                  onBlur={() => updateShape(selectedShape.id, { fontName: editFields.font ?? selectedShape.fontName })}
+                  onBlur={() => {
+                    const val = editFields.font ?? selectedShape.fontName ?? '';
+                    if (availableFonts && availableFonts.includes(val)) {
+                      const fname = val;
+                      const base = fname.replace(/\.[^.]+$/, '');
+                      const family = `GSM-${base}`;
+                      updateShape(selectedShape.id, { fontName: family, fontFile: fname });
+                    } else {
+                      updateShape(selectedShape.id, { fontName: val });
+                    }
+                  }}
                 >
-                  {FONT_OPTIONS.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
-                  ))}
+                  {availableFonts && availableFonts.length > 0 ? (
+                    availableFonts.map((fname) => (
+                      <option key={fname} value={fname}>{fname.replace(/\.[^.]+$/, '')}</option>
+                    ))
+                  ) : (
+                    FONT_OPTIONS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))
+                  )}
                 </select>
               </div>
 

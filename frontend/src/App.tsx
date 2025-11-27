@@ -8,6 +8,7 @@ import Inspector from "./components/Inspector";
 import TraceCanvas from "./components/TraceCanvas";
 import RenderCanvas from "./components/RenderCanvas";
 import { parseDxf } from "./utils/dxf";
+import { convertTextShapeToPolygons } from "./lib/textToPolylines";
 function App() {
   // Generate a default project name like GSM-YYYYMMDD-Hmm (e.g. GSM-20251124-351)
   function getDefaultProjectName() {
@@ -201,10 +202,18 @@ function App() {
       id,
       type: "text",
       name: `Text-${next}`,
-      x: boardWidthMM / 2,
-      y: boardHeightMM / 2,
+      // Default new text to top-left justified with zero padding: place
+      // the text anchor at the board's top-left (x=0, y=boardHeightMM).
+      x: 0,
+      y: boardHeightMM,
+      // indicate alignment so rendering and export place the text at the
+      // top-left with no extra padding
+      textAlign: 'left',
+      textValign: 'top',
       text: "Text",
-      fontName: "Nunito, Arial, Helvetica, sans-serif",
+      // default to ARLRDBD (Arial Rounded MT Bold) which exists in repo fonts
+      fontName: `GSM-ARLRDBD`,
+      fontFile: 'ARLRDBD.TTF',
       fontSizeMM: 15,
       depthMM: 0.6,
       cutType: "Raised",
@@ -285,6 +294,7 @@ function App() {
   }
 
   function handleGsmFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.currentTarget;
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -313,13 +323,15 @@ function App() {
       }
     };
     reader.readAsText(file);
-    e.currentTarget.value = "";
+    // clear input so same file can be re-selected later
+    try { input.value = ""; } catch (err) { /* ignore */ }
   }
 
   // helper functions moved into Canvas component
 
   // === DXF import ===
   async function handleDxfFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.currentTarget;
     const files = e.target.files ? Array.from(e.target.files) : [];
     if (!files.length) return;
 
@@ -403,7 +415,7 @@ function App() {
     }
 
     // allow re-selecting same file later
-    e.currentTarget.value = "";
+    try { input.value = ""; } catch (err) { /* ignore */ }
   }
 
   // Export DXFs using the server endpoint. Extracted so Inspector can call it.
@@ -497,7 +509,127 @@ function App() {
           }
           polylines.push(pts);
         } else if (s.type === 'text') {
-          items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
+          try {
+            // Map our internal ToolShape to the library TextShape shape
+            const libShape = {
+              id: s.id,
+              kind: 'text',
+              content: s.text || s.name || '',
+              // fontFamily may be a CSS-like family string or a direct filename (e.g. 'verdana.ttf')
+              fontFamily: (s.fontName && typeof s.fontName === 'string') ? s.fontName.split(',')[0].trim() : 'Verdana',
+              fontStyle: (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as any,
+              // apply the same visual correction used by the canvas so DXF matches on-screen size
+              heightMm: ((s.fontSizeMM || s.heightMM || 15) * FONT_SIZE_CORRECTION),
+              positionMm: { x: cx, y: cy },
+              rotationDeg: rot,
+              align: (s.textAlign as any) || 'center',
+              valign: (s.textValign as any) || 'baseline',
+            };
+
+            // Attempt to load fonts by guessing likely TTF filenames derived from the
+            // UI font family (try bold/italic variants), falling back to Verdana.
+            const family = (libShape.fontFamily || 'verdana').replace(/['\"]/g, '').trim();
+            const candidates: string[] = [];
+            const base = family.split(',')[0].trim();
+            // If the inspector set an explicit font file on the shape, prefer it
+            const fontFile = (s as any).fontFile as string | undefined;
+            const addCandidate = (fn: string) => candidates.push(`http://localhost:5000/fonts/${fn}`);
+            if (fontFile) {
+              const baseName = fontFile.replace(/\.[^.]+$/, '');
+              // Prefer variants that match bold/italic flags
+              const ordered: string[] = [];
+              const wantBold = !!s.fontBold;
+              const wantItalic = !!s.fontItalic;
+              if (wantBold && wantItalic) {
+                ordered.push(`${baseName}ib.ttf`, `${baseName}bi.ttf`, `${baseName}ib.ttf`);
+              }
+              if (wantBold) ordered.push(`${baseName}b.ttf`, `${baseName}-bold.ttf`, `${baseName}Bold.ttf`);
+              if (wantItalic) ordered.push(`${baseName}i.ttf`, `${baseName}-italic.ttf`, `${baseName}Italic.ttf`);
+              // always try the base font file next
+              ordered.push(fontFile);
+              // finally add some other common guesses
+              ordered.push(`${baseName}z.ttf`, `${baseName}ab.ttf`, `${baseName}ib.ttf`);
+              for (const fn of ordered) addCandidate(fn);
+            } else {
+              // quick mapping for commonly-present TTF filenames in the repo `fonts/` folder
+              const fontFileMap: Record<string, string> = {
+                arial: 'ARLRDBD.TTF',
+                verdana: 'verdana.ttf',
+                nunito: 'nunito.ttf',
+              };
+              const baseKey = base.toLowerCase();
+              if (fontFileMap[baseKey]) addCandidate(fontFileMap[baseKey]);
+              // If the selected font looks like a filename (ends with .ttf/.otf) or is already a URL, try it directly
+              if (base.toLowerCase().endsWith('.ttf') || base.toLowerCase().endsWith('.otf')) {
+                candidates.unshift(base);
+              } else if (base.startsWith('http://') || base.startsWith('https://')) {
+                candidates.unshift(base);
+              }
+              const nameVariants = [base, base.replace(/\s+/g, ''), base.toLowerCase(), base.replace(/\s+/g, '-').toLowerCase()];
+              const styleSuffixes = ['', '-bold', '-italic', 'b', 'i', 'Bold', 'Italic'];
+              for (const v of nameVariants) {
+                for (const suf of styleSuffixes) addCandidate(`${v}${suf}.ttf`);
+              }
+              addCandidate('verdana.ttf');
+            }
+
+            let polygons: any[] | null = null;
+            let usedFontUrl: string | null = null;
+            for (const url of candidates) {
+              try {
+                polygons = await convertTextShapeToPolygons(libShape, url, 0.1);
+                if (polygons && polygons.length) {
+                  // success
+                  usedFontUrl = url;
+                  console.info('Text conversion: used font', url);
+                  break;
+                }
+              } catch (e) {
+                // try next candidate
+                console.warn('Font load/convert failed for', url, e);
+                polygons = null;
+              }
+            }
+            if (!usedFontUrl) console.warn('Text conversion: no font candidate succeeded for', libShape.fontFamily);
+            // flatten into an array of polylines (outer then holes)
+            const dxfPolylines: Array<Array<{ x: number; y: number }>> = [];
+            if (polygons) {
+              for (const p of polygons) {
+                if (p.outer && p.outer.length) dxfPolylines.push(p.outer.map((pt) => ({ x: pt.x, y: pt.y })));
+                if (p.holes && p.holes.length) {
+                  for (const h of p.holes) {
+                    if (h && h.length) dxfPolylines.push(h.map((pt) => ({ x: pt.x, y: pt.y })));
+                  }
+                }
+              }
+            }
+
+            if (dxfPolylines.length) {
+              items.push({
+                name: s.name || s.id,
+                type: 'text',
+                cutType: s.cutType,
+                x: s.x || 0,
+                y: s.y || 0,
+                rotateDeg: s.rotateDeg || 0,
+                scale: s.scale || 1,
+                depthMM: s.depthMM || 0,
+                widthMM: s.widthMM || 0,
+                heightMM: s.heightMM || 0,
+                dxfPaths: dxfPolylines,
+                // debugging: which font URL was used (may be null if fallback occurred)
+                _fontUrl: usedFontUrl,
+                posXYRot: [0, 0, 0],
+              });
+            } else {
+              // fallback: still emit a text descriptor so server-side converter can attempt conversion
+              items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
+            }
+          } catch (err) {
+            console.error('text conversion failed for', s.id, err);
+            // fall back to original behavior so server-side pipeline can handle it
+            items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
+          }
           continue;
         }
 
@@ -563,6 +695,7 @@ function App() {
   }
 
   function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.currentTarget;
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
@@ -591,7 +724,7 @@ function App() {
         alert('Upload failed: ' + err.message);
       })
       .finally(() => {
-        e.currentTarget.value = "";
+        try { input.value = ""; } catch (err) { /* ignore */ }
       });
   }
 
