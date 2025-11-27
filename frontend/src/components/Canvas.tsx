@@ -44,7 +44,6 @@ export default function Canvas({
   // cache loaded opentype fonts by filename/url
   const fontCacheRef = React.useRef<Record<string, opentype.Font | null>>({});
   const [, setFontLoadTick] = React.useState(0);
-  const [fontMetrics, setFontMetrics] = React.useState<Record<string, opentype.Font | null>>({});
 
   // Load any fonts referenced by shapes (fontFile) so we can compute ascender/descender
   React.useEffect(() => {
@@ -67,9 +66,7 @@ export default function Canvas({
         } else {
           fontCacheRef.current[url] = font ?? null;
         }
-        // snapshot ref into state so render code can read metrics without touching refs
-        setFontMetrics({ ...fontCacheRef.current });
-        // trigger a re-render so cached metrics are picked up
+        // trigger a re-render so components depending on loaded fonts update
         setFontLoadTick((n) => n + 1);
       });
     }
@@ -97,6 +94,40 @@ export default function Canvas({
     return "#ff3333";
   }
 
+  
+
+  // compute centroid of polygon (average of vertices)
+  function centroidOf(poly: Array<{ x: number; y: number }>) {
+    if (!poly || poly.length === 0) return { x: 0, y: 0 };
+    let sx = 0, sy = 0;
+    for (const p of poly) { sx += p.x; sy += p.y; }
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+
+  // compute signed area for a polygon (array of {x,y})
+  function signedArea(poly: Array<{ x: number; y: number }>) {
+    if (!poly || poly.length < 3) return 0;
+    let a = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const p1 = poly[i];
+      const p2 = poly[(i + 1) % poly.length];
+      a += p1.x * p2.y - p2.x * p1.y;
+    }
+    return a / 2;
+  }
+
+  // point-in-polygon (ray casting)
+  function pointInPoly(pt: { x: number; y: number }, poly: Array<{ x: number; y: number }>) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y;
+      const xj = poly[j].x, yj = poly[j].y;
+      const intersect = ((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi + 0.0) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   // compute world-space corners for a shape's bounding box (taking into account width/height, scale and rotation)
   function getWorldCorners(s: ToolShape) {
     const cx = s.x ?? 0;
@@ -104,11 +135,33 @@ export default function Canvas({
     const scale = s.scale ?? 1;
     // For text shapes, width/height may not be set. Compute an approximate
     // bounding box from the font size and text length and convert the
-    // shape's anchor (textAlign/textValign) into a center point so the rest
-    // of the code can treat all shapes as center-anchored.
     let w: number;
     let h: number;
     if (s.type === 'text') {
+      // If the text shape has been vectorized (dxfPaths present) we store
+      // `x,y` as the geometry centroid. In that case compute corners around
+      // the centroid directly using measured width/height. Otherwise fall
+      // back to the legacy anchor-based computation where `x,y` represented
+      // an anchor (left/center/right + top/middle/bottom).
+      if (s.dxfPaths && s.dxfPaths.length) {
+        const halfW = Math.max(0.01, ((s.widthMM ?? 0) * scale) / 2);
+        const halfH = Math.max(0.01, ((s.heightMM ?? 0) * scale) / 2);
+        const local = [
+          { x: -halfW, y: -halfH },
+          { x: halfW, y: -halfH },
+          { x: halfW, y: halfH },
+          { x: -halfW, y: halfH },
+        ];
+        const deg = s.rotateDeg ?? 0;
+        const r = (deg * Math.PI) / 180.0;
+        const cosr = Math.cos(r);
+        const sinr = Math.sin(r);
+        return local.map((p) => {
+          const rx = p.x * cosr - p.y * sinr;
+          const ry = p.x * sinr + p.y * cosr;
+          return { x: Math.round((cx + rx) * 10) / 10, y: Math.round((cy + ry) * 10) / 10 };
+        });
+      }
       const fontSize = (s.fontSizeMM ?? s.heightMM ?? 15) * (scale);
       const textLen = (s.text && s.text.length) ? s.text.length : (s.name ? s.name.length : 4);
       // average glyph width ~0.6 * fontSize (approx). This keeps bbox compact.
@@ -177,6 +230,26 @@ export default function Canvas({
   // Compute a text-box (center, width, height, left/top/right/bottom) in board mm
   function computeTextBox(s: ToolShape) {
     const scale = s.scale ?? 1;
+    // If vector geometry exists treat x,y as centroid and use measured extents
+    if (s.type === 'text' && s.dxfPaths && s.dxfPaths.length) {
+      const centerX = s.x ?? 0;
+      const centerY = s.y ?? 0;
+      const w = s.widthMM ?? (s.text ? (s.text.length * (s.fontSizeMM ?? 15) * 0.6) : 10);
+      const h = s.heightMM ?? (s.fontSizeMM ?? 15);
+      const halfW = w / 2;
+      const halfH = h / 2;
+      return {
+        centerX: Math.round(centerX * 10) / 10,
+        centerY: Math.round(centerY * 10) / 10,
+        width: w,
+        height: h,
+        left: Math.round((centerX - halfW) * 10) / 10,
+        right: Math.round((centerX + halfW) * 10) / 10,
+        top: Math.round((centerY + halfH) * 10) / 10,
+        bottom: Math.round((centerY - halfH) * 10) / 10,
+      };
+    }
+
     const fontSize = (s.fontSizeMM ?? s.heightMM ?? 15) * (scale);
     const textLen = (s.text && s.text.length) ? s.text.length : (s.name ? s.name.length : 4);
     const w = Math.max(1, textLen * fontSize * 0.6);
@@ -612,27 +685,54 @@ export default function Canvas({
               onMouseDown={startDragFor}
             >
               {hasPaths ? (
-                shape.dxfPaths!.map((path, idx) => {
-                  if (!path.length) return null;
-                  const d = path.map((p, i) => {
-                    const px = centerXpx + p.x * s * scaleX;
-                    const py = centerYpx - p.y * s * scaleY;
-                    return `${i === 0 ? "M" : "L"} ${px} ${py}`;
-                  }).join(" ") + " Z";
+                (() => {
+                  const paths = shape.dxfPaths || [];
+                  // Sort polygons by absolute area (largest first) so we only
+                  // test containment against larger polygons. This avoids
+                  // misclassifying large outer shapes when centroids fall
+                  // inside smaller holes (common for concentric glyph contours).
+                  const areas = paths.map((p) => Math.abs(signedArea(p || [])));
+                  const idxs = paths.map((_, i) => i).sort((a, b) => areas[b] - areas[a]);
+                  const holeFlags: boolean[] = new Array(paths.length).fill(false);
+                  const processed: number[] = [];
+                  for (const idx of idxs) {
+                    const p = paths[idx] || [];
+                    const c = centroidOf(p || []);
+                    let isHole = false;
+                    for (const larger of processed) {
+                      const other = paths[larger] || [];
+                      if (other && other.length && pointInPoly(c, other)) {
+                        isHole = true;
+                        break;
+                      }
+                    }
+                    holeFlags[idx] = isHole;
+                    processed.push(idx);
+                  }
+                  return paths.map((path, idx) => {
+                    if (!path || !path.length) return null;
+                    const isHole = !!holeFlags[idx];
+                    const fill = isHole ? 'none' : fillColorFor(shape);
+                    const d = path.map((p, i) => {
+                      const px = centerXpx + p.x * s * scaleX;
+                      const py = centerYpx - p.y * s * scaleY;
+                      return `${i === 0 ? "M" : "L"} ${px} ${py}`;
+                    }).join(" ") + " Z";
 
-                  return (
-                    <path
-                      key={idx}
-                      d={d}
-                      fill={fillColorFor(shape)}
-                      fillOpacity={shape.cutType === "Raised" ? 1 : 1}
-                      stroke={isSelected ? "#ffff66" : "#ffaaaa"}
-                      strokeWidth={isSelected ? 3 : 1}
-                      strokeLinejoin="round"
-                      strokeLinecap="round"
-                    />
-                  );
-                })
+                    return (
+                      <path
+                        key={idx}
+                        d={d}
+                        fill={fill}
+                        fillOpacity={shape.cutType === "Raised" ? 1 : 1}
+                        stroke={isSelected ? "#ffff66" : "#ffaaaa"}
+                        strokeWidth={isSelected ? 3 : 1}
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                      />
+                    );
+                  });
+                })()
               ) : (
                 (() => {
                   const baseW = shape.widthMM || 50;
@@ -655,95 +755,25 @@ export default function Canvas({
         }
 
         if (shape.type === "text") {
+          // Render text shapes using their pre-computed vector geometry (`dxfPaths`).
+          // This keeps text editable (shape remains type 'text') while the canvas
+          // shows deterministic vectors rather than browser-rendered font text.
           const rotDeg = shape.rotateDeg ?? 0;
+          const s = shape.scale ?? 1;
+          const centerXpx = (shape.x ?? 0) * scaleX;
+          const centerYpx = boardPxHeight - (shape.y ?? 0) * scaleY;
           const fontSizePx = (shape.fontSizeMM ?? 15) * ((scaleX + scaleY) / 2) * FONT_SIZE_CORRECTION;
-          // Compute text box and choose anchor coordinates based on alignment
-          const tb = computeTextBox(shape);
-          // horizontal anchor: left/start, center/middle, right/end
-          const anchor = (shape.textAlign === 'left') ? 'start' : (shape.textAlign === 'right') ? 'end' : 'middle';
-          // choose x coordinate (in mm) according to align
-          let xMm = (shape.textAlign === 'left') ? tb.left : (shape.textAlign === 'right') ? tb.right : tb.centerX;
-          // choose y coordinate (in mm) according to vertical align (top/middle/bottom/baseline)
-          let yMm: number = tb.centerY;
-          let baseline: 'alphabetic' | 'text-before-edge' | 'middle' | 'text-after-edge' = 'alphabetic';
-          if (shape.textValign === 'top') {
-            // Prefer to compute an exact baseline using font metrics when available:
-            // baselineY = topEdge - ascender
-            let adjusted = false;
-            const ff = shape.fontFile as string | undefined;
-            if (ff) {
-              const fontUrl = ff.startsWith('http://') || ff.startsWith('https://') ? ff : `http://localhost:5000/fonts/${ff}`;
-              const f = fontMetrics[fontUrl];
-              if (f) {
-                try {
-                  const unitsPerEm = f.unitsPerEm || 1000;
-                  const ascUnits = f.ascender || (unitsPerEm * 0.8);
-                  const ascentMm = (ascUnits / unitsPerEm) * (shape.fontSizeMM ?? 15);
-                  const baselineY = tb.top - ascentMm;
-                  yMm = Math.round(baselineY * 10) / 10;
-                  baseline = 'alphabetic';
-                  adjusted = true;
-                } catch {
-                  // fallthrough to fallback
-                }
-              }
-            }
-            if (!adjusted) {
-              yMm = tb.top;
-              baseline = 'text-before-edge';
-            }
-          } else if (shape.textValign === 'middle') {
-            yMm = tb.centerY;
-            baseline = 'middle';
-          } else if (shape.textValign === 'bottom') {
-            yMm = tb.bottom;
-            baseline = 'text-after-edge';
-          } else {
-            // baseline
-            yMm = tb.centerY;
-            baseline = 'alphabetic';
-          }
-
-          // Small visual micro-adjustments (scale with font size) to match
-          // how browsers render fonts vs our bbox math. These are conservative
-          // shifts: 2% of font height vertically and horizontally.
-          const fontSizeMM = shape.fontSizeMM ?? 15;
-          const VERT_ADJUST_FRACTION = 0.032; // 2% of font height
-          const HORIZ_ADJUST_FRACTION = 0.015; // 2% of font height
-          // apply vertical correction for top alignment (move baseline slightly down)
-          if (shape.textValign === 'top') {
-            yMm = Math.round((yMm - fontSizeMM * VERT_ADJUST_FRACTION) * 10) / 10;
-          }
-          // apply small left shift when left-aligned to counter a small right bias
-          if (shape.textAlign === 'left') {
-            xMm = Math.round((xMm - fontSizeMM * HORIZ_ADJUST_FRACTION) * 10) / 10;
-          }
-
-          const xPx = xMm * scaleX;
-          const yPx = boardPxHeight - yMm * scaleY;
+          const hasPaths = shape.dxfPaths && shape.dxfPaths.length > 0;
 
           return (
-            <text
+            <g
               key={shape.id}
-              x={xPx}
-              y={yPx}
-              transform={rotDeg ? `rotate(${rotDeg} ${tb.centerX * scaleX} ${boardPxHeight - tb.centerY * scaleY})` : undefined}
-              fill={fillColorFor(shape)}
-              fontFamily={shape.fontName ?? "Nunito, Arial, Helvetica, sans-serif"}
-              style={{
-                fontFamily: shape.fontName ?? "Nunito, Arial, Helvetica, sans-serif",
-                fontWeight: shape.fontBold ? "700" : "400",
-                fontStyle: shape.fontItalic ? "italic" : "normal",
-                textDecoration: shape.fontUnderline ? "underline" : "none",
-              }}
-              fontSize={fontSizePx}
-              textAnchor={anchor}
-              dominantBaseline={baseline}
               className={"shape-text" + (isSelected ? " shape-selected" : "")}
+              transform={rotDeg ? `rotate(${rotDeg} ${centerXpx} ${centerYpx})` : undefined}
               onMouseDown={(e) => {
-                // treat like other shapes but allow double-click handling separately
-                if (e.detail > 1) return;
-                      startDragFor(e);
+                // keep same drag/select behavior as before
+                if ((e as React.MouseEvent).detail > 1) return;
+                startDragFor(e as React.MouseEvent<SVGGraphicsElement, MouseEvent>);
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
@@ -753,8 +783,75 @@ export default function Canvas({
                 setTimeout(() => textInputRef.current?.focus(), 0);
               }}
             >
-              {shape.text ?? shape.name}
-            </text>
+              {hasPaths ? (
+                (() => {
+                  const paths = shape.dxfPaths || [];
+                  const areas = paths.map((p) => Math.abs(signedArea(p || [])));
+                  const idxs = paths.map((_, i) => i).sort((a, b) => areas[b] - areas[a]);
+                  const holeFlags: boolean[] = new Array(paths.length).fill(false);
+                  const processed: number[] = [];
+                  for (const idx of idxs) {
+                    const p = paths[idx] || [];
+                    const c = centroidOf(p || []);
+                    let isHole = false;
+                    for (const larger of processed) {
+                      const other = paths[larger] || [];
+                      if (other && other.length && pointInPoly(c, other)) {
+                        isHole = true;
+                        break;
+                      }
+                    }
+                    holeFlags[idx] = isHole;
+                    processed.push(idx);
+                  }
+
+                  return paths.map((path, idx) => {
+                    if (!path || !path.length) return null;
+                    const isHole = !!holeFlags[idx];
+                    const fill = isHole ? '#000000' : fillColorFor(shape);
+                    const d = path.map((p: { x: number; y: number }, i: number) => {
+                      const px = centerXpx + p.x * s * scaleX;
+                      const py = centerYpx - p.y * s * scaleY;
+                      return `${i === 0 ? "M" : "L"} ${px} ${py}`;
+                    }).join(" ") + " Z";
+
+                    return (
+                      <path
+                        key={idx}
+                        d={d}
+                        fill={fill}
+                        fillOpacity={shape.cutType === "Raised" ? 1 : 1}
+                        stroke={isSelected ? "#ffff66" : "#ffaaaa"}
+                        strokeWidth={isSelected ? 3 : 1}
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                      />
+                    );
+                  });
+                })()
+              ) : (
+                // Fallback: show a simple placeholder box with the text label so
+                // the user can still see and interact with the object even if
+                // vectorization hasn't completed or failed.
+                (() => {
+                  const tb = computeTextBox(shape);
+                  const baseW = tb.width || 40;
+                  const baseH = tb.height || 15;
+                  const wPx = baseW * s * scaleX;
+                  const hPx = baseH * s * scaleY;
+                  const xPx = centerXpx - wPx / 2;
+                  const yPx = centerYpx - hPx / 2;
+                  return (
+                    <>
+                      <rect x={xPx} y={yPx} width={wPx} height={hPx} fill="#ffaaaa33" stroke={isSelected ? "#ff6666" : "#ffaaaa"} strokeWidth={isSelected ? 2 : 1} />
+                      <line x1={xPx} y1={yPx} x2={xPx + wPx} y2={yPx + hPx} stroke="#ff6666" strokeWidth={1} />
+                      <line x1={xPx + wPx} y1={yPx} x2={xPx} y2={yPx + hPx} stroke="#ff6666" strokeWidth={1} />
+                      <text x={centerXpx} y={centerYpx} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(10, Math.round(fontSizePx * 0.6))} fill="#333333">{shape.text ?? shape.name}</text>
+                    </>
+                  );
+                })()
+              )}
+            </g>
           );
         }
 

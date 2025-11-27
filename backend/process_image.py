@@ -560,8 +560,8 @@ def do_generate_scad(project_folder, projectdir=None):
                                 if not isinstance(sh, dict):
                                     continue
                                 # skip explicit text shapes
-                                if str(sh.get('type')).lower() == 'text':
-                                    continue
+                                #if str(sh.get('type')).lower() == 'text':
+                                #    continue
                                 # Use the UI display name as primary filename
                                 nm = sh.get('name') if sh.get('name') is not None else (sh.get('dxfName') or sh.get('dxf_name') or sh.get('id'))
                                 if nm is None:

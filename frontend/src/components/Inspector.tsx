@@ -382,6 +382,20 @@ export default function Inspector({
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("fontSize"); }}
                 />
               </div>
+
+              <div className="field">
+                <label>Depth (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                  onBlur={() => commitEditField("depth")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  style={{ width: "100%" }}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                />
+              </div>
             </>
           )}
 

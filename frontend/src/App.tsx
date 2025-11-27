@@ -97,10 +97,95 @@ function App() {
   // Text sizing uses direct mm->px conversion (px per mm) — no measurement loop.
 
   function updateShape(id: string, partial: Partial<ToolShape>) {
-    setProject((prev) => ({
-      ...prev,
-      shapes: prev.shapes.map((s) => (s.id === id ? { ...s, ...partial } : s)),
-    }));
+    // Apply the partial update and, if the update touches text/font properties,
+    // attempt to re-vectorize the text into `dxfPaths` so the canvas contains
+    // exact vector geometry immediately.
+    const nextProject = ((): typeof project => {
+      const next = {
+        ...project,
+        shapes: project.shapes.map((s) => (s.id === id ? { ...s, ...partial } : s)),
+      } as typeof project;
+      return next;
+    })();
+    setProject(nextProject);
+
+    // If the updated shape is a text shape and the partial touches any of the
+    // properties that affect glyph outlines, re-vectorize.
+    const vectKeys = ["text", "fontSizeMM", "fontFile", "fontName", "fontBold", "fontItalic"];
+    const touched = Object.keys(partial).some((k) => vectKeys.includes(k));
+    if (touched) {
+      const s = nextProject.shapes.find((sh) => sh.id === id);
+      if (s && s.type === "text") {
+        // fire-and-forget; updates will be applied when available
+        void vectorizeTextShape(s);
+      }
+    }
+  }
+
+  // Vectorize a text shape in-place: convert glyphs -> polygons and store
+  // the resulting polylines in `dxfPaths` on the same ToolShape entry so the
+  // Canvas renders the exact vectors while the shape remains type 'text'.
+  async function vectorizeTextShape(s: ToolShape) {
+    if (!s || s.type !== 'text') return;
+    try {
+      const content = s.text ?? s.name ?? '';
+      const fontFile = (s as any).fontFile as string | undefined;
+      const fontUrl = fontFile && (fontFile.startsWith('http://') || fontFile.startsWith('https://')) ? fontFile : (fontFile ? `http://localhost:5000/fonts/${fontFile}` : 'http://localhost:5000/fonts/verdana.ttf');
+      const libShape = {
+        id: s.id,
+        kind: 'text',
+        content,
+        fontFamily: (s.fontName && typeof s.fontName === 'string') ? s.fontName.split(',')[0].trim() : 'Verdana',
+        fontStyle: (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as any,
+        heightMm: ((s.fontSizeMM ?? s.heightMM ?? 15) * FONT_SIZE_CORRECTION),
+        positionMm: { x: s.x ?? 0, y: s.y ?? 0 },
+        rotationDeg: s.rotateDeg ?? 0,
+        align: (s.textAlign as any) || 'center',
+        valign: (s.textValign as any) || 'baseline',
+      };
+
+      const polygons = await convertTextShapeToPolygons(libShape as any, fontUrl, 0.1);
+      if (!polygons || !polygons.length) return;
+
+      // compute bbox and centroid/centroid-based placement
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of polygons) {
+        for (const pt of p.outer) {
+          minX = Math.min(minX, pt.x);
+          minY = Math.min(minY, pt.y);
+          maxX = Math.max(maxX, pt.x);
+          maxY = Math.max(maxY, pt.y);
+        }
+        for (const h of p.holes) for (const pt of h) {
+          minX = Math.min(minX, pt.x);
+          minY = Math.min(minY, pt.y);
+          maxX = Math.max(maxX, pt.x);
+          maxY = Math.max(maxY, pt.y);
+        }
+      }
+      const cx = isFinite(minX) ? (minX + maxX) / 2 : (s.x ?? 0);
+      const cy = isFinite(minY) ? (minY + maxY) / 2 : (s.y ?? 0);
+
+      // Store dxfPaths relative to the current shape position so we do not
+      // change the shape's on-canvas location when re-vectorizing.
+      const baseX = s.x ?? 0;
+      const baseY = s.y ?? 0;
+      const dxfPaths: Array<Array<{ x: number; y: number }>> = [];
+      for (const p of polygons) {
+        if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
+        if (p.holes && p.holes.length) for (const h of p.holes) if (h && h.length) dxfPaths.push(h.map((pt) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
+      }
+
+      const widthMM = isFinite(minX) ? Math.round((maxX - minX) * 10) / 10 : (s.widthMM ?? 0);
+      const heightMM = isFinite(minY) ? Math.round((maxY - minY) * 10) / 10 : (s.heightMM ?? 0);
+
+      setProject((prev) => ({
+        ...prev,
+        shapes: prev.shapes.map((sh) => sh.id === s.id ? ({ ...sh, dxfPaths, widthMM, heightMM }) : sh),
+      }));
+    } catch (err) {
+      console.warn('vectorizeTextShape failed for', s.id, err);
+    }
   }
 
   function updateBoard(partial: Partial<BoardConfig>) {
@@ -194,34 +279,129 @@ function App() {
     selectItem(id);
   }
 
-  function addTextShape() {
+  async function addTextShape() {
     const next = shapeCounter + 1;
     const id = `shape-${next}`;
     setShapeCounter(next);
-    const newShape: ToolShape = {
+
+    // Default parameters for new text
+    const defaultText = "Text";
+    const defaultFontFile = 'ARLRDBD.TTF';
+    const defaultFontUrl = `http://localhost:5000/fonts/${defaultFontFile}`;
+    const defaultFontSize = 15; // mm
+
+    // Build a lightweight TextShape for conversion
+    const libShape = {
+      id,
+      kind: 'text',
+      content: defaultText,
+      fontFamily: 'ARLRDBD',
+      fontStyle: 'normal' as const,
+      heightMm: defaultFontSize * FONT_SIZE_CORRECTION,
+      positionMm: { x: 0, y: boardHeightMM },
+      rotationDeg: 0,
+      align: 'left' as const,
+      valign: 'top' as const,
+    };
+
+    // Try to vectorize immediately using the repository font(s). If conversion
+    // succeeds we store the generated polylines as a `dxf` shape so the canvas
+    // displays the exact vector geometry and exports are deterministic.
+    try {
+      const polygons = await convertTextShapeToPolygons(libShape as any, defaultFontUrl, 0.1);
+      if (polygons && polygons.length) {
+        // Compute bounding centroid to store dxfPaths relative to a center point
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of polygons) {
+          for (const pt of p.outer) {
+            minX = Math.min(minX, pt.x);
+            minY = Math.min(minY, pt.y);
+            maxX = Math.max(maxX, pt.x);
+            maxY = Math.max(maxY, pt.y);
+          }
+          for (const h of p.holes) {
+            for (const pt of h) {
+              minX = Math.min(minX, pt.x);
+              minY = Math.min(minY, pt.y);
+              maxX = Math.max(maxX, pt.x);
+              maxY = Math.max(maxY, pt.y);
+            }
+          }
+        }
+        const cx = isFinite(minX) ? (minX + maxX) / 2 : 0;
+        const cy = isFinite(minY) ? (minY + maxY) / 2 : 0;
+
+        // Build dxfPaths relative to centroid (matching how imported DXFs are stored)
+        const dxfPaths: Array<Array<{ x: number; y: number }>> = [];
+        for (const p of polygons) {
+          if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt) => ({ x: pt.x - cx, y: pt.y - cy })));
+          if (p.holes && p.holes.length) {
+            for (const h of p.holes) {
+              if (h && h.length) dxfPaths.push(h.map((pt) => ({ x: pt.x - cx, y: pt.y - cy })));
+            }
+          }
+        }
+
+        const widthMM = isFinite(minX) ? (maxX - minX) : 0;
+        const heightMM = isFinite(minY) ? (maxY - minY) : 0;
+
+        // Create a TEXT-typed shape that contains the computed vector geometry
+        // in `dxfPaths`. This keeps the object editable in the Inspector while
+        // displaying deterministic vectors on the Canvas.
+        const newShape: ToolShape = {
+          id,
+          type: 'text',
+          name: `Text-${next}`,
+          x: Math.round(cx * 10) / 10,
+          y: Math.round(cy * 10) / 10,
+          scale: 1,
+          // vector geometry for deterministic rendering/export
+          dxfPaths: dxfPaths,
+          // preserve measured extents so selection/handles work correctly
+          widthMM: Math.round(widthMM * 10) / 10,
+          heightMM: Math.round(heightMM * 10) / 10,
+          // text-specific editable properties
+          text: defaultText,
+          textAlign: 'left',
+          textValign: 'top',
+          fontName: `GSM-ARLRDBD`,
+          fontFile: defaultFontFile,
+          fontSizeMM: defaultFontSize,
+          depthMM: 0.6,
+          cutType: 'Raised',
+          fontBold: false,
+          fontItalic: false,
+          fontUnderline: false,
+        };
+
+        setProject((prev) => ({ ...prev, shapes: [...prev.shapes, newShape] }));
+        selectItem(id);
+        return;
+      }
+    } catch (err) {
+      console.warn('Vectorizing text at creation failed, falling back to text shape', err);
+    }
+
+    // Fallback: add a regular text shape (if vectorization failed)
+    const fallback: ToolShape = {
       id,
       type: "text",
       name: `Text-${next}`,
-      // Default new text to top-left justified with zero padding: place
-      // the text anchor at the board's top-left (x=0, y=boardHeightMM).
       x: 0,
       y: boardHeightMM,
-      // indicate alignment so rendering and export place the text at the
-      // top-left with no extra padding
       textAlign: 'left',
       textValign: 'top',
-      text: "Text",
-      // default to ARLRDBD (Arial Rounded MT Bold) which exists in repo fonts
+      text: defaultText,
       fontName: `GSM-ARLRDBD`,
-      fontFile: 'ARLRDBD.TTF',
-      fontSizeMM: 15,
+      fontFile: defaultFontFile,
+      fontSizeMM: defaultFontSize,
       depthMM: 0.6,
       cutType: "Raised",
       fontBold: false,
       fontItalic: false,
       fontUnderline: false,
     };
-    setProject((prev) => ({ ...prev, shapes: [...prev.shapes, newShape] }));
+    setProject((prev) => ({ ...prev, shapes: [...prev.shapes, fallback] }));
     selectItem(id);
   }
 
@@ -509,6 +689,39 @@ function App() {
           }
           polylines.push(pts);
         } else if (s.type === 'text') {
+          // If this text shape already contains vectorized geometry (`dxfPaths`),
+          // reuse it directly for export so exported DXFs match the on-canvas
+          // placement exactly. This avoids re-running font layout which can
+          // produce slightly different anchor offsets when different font
+          // candidates are used server-side or during conversion.
+          if (s.dxfPaths && s.dxfPaths.length) {
+            const scale = s.scale ?? 1;
+            const rotDeg = s.rotateDeg || 0;
+            const polylines = s.dxfPaths.map((path: any) =>
+              path.map((p: any) => {
+                const sx = (p.x || 0) * scale;
+                const sy = (p.y || 0) * scale;
+                const rpt = rotatePoint(sx, sy, -rotDeg);
+                return { x: (s.x || 0) + rpt.x, y: (s.y || 0) + rpt.y };
+              })
+            );
+            items.push({
+              name: s.name || s.id,
+              type: 'text',
+              cutType: s.cutType,
+              x: s.x || 0,
+              y: s.y || 0,
+              rotateDeg: s.rotateDeg || 0,
+              scale: s.scale || 1,
+              depthMM: s.depthMM || 0,
+              widthMM: s.widthMM || 0,
+              heightMM: s.heightMM || 0,
+              dxfPaths: polylines,
+              _fontUrl: null,
+              posXYRot: [0, 0, 0],
+            });
+            continue;
+          }
           try {
             // Map our internal ToolShape to the library TextShape shape
             const libShape = {
