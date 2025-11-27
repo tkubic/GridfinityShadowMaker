@@ -349,8 +349,9 @@ export default function Canvas({
   return (
     <svg
       viewBox={`0 0 ${boardPxWidth} ${boardPxHeight}`}
-      width={boardPxWidth}
-      height={boardPxHeight}
+      width="100%"
+      height="100%"
+      preserveAspectRatio="xMidYMid meet"
       className="board-svg"
       onMouseDown={(e) => {
         // clicking the background should deselect everything unless the click is inside
@@ -586,8 +587,10 @@ export default function Canvas({
         const id = selectedItems[0];
         const s = drawShapes.find((d) => d.id === id);
         if (!s) return null;
-        // don't show resize handles for DXF shapes (they use their own scale property)
-        if (s.type === 'dxf') return null;
+        // don't show resize handles for DXF or text shapes
+        // - DXF shapes manage scale separately
+        // - text size is controlled by fontSize, not resize handles
+        if (s.type === 'dxf' || s.type === 'text') return null;
         const corners = getWorldCorners(s); // order: sw, se, ne, nw
         const sw = corners[0];
         const se = corners[1];

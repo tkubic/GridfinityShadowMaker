@@ -406,6 +406,162 @@ function App() {
     e.currentTarget.value = "";
   }
 
+  // Export DXFs using the server endpoint. Extracted so Inspector can call it.
+  async function exportDxfs(silent = false) {
+    try {
+      const items: any[] = [];
+      function rotatePoint(px: number, py: number, deg: number) {
+        const r = (deg * Math.PI) / 180.0;
+        const cosr = Math.cos(r);
+        const sinr = Math.sin(r);
+        return { x: px * cosr - py * sinr, y: px * sinr + py * cosr };
+      }
+
+      for (const s of project.shapes) {
+        if (s.type === 'dxf') {
+          if (s.dxfPaths && s.dxfPaths.length) {
+            const scale = s.scale ?? 1;
+            const rotDeg = s.rotateDeg || 0;
+            const polylines = s.dxfPaths.map((path: any) =>
+              path.map((p: any) => {
+                const sx = (p.x || 0) * scale;
+                const sy = (p.y || 0) * scale;
+                const rpt = rotatePoint(sx, sy, -rotDeg);
+                return { x: (s.x || 0) + rpt.x, y: (s.y || 0) + rpt.y };
+              })
+            );
+            items.push({
+              name: s.name || s.id,
+              type: s.type,
+              cutType: s.cutType,
+              x: s.x || 0,
+              y: s.y || 0,
+              rotateDeg: s.rotateDeg || 0,
+              scale: s.scale || 1,
+              depthMM: s.depthMM || 0,
+              widthMM: s.widthMM || 0,
+              heightMM: s.heightMM || 0,
+              dxfPaths: polylines,
+              posXYRot: [0, 0, 0],
+            });
+            continue;
+          }
+          if (s.dxfName) {
+            items.push({
+              name: s.name || s.id,
+              type: s.type,
+              cutType: s.cutType,
+              x: s.x || 0,
+              y: s.y || 0,
+              rotateDeg: s.rotateDeg || 0,
+              scale: s.scale || 1,
+              depthMM: s.depthMM || 0,
+              dxfPaths: [s.dxfName],
+              posXYRot: [s.x || 0, s.y || 0, s.rotateDeg || 0],
+            });
+            continue;
+          }
+          continue;
+        }
+
+        // primitives and text -> polylines
+        let cx = s.x || 0;
+        let cy = s.y || 0;
+        const rot = s.rotateDeg || 0;
+        const polylines: Array<Array<{ x: number; y: number }>> = [];
+        if (s.type === 'rect') {
+          const w = s.widthMM || 0;
+          const h = s.heightMM || 0;
+          const halfW = w / 2;
+          const halfH = h / 2;
+          const corners = [
+            { x: -halfW, y: -halfH },
+            { x: halfW, y: -halfH },
+            { x: halfW, y: halfH },
+            { x: -halfW, y: halfH },
+          ].map((p) => rotatePoint(p.x, p.y, -rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
+          polylines.push(corners);
+        } else if (s.type === 'oval') {
+          const w = s.widthMM || 20;
+          const h = s.heightMM || 20;
+          const rx = w / 2;
+          const ry = h / 2;
+          const segments = 64;
+          const pts: Array<{ x: number; y: number }> = [];
+          for (let i = 0; i < segments; i++) {
+            const t = (i / segments) * 2 * Math.PI;
+            const px = rx * Math.cos(t);
+            const py = ry * Math.sin(t);
+            const rpt = rotatePoint(px, py, -rot);
+            pts.push({ x: rpt.x + cx, y: rpt.y + cy });
+          }
+          polylines.push(pts);
+        } else if (s.type === 'text') {
+          items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
+          continue;
+        }
+
+        if (polylines.length) {
+          items.push({
+            name: s.name || s.id,
+            type: s.type || 'poly',
+            cutType: s.cutType || null,
+            x: s.x || 0,
+            y: s.y || 0,
+            rotateDeg: s.rotateDeg || 0,
+            scale: s.scale || 1,
+            depthMM: s.depthMM || 0,
+            widthMM: s.widthMM || 0,
+            heightMM: s.heightMM || 0,
+            polylines,
+            posXYRot: [0, 0, 0],
+          });
+        }
+      }
+
+      // Include full project (with `board`) so server preserves UI values
+      const payload = { projectName: project.name, project: project, items };
+      const r = await fetch('http://localhost:5000/export-dxfs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const j = await r.json();
+      if (!r.ok) {
+        alert('Export DXFs failed: ' + (j && j.error ? j.error : r.statusText));
+        return false;
+      }
+      if (j && j.ok) {
+        if (!silent) alert('DXF files written to project processing_output/');
+      } else {
+        if (!silent) alert('Export DXFs completed with unknown result; check server logs.');
+      }
+      return true;
+    } catch (e) {
+      console.error('output dxfs failed', e);
+      alert('Output DXFs failed: ' + (e && (e as Error).message ? (e as Error).message : String(e)));
+      return false;
+    }
+  }
+
+  async function generateScad() {
+    try {
+      // Ensure DXFs are exported first and completed (server writes GSM files used by SCAD generation)
+      const exported = await exportDxfs(true);
+      if (exported === false) {
+        // export failed or user was alerted; abort SCAD generation
+        return;
+      }
+      const res = await fetch('http://localhost:5000/export-scad', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectName: project.name }) });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        alert('Generate SCAD request failed: ' + (txt || res.statusText));
+        return;
+      }
+      const j = await res.json().catch(() => null);
+      alert('Generate SCAD requested' + (j && j.message ? (': ' + j.message) : ''));
+    } catch (e) {
+      console.warn('Generate SCAD request failed', e);
+      alert('Generate SCAD: could not contact backend (no /export-scad endpoint).');
+    }
+  }
+
   function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -572,155 +728,7 @@ function App() {
             <RenderCanvas projectName={project.name} />
           )}
         </main>
-        {/* Export controls for the Canvas tab */}
-        {activeTab === 'canvas' && (
-          <div style={{ padding: 8, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-            <button
-              onClick={async () => {
-                try {
-                  const items: any[] = [];
-                  function rotatePoint(px: number, py: number, deg: number) {
-                    const r = (deg * Math.PI) / 180.0;
-                    const cosr = Math.cos(r);
-                    const sinr = Math.sin(r);
-                    return { x: px * cosr - py * sinr, y: px * sinr + py * cosr };
-                  }
-
-                  for (const s of project.shapes) {
-                    if (s.type === 'dxf') {
-                      // Prefer embedded parsed polylines (client-side) so exports work
-                      // even when the original DXF file isn't available on the server.
-                      if (s.dxfPaths && s.dxfPaths.length) {
-                        const scale = s.scale ?? 1;
-                        const rotDeg = s.rotateDeg || 0;
-                        const polylines = s.dxfPaths.map((path: any) =>
-                          path.map((p: any) => {
-                            const sx = (p.x || 0) * scale;
-                            const sy = (p.y || 0) * scale;
-                            // invert rotation direction to match canvas expectation
-                            const rpt = rotatePoint(sx, sy, -rotDeg);
-                            return { x: (s.x || 0) + rpt.x, y: (s.y || 0) + rpt.y };
-                          })
-                        );
-                        // include full shape metadata so backend can persist it
-                        items.push({
-                          name: s.name || s.id,
-                          type: s.type,
-                          cutType: s.cutType,
-                          x: s.x || 0,
-                          y: s.y || 0,
-                          rotateDeg: s.rotateDeg || 0,
-                          scale: s.scale || 1,
-                          depthMM: s.depthMM || 0,
-                          widthMM: s.widthMM || 0,
-                          heightMM: s.heightMM || 0,
-                          dxfPaths: polylines,
-                          posXYRot: [0, 0, 0]
-                        });
-                        continue;
-                      }
-                      if (s.dxfName) {
-                        items.push({
-                          name: s.name || s.id,
-                          type: s.type,
-                          cutType: s.cutType,
-                          x: s.x || 0,
-                          y: s.y || 0,
-                          rotateDeg: s.rotateDeg || 0,
-                          scale: s.scale || 1,
-                          depthMM: s.depthMM || 0,
-                          dxfPaths: [s.dxfName],
-                          posXYRot: [s.x || 0, s.y || 0, s.rotateDeg || 0]
-                        });
-                        continue;
-                      }
-                      continue;
-                    }
-
-                    // primitives and text -> polylines
-                    // For rectangles the stored x,y may be bottom-left on the canvas;
-                    // convert to center-origin for export so DXFs are centered around shape.x/y
-                    let cx = s.x || 0;
-                    let cy = s.y || 0;
-                    const rot = s.rotateDeg || 0;
-                    const polylines: Array<Array<{ x: number; y: number }>> = [];
-                    if (s.type === 'rect') {
-                      const w = s.widthMM || 0;
-                      const h = s.heightMM || 0;
-                      const halfW = w / 2;
-                      const halfH = h / 2;
-                      // shape.x/shape.y are already center-origin; no conversion needed
-                      // invert rotation sign so exported primitive rotation matches canvas
-                      const corners = [
-                        { x: -halfW, y: -halfH },
-                        { x: halfW, y: -halfH },
-                        { x: halfW, y: halfH },
-                        { x: -halfW, y: halfH },
-                      ].map((p) => rotatePoint(p.x, p.y, -rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
-                      polylines.push(corners);
-                    } else if (s.type === 'oval') {
-                      const w = s.widthMM || 20;
-                      const h = s.heightMM || 20;
-                      const rx = w / 2;
-                      const ry = h / 2;
-                      const segments = 64;
-                      const pts: Array<{ x: number; y: number }> = [];
-                      for (let i = 0; i < segments; i++) {
-                        const t = (i / segments) * 2 * Math.PI;
-                        const px = rx * Math.cos(t);
-                        const py = ry * Math.sin(t);
-                        // invert rotation sign so exported primitive rotation matches canvas
-                        const rpt = rotatePoint(px, py, -rot);
-                        pts.push({ x: rpt.x + cx, y: rpt.y + cy });
-                      }
-                      polylines.push(pts);
-                    } else if (s.type === 'text') {
-                      // send text for server-side vectorization (glyph outlines)
-                      items.push({ name: s.name || s.id, type: 'text', text: s.text || s.name || '', fontSize: s.fontSizeMM || 15, posXYRot: [cx, cy, rot] });
-                      continue;
-                    }
-
-                    if (polylines.length) {
-                      items.push({
-                        name: s.name || s.id,
-                        type: s.type || 'poly',
-                        cutType: s.cutType || null,
-                        x: s.x || 0,
-                        y: s.y || 0,
-                        rotateDeg: s.rotateDeg || 0,
-                        scale: s.scale || 1,
-                        depthMM: s.depthMM || 0,
-                        widthMM: s.widthMM || 0,
-                        heightMM: s.heightMM || 0,
-                        polylines,
-                        posXYRot: [0, 0, 0],
-                      });
-                    }
-                  }
-
-                  // Include full project (with `board`) so server preserves UI values
-                  const payload = { projectName: project.name, project: project, items };
-                  const r = await fetch('http://localhost:5000/export-dxfs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                  const j = await r.json();
-                  if (!r.ok) {
-                    alert('Export DXFs failed: ' + (j && j.error ? j.error : r.statusText));
-                    return;
-                  }
-                  if (j && j.ok) {
-                    alert('DXF files written to project processing_output/');
-                  } else {
-                    alert('Export DXFs completed with unknown result; check server logs.');
-                  }
-                } catch (e) {
-                  console.error('output dxfs failed', e);
-                  alert('Output DXFs failed: ' + (e && (e as Error).message ? (e as Error).message : String(e)));
-                }
-              }}
-            >
-              Output DXF's
-            </button>
-          </div>
-        )}
+        {/* Export controls removed — Output DXF's is now available in the Inspector panel */}
 
         <Inspector
           board={board}
@@ -734,6 +742,8 @@ function App() {
           deleteShape={deleteShape}
           textInputRef={textInputRef}
           activeTab={activeTab}
+          exportDxfs={exportDxfs}
+          generateScad={generateScad}
           processImageAgain={(params) => {
             // trigger re-processing using saved project image; send params as form data
             const fd = new FormData();

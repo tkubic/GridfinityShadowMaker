@@ -23,6 +23,9 @@ interface InspectorProps {
   processImageAgain?: (params: { threshold?: number; offset?: number; token?: number; resolution?: number }) => void;
   traceParams?: { threshold: number; offset: number; token: number; resolution: number };
   setTraceParams?: (p: { threshold: number; offset: number; token: number; resolution: number }) => void;
+  // Actions handed down from App
+  exportDxfs?: () => void;
+  generateScad?: () => void;
 }
 
 export default function Inspector({
@@ -40,6 +43,8 @@ export default function Inspector({
   processImageAgain,
   traceParams,
   setTraceParams,
+  exportDxfs,
+  generateScad,
 }: InspectorProps) {
   // If we're in trace tab, show trace-specific controls in the inspector
   if (activeTab === "trace") {
@@ -82,6 +87,14 @@ export default function Inspector({
   }
   return (
     <aside className="panel panel-right">
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <button className="action-text-button" onClick={() => exportDxfs?.()}>
+          Output DXF's
+        </button>
+        <button className="action-text-button" onClick={() => generateScad?.()}>
+          Generate SCAD
+        </button>
+      </div>
       <h2>Inspector</h2>
 
       {selectedItem === "board" && (
@@ -92,11 +105,12 @@ export default function Inspector({
               <label>Width (units)</label>
               <input
                 type="number"
-                min={1}
+                step={0.1}
+                min={0.1}
                 value={board.gridX}
                 onChange={(e) =>
                   updateBoard({
-                    gridX: Math.max(1, parseInt(e.target.value) || 1),
+                    gridX: Math.max(0.1, parseFloat(e.target.value) || 0.1),
                   })
                 }
               />
@@ -105,40 +119,29 @@ export default function Inspector({
               <label>Depth (units)</label>
               <input
                 type="number"
-                min={1}
+                step={0.1}
+                min={0.1}
                 value={board.gridY}
                 onChange={(e) =>
                   updateBoard({
-                    gridY: Math.max(1, parseInt(e.target.value) || 1),
+                    gridY: Math.max(0.1, parseFloat(e.target.value) || 0.1),
                   })
                 }
               />
             </div>
             <div className="field">
-              <label>Cell size (mm)</label>
-              <input
-                type="number"
-                min={1}
-                value={board.cellSizeMM}
-                onChange={(e) =>
-                  updateBoard({
-                    cellSizeMM: Math.max(
-                      1,
-                      parseFloat(e.target.value) || board.cellSizeMM
-                    ),
-                  })
-                }
-              />
+              {/* Cell size intentionally hidden in inspector per request */}
             </div>
             <div className="field">
               <label>Height (7mm units)</label>
               <input
                 type="number"
+                step={0.1}
                 min={0}
                 value={board.height7Units ?? 0}
                 onChange={(e) =>
                   updateBoard({
-                    height7Units: Math.max(0, parseInt(e.target.value) || 0),
+                    height7Units: Math.max(0, parseFloat(e.target.value) || 0),
                   })
                 }
               />
@@ -147,11 +150,10 @@ export default function Inspector({
           </div>
         </>
       )}
-
       {selectedItem !== "board" && !selectedShape && <p>No item selected</p>}
 
       {selectedShape && selectedItem !== "board" && (
-        <>
+          <>
           <h3>{selectedShape.name}</h3>
 
           <div className="field">
@@ -167,32 +169,45 @@ export default function Inspector({
             />
           </div>
 
-          {selectedShape.type === "text" && (
-            <div className="field">
-              <label>Text</label>
-              <input
-                ref={textInputRef}
-                type="text"
-                value={editFields.text ?? (selectedShape.text ?? selectedShape.name)}
-                onChange={(e) => setEditFields({ ...editFields, text: e.target.value })}
-                onBlur={() => updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name });
-                    (e.target as HTMLInputElement).blur();
-                  }
-                }}
-              />
-            </div>
-          )}
+          <div className="field">
+            <label>Type</label>
+            <select
+              value={selectedShape.type}
+              onChange={(e) => {
+                const newType = e.target.value as ShapeType;
+                if (newType === "rect") {
+                  const defaultDim = 20;
+                  updateShape(selectedShape.id, {
+                    type: "rect",
+                    widthMM: selectedShape.widthMM ?? defaultDim,
+                    heightMM: selectedShape.heightMM ?? defaultDim,
+                    scoop: "none",
+                  });
+                } else if (newType === "oval") {
+                  const defaultDim = 20;
+                  updateShape(selectedShape.id, {
+                    type: "oval",
+                    widthMM: selectedShape.widthMM ?? defaultDim,
+                    heightMM: selectedShape.heightMM ?? defaultDim,
+                  });
+                } else {
+                  updateShape(selectedShape.id, { type: newType as ShapeType });
+                }
+              }}
+            >
+              <option value="rect">Rectangle</option>
+              <option value="oval">Circle/Oval</option>
+              <option value="text">Text</option>
+              <option value="dxf">DXF</option>
+            </select>
+          </div>
 
           <div className="field">
-            <label>Cut Type</label>
+            <label>Extrude Type</label>
             <select
               value={selectedShape.cutType ?? "Cut"}
               onChange={(e) => {
                 const v = e.target.value as CutType;
-                // update cut type and apply depth defaults/behavior
                 if (v === "Raised") {
                   updateShape(selectedShape.id, { cutType: v, depthMM: 0.6 });
                   setEditFields({ ...editFields, cutType: v, depth: (0.6).toFixed(1) });
@@ -200,7 +215,6 @@ export default function Inspector({
                   updateShape(selectedShape.id, { cutType: v, depthMM: 15 });
                   setEditFields({ ...editFields, cutType: v, depth: (15).toFixed(1) });
                 } else if (v === "Blocker") {
-                  // set blocker depth to (board.height7Units - 1) * 7 mm and grey it out
                   const boardHeightUnits = board.height7Units ?? 6;
                   const blockerDepth = Math.max(0, boardHeightUnits - 1) * 7;
                   updateShape(selectedShape.id, { cutType: v, depthMM: blockerDepth });
@@ -219,6 +233,23 @@ export default function Inspector({
 
           {selectedShape.type === "text" && (
             <>
+              <div className="field">
+                <label>Text</label>
+                <input
+                  ref={textInputRef}
+                  type="text"
+                  value={editFields.text ?? (selectedShape.text ?? selectedShape.name)}
+                  onChange={(e) => setEditFields({ ...editFields, text: e.target.value })}
+                  onBlur={() => updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name });
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                />
+              </div>
+
               <div className="field">
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <button
@@ -261,7 +292,6 @@ export default function Inspector({
                     <option key={f.value} value={f.value}>{f.label}</option>
                   ))}
                 </select>
-
               </div>
 
               <div className="field">
@@ -273,19 +303,6 @@ export default function Inspector({
                   onChange={(e) => setEditFields({ ...editFields, fontSize: e.target.value })}
                   onBlur={() => commitEditField("fontSize")}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("fontSize"); }}
-                />
-              </div>
-              <div className="field">
-                <label>Depth (mm)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                  onBlur={() => commitEditField("depth")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
-                  style={{ width: "100%" }}
-                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
                 />
               </div>
             </>
@@ -362,38 +379,6 @@ export default function Inspector({
             </>
           ) : selectedShape.type === "text" ? null : (
             <>
-              <div className="field">
-                <label>Type</label>
-                <select
-                  value={selectedShape.type}
-                  onChange={(e) => {
-                    const newType = e.target.value as ShapeType;
-                    
-
-                      if (newType === "rect") {
-                        // default width/height to 20mm when missing
-                        const defaultDim = 20;
-                        updateShape(selectedShape.id, {
-                          type: "rect",
-                          widthMM: selectedShape.widthMM ?? defaultDim,
-                          heightMM: selectedShape.heightMM ?? defaultDim,
-                          scoop: "none",
-                        });
-                      } else if (newType === "oval") {
-                        const defaultDim = 20;
-                        updateShape(selectedShape.id, {
-                          type: "oval",
-                          widthMM: selectedShape.widthMM ?? defaultDim,
-                          heightMM: selectedShape.heightMM ?? defaultDim,
-                        });
-                      }
-                  }}
-                >
-                  <option value="rect">Rectangle</option>
-                  <option value="oval">Circle/Oval</option>
-                </select>
-              </div>
-
               {(selectedShape.type === "rect" || selectedShape.type === "oval") && (
                 <>
                   <div style={{ display: "flex", gap: 8 }}>

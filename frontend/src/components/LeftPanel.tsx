@@ -86,15 +86,17 @@ export default function LeftPanel({
       </ul>
 
       <div style={{ padding: "0 1rem 1rem" }}>
-        <button onClick={addDefaultShape} className="add-item-button">
-          + Shape
-        </button>
-        <button onClick={() => dxfInputRef.current?.click()} style={{ marginLeft: 8 }} className="import-dxf-button">
-          + Import DXF
-        </button>
-        <button onClick={addTextShape} style={{ marginLeft: 8 }} className="add-text-button">
-          + Text
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button onClick={addDefaultShape} className="add-item-button">
+            + Shape
+          </button>
+          <button onClick={() => dxfInputRef.current?.click()} className="import-dxf-button">
+            + Import DXF
+          </button>
+          <button onClick={addTextShape} className="add-text-button">
+            + Text
+          </button>
+        </div>
         <input ref={dxfInputRef} type="file" accept=".dxf" multiple style={{ display: "none" }} onChange={handleDxfFile} />
       </div>
     </aside>
