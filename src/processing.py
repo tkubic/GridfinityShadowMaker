@@ -770,20 +770,10 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         with open(scad_file_path, 'w') as scad_file:
             scad_file.write(updated_scad_content)
         
-        # Paths to possible OpenSCAD executables
-        openscad_paths = [
-            "C:/Program Files/OpenSCAD/openscad.exe",
-            "C:/Program Files/OpenSCAD (Nightly)/openscad.exe"
-        ]
-        
-        # Find the first valid OpenSCAD executable
-        openscad_executable = next((path for path in openscad_paths if os.path.exists(path)), None)
-        if not openscad_executable:
-            console_text.setText("Error: OpenSCAD executable not found in expected directories.")
-            return
-        
-        # Open the SCAD file with OpenSCAD
-        subprocess.Popen([openscad_executable, scad_file_path])
+        # SCAD file has been written. Do not launch any OpenSCAD GUI from here.
+        # The server or caller should invoke the OpenSCAD CLI (e.g. `openscad.com --backend=manifold -o <project>.stl <file>.scad`).
+        console_text.setText(f"SCAD saved: {scad_file_path}")
+        return scad_file_path
     except Exception as e:
         console_text.setText(f"Error importing to OpenSCAD: {str(e)}")
         print(traceback.format_exc())

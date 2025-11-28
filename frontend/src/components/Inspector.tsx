@@ -117,7 +117,7 @@ export default function Inspector({
           Output DXF's
         </button>
         <button className="action-text-button" onClick={() => generateScad?.()}>
-          Generate SCAD
+          Generate STL
         </button>
       </div>
       <h2>Inspector</h2>

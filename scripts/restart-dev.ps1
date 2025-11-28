@@ -11,10 +11,12 @@ Run:
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot = Split-Path -Parent $ScriptDir
+
 Set-Location $RepoRoot
 
 Write-Host "Restarting backend and frontend dev servers..."
 
+# Run restart-backend and restart-frontend; both scripts are GUI-friendly and will auto-detect OpenSCAD
 & "${RepoRoot}\scripts\restart-backend.ps1"
 Start-Sleep -Seconds 1
 & "${RepoRoot}\scripts\restart-frontend.ps1"

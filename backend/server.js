@@ -2,9 +2,24 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 const app = express();
+const REPO_ROOT = path.join(__dirname, '..');
+
+// Simple Server-Sent Events (SSE) clients registry for render notifications
+const sseClients = new Set();
+
+function sendSseEvent(eventName, data) {
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    try {
+      res.write(payload);
+    } catch (e) {
+      // ignore write errors; client cleanup happens on 'close'
+    }
+  }
+}
 
 const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
@@ -585,6 +600,20 @@ app.listen(PORT, () => {
   console.log(`Image processing server listening on http://localhost:${PORT}`);
 });
 
+// SSE endpoint: clients can subscribe to render events (stl ready notifications)
+app.get('/api/render/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders && res.flushHeaders();
+  // send a comment to establish the stream
+  res.write(':ok\n\n');
+  sseClients.add(res);
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
 // Export SCAD file for a project by reading processing_output and manifest
 app.post('/export-scad', (req, res) => {
   try {
@@ -638,18 +667,95 @@ app.post('/export-scad', (req, res) => {
           return res.status(500).json({ error: 'python generate-scad failed', code, detail: errBuf || outBuf });
         }
         const outScad = path.join(projectFolder, `${projectName}.scad`);
-        if (fs.existsSync(outScad)) {
-          // read manifest/dxfs list for response
-          const dirList = fs.readdirSync(out);
-          const dxfFiles = dirList.filter(f => f.toLowerCase().endsWith('.dxf'));
-          let manifest = [];
-          const manifestPath = path.join(out, 'export_manifest.json');
-          if (fs.existsSync(manifestPath)) {
-            try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch (e) { manifest = []; }
+          if (fs.existsSync(outScad)) {
+            // read manifest/dxfs list for response
+            const dirList = fs.existsSync(out) ? fs.readdirSync(out) : [];
+            const dxfFiles = dirList.filter(f => f.toLowerCase().endsWith('.dxf'));
+            let manifest = [];
+            const manifestPath = path.join(out, 'export_manifest.json');
+            if (fs.existsSync(manifestPath)) {
+              try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch (e) { manifest = []; }
+            }
+
+            // Attempt to render SCAD -> STL using OpenSCAD CLI
+            const outStl = path.join(projectFolder, `${projectName}.stl`);
+
+            // Resolve OpenSCAD CLI executable. Preference order:
+            // 1) `OPENSCAD_BIN` environment variable (full path) — prefer openscad.com
+            // 2) common Windows install locations (try openscad.com then openscad.exe)
+            // 3) check PATH for openscad.com or openscad.exe
+            // Use the manifold backend for faster, manifold meshes when available.
+            const openscadArgs = ['--backend=manifold', '-o', outStl, outScad];
+            const envBin = process.env.OPENSCAD_BIN && String(process.env.OPENSCAD_BIN).trim();
+            const commonPaths = [
+              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD', 'openscad.com'),
+              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD', 'openscad.exe'),
+              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD (Nightly)', 'openscad.com'),
+              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD (Nightly)', 'openscad.exe')
+            ];
+            let chosen = null;
+            if (envBin && fs.existsSync(envBin)) {
+              chosen = envBin;
+            } else {
+              for (const p of commonPaths) {
+                try { if (fs.existsSync(p)) { chosen = p; break; } } catch (e) { /* ignore */ }
+              }
+            }
+            // If still not found, check synchronously whether `openscad.com` or `openscad.exe` exists on PATH.
+            if (!chosen) {
+              try {
+                const cmds = process.platform === 'win32' ? ['where openscad.com', 'where openscad.exe', 'where openscad'] : ['which openscad'];
+                for (const cmd of cmds) {
+                  try {
+                    const whereOut = String(execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }) || '').trim();
+                    if (whereOut) {
+                      const first = whereOut.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+                      if (first && fs.existsSync(first)) { chosen = first; break; }
+                    }
+                  } catch (e) { /* ignore this attempt */ }
+                }
+              } catch (e) { /* ignore */ }
+              if (!chosen) {
+                return res.status(500).json({
+                  error: 'openscad not found',
+                  detail: 'OpenSCAD CLI not found. Set environment variable OPENSCAD_BIN to the full path to openscad.com (Windows) or ensure `openscad.com`/`openscad.exe` is on PATH. Example (PowerShell): $env:OPENSCAD_BIN = "C:\\Program Files\\OpenSCAD\\openscad.com"'
+                });
+              }
+            }
+            try {
+              let responded = false;
+              const osSpawn = spawn(chosen, openscadArgs, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, cwd: projectFolder });
+              let osOut = '';
+              let osErr = '';
+              osSpawn.stdout.on('data', (c) => { osOut += String(c || ''); });
+              osSpawn.stderr.on('data', (c) => { osErr += String(c || ''); });
+              osSpawn.on('close', (ocode) => {
+                if (responded) return;
+                responded = true;
+                if (ocode === 0 && fs.existsSync(outStl)) {
+                  try {
+                    const stlUrl = `/api/render/output-stl?projectName=${encodeURIComponent(projectName)}`;
+                    // Notify any SSE subscribers that an STL for this project is ready
+                    sendSseEvent('stl', { projectName, stlUrl });
+                  } catch (e) { /* non-fatal */ }
+                  return res.json({ ok: true, scad: outScad, stl: outStl, dxfFiles, manifest, python_stdout: outBuf, openscad_stdout: osOut });
+                }
+                console.error('openscad failed', ocode, osErr || osOut);
+                return res.status(500).json({ error: 'openscad failed', code: ocode, scad: outScad, detail: osErr || osOut });
+              });
+              osSpawn.on('error', (e) => {
+                if (responded) return;
+                responded = true;
+                console.error('failed to spawn openscad', e);
+                return res.status(500).json({ error: 'failed to spawn openscad', detail: String(e), scad: outScad });
+              });
+              return; // response will be sent from openscad handlers
+            } catch (e) {
+              console.error('openscad spawn exception', e);
+              return res.status(500).json({ error: 'openscad spawn exception', detail: String(e), scad: outScad });
+            }
           }
-          return res.json({ ok: true, scad: outScad, dxfFiles, manifest, python_stdout: outBuf });
-        }
-        return res.status(500).json({ error: 'scad not created', out: outBuf, err: errBuf });
+          return res.status(500).json({ error: 'scad not created', out: outBuf, err: errBuf });
       });
       py.on('error', (err) => {
         console.error('python spawn error', err);
@@ -663,5 +769,41 @@ app.post('/export-scad', (req, res) => {
   } catch (err) {
     console.error('export-scad failed', err);
     return res.status(500).json({ error: 'export-scad failed', detail: String(err) });
+  }
+});
+
+// Serve generated STL for a project. Query params: ?projectName=MyProject
+app.get('/api/render/output-stl', (req, res) => {
+  try {
+    const projectName = String(req.query.projectName || req.query.project || 'default_project').replace(/[<>:\"/\\|?*\x00-\x1F]/g, '_') || 'default_project';
+    const stlPath = path.join(REPO_ROOT, projectName, `${projectName}.stl`);
+    if (!fs.existsSync(stlPath)) {
+      return res.status(404).json({ error: 'stl not found', path: stlPath });
+    }
+    return res.sendFile(stlPath);
+  } catch (e) {
+    console.error('failed to serve output.stl', e);
+    return res.status(500).json({ error: 'failed to serve stl', detail: String(e) });
+  }
+});
+
+// List projects that contain an output.stl file (for viewer auto-detection)
+app.get('/api/render/projects', (req, res) => {
+  try {
+    const roots = fs.readdirSync(REPO_ROOT, { withFileTypes: true }).filter(d => d.isDirectory());
+    const projects = [];
+    for (const d of roots) {
+      const stl = path.join(REPO_ROOT, d.name, `${d.name}.stl`);
+      if (fs.existsSync(stl)) {
+        const stat = fs.statSync(stl);
+        projects.push({ name: d.name, stlPath: stl, mtime: stat.mtimeMs });
+      }
+    }
+    // sort most recent first
+    projects.sort((a, b) => b.mtime - a.mtime);
+    return res.json(projects);
+  } catch (e) {
+    console.error('failed to list render projects', e);
+    return res.status(500).json({ error: 'failed to list projects', detail: String(e) });
   }
 });

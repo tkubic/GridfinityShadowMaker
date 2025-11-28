@@ -640,7 +640,7 @@ export default function Canvas({
                   return paths.map((path, idx) => {
                     if (!path || !path.length) return null;
                     const isHole = !!holeFlags[idx];
-                    const fill = isHole ? '#000000' : fillColorFor(shape);
+                    const fill = isHole ? 'rgba(0, 0, 0, 1)' : fillColorFor(shape);
                     const d = path.map((p: { x: number; y: number }, i: number) => {
                       const px = centerXpx + p.x * s * scaleX;
                       const py = centerYpx - p.y * s * scaleY;

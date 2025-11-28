@@ -8,6 +8,7 @@ import Inspector from "./components/Inspector";
 import TraceCanvas from "./components/TraceCanvas";
 import RenderCanvas from "./components/RenderCanvas";
 import { parseDxf } from "./utils/dxf";
+import { showToast } from './utils/toast';
 import { convertTextShapeToPolygons, type TextShape, type Point } from "./lib/textToPolylines";
 function App() {
   // Generate a default project name like GSM-YYYYMMDD-Hmm (e.g. GSM-20251124-351)
@@ -935,6 +936,10 @@ function App() {
 
   async function generateScad() {
     try {
+      // Immediately show the user that generation was requested (non-blocking toast)
+      showToast('Generate SCAD requested');
+      // switch to the Render tab so the user sees the 3D preview
+      setActiveTab('render');
       // Ensure DXFs are exported first and completed (server writes GSM files used by SCAD generation)
       const exported = await exportDxfs(true);
       if (exported === false) {
@@ -948,7 +953,8 @@ function App() {
         return;
       }
       const j = await res.json().catch(() => null);
-      alert('Generate SCAD requested' + (j && j.message ? (': ' + j.message) : ''));
+      // Keep older alert for additional info from backend if desired
+      if (j && j.message) alert(': ' + j.message);
     } catch (e) {
       console.warn('Generate SCAD request failed', e);
       alert('Generate SCAD: could not contact backend (no /export-scad endpoint).');

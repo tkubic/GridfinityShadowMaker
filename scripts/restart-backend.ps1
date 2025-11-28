@@ -12,6 +12,18 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
 
+# GUI-friendly OpenSCAD detection: prefer explicit env var, otherwise check common install locations
+$OpenScadPath = $null
+if ($env:OPENSCAD_BIN) { $OpenScadPath = $env:OPENSCAD_BIN }
+else {
+  $candidates = @(
+    "$Env:ProgramFiles\OpenSCAD\openscad.exe",
+    "$Env:ProgramFiles(x86)\OpenSCAD\openscad.exe",
+    "$Env:ProgramFiles\OpenSCAD\openscad.exe"
+  )
+  foreach ($p in $candidates) { if ($p -and (Test-Path $p)) { $OpenScadPath = $p; break } }
+}
+
 Write-Host "Restarting backend (port 5000)..."
 
 Write-Host "Checking for process listening on port 5000..."
@@ -32,7 +44,9 @@ if (-not $foundPid) {
     $lineText = $line.ToString().Trim()
     # attempt to extract trailing digits (the PID)
     if ($lineText -match '(\d+)$') {
-      $foundPid = $Matches[1]
+      $maybe = $Matches[1]
+      try { $num = [int]$maybe } catch { $num = 0 }
+      if ($num -gt 0) { $foundPid = $num } else { Write-Warning "Parsed PID is invalid (0): '$maybe'" }
     } else {
       Write-Warning "Could not parse PID from netstat output: '$lineText'"
     }
@@ -73,5 +87,17 @@ if ($foundPid) {
 }
 
 # Launch backend in a new PowerShell window so it stays running
-Start-Process powershell -ArgumentList "-NoExit","-Command","cd `"$RepoRoot\backend`"; node server.js" -WindowStyle Normal
-Write-Host "Backend launched in a new PowerShell window."
+if ($OpenScadPath) {
+  # Pass the environment variable into the new PowerShell session and start the server.
+  # Use a scriptblock string with single-quoted paths to ensure spaces are preserved.
+  $bv = $RepoRoot -replace "'", "''"
+  $ob = $OpenScadPath -replace "'", "''"
+  $cmd = "& { Set-Location -LiteralPath '$bv\backend'; `$env:OPENSCAD_BIN = '$ob'; node server.js }"
+  Start-Process powershell -ArgumentList '-NoExit','-Command',$cmd -WindowStyle Normal
+  Write-Host "Backend launched in a new PowerShell window using OPENSCAD_BIN=$OpenScadPath"
+} else {
+  $bv = $RepoRoot -replace "'", "''"
+  $cmd = "& { Set-Location -LiteralPath '$bv\backend'; node server.js }"
+  Start-Process powershell -ArgumentList '-NoExit','-Command',$cmd -WindowStyle Normal
+  Write-Host "Backend launched in a new PowerShell window (OPENSCAD_BIN not detected)."
+}

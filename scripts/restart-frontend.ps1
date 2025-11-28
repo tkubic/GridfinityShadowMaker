@@ -32,12 +32,18 @@ if (-not $foundPid) {
 }
 
 if ($foundPid) {
-    Write-Host "Stopping PID $foundPid which is using port 5173"
-    try {
-        Stop-Process -Id $foundPid -Force -ErrorAction Stop
-    } catch {
-        Write-Warning ("Stop-Process failed for PID {0}: {1}" -f $foundPid, $_)
-        try { taskkill /PID $foundPid /F | Out-Null } catch { Write-Warning ("taskkill failed for PID {0}: {1}" -f $foundPid, $_) }
+    # ensure PID is a positive integer before attempting to stop
+    try { $pidInt = [int]$foundPid } catch { $pidInt = 0 }
+    if ($pidInt -gt 0) {
+        Write-Host "Stopping PID $pidInt which is using port 5173"
+        try {
+            Stop-Process -Id $pidInt -Force -ErrorAction Stop
+        } catch {
+            Write-Warning (("Stop-Process failed for PID {0}: {1}") -f $pidInt, $_)
+            try { taskkill /PID $pidInt /F | Out-Null } catch { Write-Warning (("taskkill failed for PID {0}: {1}") -f $pidInt, $_) }
+        }
+    } else {
+        Write-Warning "Found PID is not a valid process id: $foundPid"
     }
 
     # wait up to 5 seconds for the port to free
