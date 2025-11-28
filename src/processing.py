@@ -185,14 +185,34 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
         except Exception as e:
             print(f"Warning: Could not save offset_pos_xy for OpenSCAD import: {e}")
         if splitDXF:
+            # Build pairs of (contour, pos) where pos corresponds to the
+            # per-contour center computed earlier. Then sort left-to-right by
+            # the contour centroid x coordinate (image column), and save in
+            # that sorted order to ensure deterministic DXF file ordering.
+            contour_pairs = []
+
+            for idx, contour in enumerate(filtered_contours):
+                try:
+                    pts = contour.reshape(-1, 2)
+                    # Use the second coordinate as Y (row) for centroid_y
+                    centroid_y = float(np.mean(pts[:, 1]))
+                except Exception:
+                    # Fallback: use previously computed pos_xy y value
+                    centroid_y = float(pos_xy[idx][1]) if idx < len(pos_xy) else float(idx)
+                contour_pairs.append((contour, pos_xy[idx] if idx < len(pos_xy) else [0, 0], centroid_y))
+
+            # Sort by centroid y (top to bottom)
+            contour_pairs.sort(key=lambda t: t[2])
+
             output_paths = []
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [
-                    executor.submit(save_single_dxf, contour, scale_factor, pos_xy[idx], file_name, idx, folder_name)
-                    for idx, contour in enumerate(filtered_contours)
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    output_paths.append(future.result())
+            for out_idx, (contour, pos, _) in enumerate(contour_pairs):
+                # Use sequential numbering in the saved filename (1-based)
+                try:
+                    saved = save_single_dxf(contour, scale_factor, pos, file_name, out_idx, folder_name)
+                    output_paths.append(saved)
+                except Exception as e:
+                    print('Warning: failed to save single DXF:', e)
+
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             console_text.setText(f"Saved {len(output_paths)} DXF files: {output_paths}")
             return output_paths, gridx_size, gridy_size
@@ -212,9 +232,6 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             pyperclip.copy(output_path)
             console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
-            
-        
-
             return output_path, gridx_size, gridy_size
     except Exception as e:
         console_text.setText(f"Error saving DXF: {str(e)}")
@@ -253,7 +270,7 @@ def select_image(console_text, default_dir=None):
 def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name, folder_name, splitDXF=False, gridz_size=None):
     try:
         global scad_file_path  # Use the global variable to keep track of the SCAD file
-        scad_template_path = os.path.join(os.path.dirname(__file__), "..", "Step 2 DXF to STL.scad")
+        scad_template_path = os.path.join(os.path.dirname(__file__), "..", "template.scad")
         with open(scad_template_path, 'r') as file:
             scad_content = file.read()
         
@@ -688,3 +705,190 @@ def save_single_dxf(contour, scale_factor, pos_xy, file_name, idx, folder_name):
     single_name = f"{file_name}_contour_{idx+1}"
     output_path = save_dxf_file(doc, single_name, folder_name)
     return output_path
+
+
+def cli_main(argv=None):
+    """Command-line entry point for processing.
+
+    Keeps behavior simple: parse args, run the existing pipeline functions,
+    write DXFs via `save_contours_as_dxf`, and emit `traced.png`, `offset.png`,
+    and `meta.json` into the provided output directory.
+    """
+    import argparse
+    import json
+    from PIL import Image, ImageFilter
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input_path', nargs='?')
+    parser.add_argument('out_dir', nargs='?', default='processing_output')
+    parser.add_argument('--threshold', type=float, default=145)
+    parser.add_argument('--offset', type=float, default=0.1)
+    parser.add_argument('--token', type=float, default=3.0)
+    parser.add_argument('--resolution', type=int, default=20)
+    parser.add_argument('--projectdir', type=str, default=None)
+    parser.add_argument('--workfolder', type=str, default=None, help='Path to the project working folder (used to derive folder name)')
+    parser.add_argument('--split', action='store_true', help='Split contours into separate DXF files')
+    args = parser.parse_args(argv)
+
+    inp = args.input_path
+    out = args.out_dir
+    os.makedirs(out, exist_ok=True)
+
+    # Small adapters that mimic the GUI entry widgets used by existing functions
+    class DummyEntry:
+        def __init__(self, v):
+            self._v = v
+        def text(self):
+            return str(self._v)
+
+    class DummyConsole:
+        def setText(self, s):
+            print(s)
+
+    threshold_entry = DummyEntry(args.threshold)
+    offset_entry = DummyEntry(args.offset)
+    token_entry = DummyEntry(args.token)
+    resolution_entry = DummyEntry(args.resolution)
+    console = DummyConsole()
+
+    # Determine threshold and globals via existing helper
+    threshold_input = get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry)
+
+    # find diameter (function accepts either image path or image array)
+    # Provide a headless display function for CLI mode so GUI functions that
+    # call `display_image_on_canvas(image, canvas, region, caption)` won't
+    # attempt to use a Qt canvas (canvas may be None in CLI). This mirrors the
+    # previous wrapper behavior by saving image files for regions 1/2/3.
+    def _cli_save_display(image_obj, canvas_obj, region, caption):
+        try:
+            from PIL import Image as PILImage
+            import numpy as _np
+            import cv2 as _cv2
+
+            # Convert OpenCV BGR numpy arrays to PIL RGB
+            pil = None
+            if isinstance(image_obj, _np.ndarray):
+                if image_obj.ndim == 2:
+                    pil = PILImage.fromarray(image_obj).convert('L').convert('RGB')
+                else:
+                    pil = PILImage.fromarray(_cv2.cvtColor(image_obj, _cv2.COLOR_BGR2RGB))
+            else:
+                try:
+                    pil = PILImage.fromarray(image_obj)
+                except Exception:
+                    try:
+                        pil = image_obj.convert('RGB')
+                    except Exception:
+                        return
+
+            name = 'region_{}.png'.format(region)
+            if region == 1:
+                name = 'original.png'
+            elif region == 2:
+                name = 'traced.png'
+            elif region == 3:
+                name = 'offset.png'
+
+            pil.save(os.path.join(out, name))
+        except Exception:
+            # Never raise from the headless saver; caller already expects GUI
+            # behavior to be best-effort in CLI mode.
+            return
+
+    # Monkey-patch the module-level display helper so other functions can call it
+    try:
+        globals()['display_image_on_canvas'] = _cli_save_display
+    except Exception:
+        pass
+
+    # Load image with OpenCV and run image-processing functions on the array
+    import cv2
+
+    image = cv2.imread(inp)
+    if image is None:
+        print('Error: could not read input image:', inp)
+        return 2
+
+    diameter, _ = find_diameter(image, None, threshold_entry, offset_entry, token_entry, resolution_entry, console)
+    if diameter is None:
+        print('Warning: diameter not found; continuing with token-based scaling')
+
+    # find contours using the image array so the pipeline matches GUI behavior
+    contours, offset_image = find_contours(image, diameter if diameter else (args.token * 25.4), threshold_input, None, console)
+    if not contours:
+        print('No contours found; exiting')
+        return 2
+
+    file_stem = os.path.splitext(os.path.basename(inp))[0]
+    # Determine folder_name used by the DXF save helpers. Prefer a provided
+    # workfolder basename if present (this matches previous behavior where
+    # the project subfolder name was passed as the working folder).
+    if args.workfolder:
+        folder_name = os.path.basename(os.path.normpath(args.workfolder))
+    else:
+        folder_name = args.projectdir or os.path.basename(os.getcwd())
+
+    # Compute a scale factor used by save_contours_as_dxf. Historically the
+    # code used token(mm) / diameter(pixel) as the scale; replicate that.
+    token_mm = float(args.token) * 25.4
+    scale_factor = (token_mm / diameter) if diameter and diameter != 0 else token_mm
+
+    # Decide whether to split DXFs. If caller explicitly requested `--split`
+    # honor it; otherwise auto-split when multiple contours are detected so
+    # behavior matches the previous wrapper which split by default.
+    split_flag = bool(args.split or (isinstance(contours, (list, tuple)) and len(contours) > 1))
+    print(f"split_flag={split_flag}; contours_found={len(contours) if isinstance(contours, (list,tuple)) else 'unknown'}")
+    try:
+        dxf_paths, gridx, gridy = save_contours_as_dxf(contours, file_stem, scale_factor, console, folder_name, splitDXF=split_flag)
+    except Exception as e:
+        print('save_contours_as_dxf failed:', e)
+        dxf_paths = None
+        gridx = None
+        gridy = None
+
+    # Write meta.json
+    meta = {'dxf_paths': dxf_paths, 'gridx_size': gridx, 'gridy_size': gridy}
+    try:
+        with open(os.path.join(out, 'meta.json'), 'w', encoding='utf8') as mf:
+            json.dump(meta, mf, indent=2)
+    except Exception as e:
+        print('Failed to write meta.json:', e)
+
+    # Ensure traced/offset images exist. Prefer the images written by the
+    # headless display calls (display_image_on_canvas). Only synthesize
+    # overlays as a fallback when the pipeline didn't already write files.
+    try:
+        traced_path = os.path.join(out, 'traced.png')
+        offset_path = os.path.join(out, 'offset.png')
+
+        if not os.path.exists(traced_path):
+            try:
+                # Try to create traced from the thresh produced by preprocessing
+                _, thresh = preprocess_image(image, threshold_input)
+                mask = Image.fromarray(thresh).convert('L')
+                base = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                green = Image.new('RGBA', base.size, (0, 255, 0, 255))
+                overlay = Image.new('RGBA', base.size, (0, 0, 0, 0))
+                overlay.paste(green, (0, 0), mask)
+                traced_overlay = Image.alpha_composite(base.convert('RGBA'), overlay)
+                traced_overlay.save(traced_path)
+            except Exception:
+                pass
+
+        if not os.path.exists(offset_path):
+            try:
+                if isinstance(offset_image, np.ndarray):
+                    offset_pil = Image.fromarray(cv2.cvtColor(offset_image, cv2.COLOR_BGR2RGB))
+                    offset_pil.save(offset_path)
+            except Exception:
+                pass
+    except Exception as e:
+        print('Warning: could not ensure traced/offset images:', e)
+
+    print('Processing finished. Outputs in:', out)
+    return 0
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(cli_main())

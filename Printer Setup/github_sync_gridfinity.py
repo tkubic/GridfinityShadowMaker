@@ -10,7 +10,7 @@ import sys
 REPO_URL = "https://github.com/tkubic/GridfinityShadowMaker.git"
 FILES_TO_COPY = [
     "Step 1 Picture to DXF.py",
-    "Step 2 DXF to STL.scad",
+    "template.scad",
     "default_settings.txt"
 ]
 FOLDERS_TO_COPY = [
