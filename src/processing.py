@@ -348,15 +348,74 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
 
                         # If lengths match, use direct ordering; otherwise try map by name
                         if items and len(items) == len(dxf_file_paths):
+                            # When items align 1:1 with dxf_file_paths, use direct mapping
+                            # but still respect per-item cutType to split cuts vs raised/blocker.
                             cut_depths = []
-                            for it in items:
-                                d = 10
+                            cut_paths = []
+                            raised_paths = []
+                            raised_heights = []
+                            blocker_paths = []
+                            for idx, it in enumerate(items):
+                                # preserve depth values as floats (depthMM may be fractional)
+                                d = 10.0
                                 if isinstance(it, dict):
-                                    d = it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or d
+                                    try:
+                                        d = float(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or d)
+                                    except Exception:
+                                        try:
+                                            d = float(str(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or d))
+                                        except Exception:
+                                            d = 10.0
+                                d_int = d
+
+                                # determine cutType for this item
+                                ct = ""
+                                if isinstance(it, dict):
+                                    try:
+                                        ct = str(it.get('cutType') or it.get('cut_type') or it.get('cut') or it.get('type') or "").strip()
+                                    except Exception:
+                                        ct = ""
+                                # match corresponding dxf path by index
                                 try:
-                                    cut_depths.append(int(d))
+                                    pth = dxf_file_paths[idx]
                                 except Exception:
-                                    cut_depths.append(10)
+                                    pth = None
+
+                                if pth is None:
+                                    # fallback to treating as cut
+                                    cut_paths.append(pth)
+                                    cut_depths.append(d_int)
+                                    continue
+
+                                ctl = ct.lower()
+                                if ctl == 'raised':
+                                    raised_paths.append(pth)
+                                    # Prefer depthMM as the raised height when present, preserve floats
+                                    rh = None
+                                    if isinstance(it, dict):
+                                        for key in ('depthMM', 'depth_mm', 'depth', 'raisedHeight', 'raised_height', 'raised', 'height7Units', 'heightMM', 'height', 'z'):
+                                            if key in it and it.get(key) is not None:
+                                                try:
+                                                    rh = float(it.get(key))
+                                                except Exception:
+                                                    try:
+                                                        rh = float(str(it.get(key)))
+                                                    except Exception:
+                                                        rh = None
+                                                break
+                                    if rh is None:
+                                        rh = 1.0
+                                    raised_heights.append(rh)
+                                elif ctl == 'blocker':
+                                    # Blockers are recorded separately; their height is computed in SCAD
+                                    blocker_paths.append(pth)
+                                else:
+                                    # default to cut: record path and its depth
+                                    cut_paths.append(pth)
+                                    cut_depths.append(d_int)
+
+                            # override dxf_file_paths to only include cuts for downstream blocks
+                            dxf_file_paths = cut_paths
                         elif items:
                             # build a robust name->depth map using multiple candidate keys
                             import re as _re
@@ -371,14 +430,20 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                 return s2
 
                             name_map = {}
+                            type_map = {}
+                            raise_height_map = {}
                             for it in items:
                                 if not isinstance(it, dict):
                                     continue
                                 depth_val = 10
+                                # preserve depth as float
                                 try:
-                                    depth_val = int(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or 10)
+                                    depth_val = float(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or 10.0)
                                 except Exception:
-                                    depth_val = 10
+                                    try:
+                                        depth_val = float(str(it.get('depthMM') or it.get('depth_mm') or it.get('depth') or it.get('depthMm') or 10.0))
+                                    except Exception:
+                                        depth_val = 10.0
                                 # gather candidate names
                                 candidates = set()
                                 if it.get('dxfName'):
@@ -395,6 +460,72 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                 for c in candidates:
                                     if c:
                                         name_map[c] = depth_val
+                                        # Extract cut type (Cut, Blocker, Raised, etc.)
+                                        try:
+                                            ct = str(it.get('cutType') or it.get('cut_type') or it.get('cut') or it.get('type') or "").strip()
+                                        except Exception:
+                                            ct = ""
+                                        type_map[c] = ct
+                                        # Extract raised height if present (various possible keys)
+                                        rh = None
+                                        for key in ('depthMM', 'depth_mm', 'depth', 'raisedHeight', 'raised_height', 'raised', 'height7Units', 'heightMM', 'height', 'z'):
+                                            if key in it and it.get(key) is not None:
+                                                try:
+                                                    rh = float(it.get(key))
+                                                except Exception:
+                                                    try:
+                                                        rh = float(str(it.get(key)))
+                                                    except Exception:
+                                                        rh = None
+                                                break
+                                        # If no explicit raised height, leave None
+                                        raise_height_map[c] = rh
+
+                            # Before aligning depths, split DXF paths into cut vs raised/blocker
+                            # based on the parsed GSM item types in type_map. If type_map is
+                            # empty, fall back to treating all paths as cuts.
+                            cut_paths = []
+                            raised_paths = []
+                            raised_heights = []
+                            blocker_paths = []
+                            if name_map:
+                                for pth in dxf_file_paths:
+                                    base = os.path.splitext(os.path.basename(pth))[0]
+                                    nb = _norm(base)
+                                    matched_key = None
+                                    # exact normalized match first
+                                    if nb in name_map:
+                                        matched_key = nb
+                                    else:
+                                        for nm_key in name_map.keys():
+                                            if not nm_key:
+                                                continue
+                                            if nm_key in nb or nb in nm_key:
+                                                matched_key = nm_key
+                                                break
+
+                                    if matched_key and matched_key in type_map:
+                                        ct = (type_map.get(matched_key) or "").strip().lower()
+                                        if ct == 'raised':
+                                            raised_paths.append(pth)
+                                            rh = raise_height_map.get(matched_key)
+                                            # default raised height fallback
+                                            if rh is None:
+                                                rh = 1.0
+                                            raised_heights.append(rh)
+                                        elif ct == 'blocker':
+                                            blocker_paths.append(pth)
+                                        else:
+                                            cut_paths.append(pth)
+                                    else:
+                                        # unknown mapping; default to cut
+                                        cut_paths.append(pth)
+                            else:
+                                # No GSM name map available; treat all as cuts
+                                cut_paths = list(dxf_file_paths)
+
+                            # replace original list with cuts-only for downstream processing
+                            dxf_file_paths = cut_paths
 
                             # Now align depths to the final dxf_file_paths order by matching normalized basenames
                             cut_depths = []
@@ -413,7 +544,16 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                         if nm_key in nb or nb in nm_key:
                                             matched = depth_val
                                             break
-                                cut_depths.append(int(matched) if matched is not None else 10)
+                                if matched is not None:
+                                    try:
+                                        cut_depths.append(float(matched))
+                                    except Exception:
+                                        try:
+                                            cut_depths.append(float(str(matched)))
+                                        except Exception:
+                                            cut_depths.append(10.0)
+                                else:
+                                    cut_depths.append(10.0)
 
                         # Also attempt to read board parameters for size info if present
                         # (so when import_to_openscad is called without explicit grid sizes
@@ -468,10 +608,22 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                         continue
 
                 if not cut_depths or len(cut_depths) != len(dxf_file_paths):
-                    cut_depths = [10] * len(dxf_file_paths)
+                    cut_depths = [10.0] * len(dxf_file_paths)
 
-                # Ensure strings for SCAD output
-                cut_depths = [str(int(x)) for x in cut_depths]
+                # Ensure strings for SCAD output (format floats minimally)
+                def _fmt_num(n):
+                    try:
+                        fv = float(n)
+                    except Exception:
+                        return '10'
+                    if abs(fv - round(fv)) < 1e-6:
+                        return str(int(round(fv)))
+                    else:
+                        # trim unnecessary trailing zeros
+                        s = ('%f' % fv).rstrip('0').rstrip('.')
+                        return s
+
+                cut_depths = [_fmt_num(x) for x in cut_depths]
             except Exception:
                 cut_depths = ["10"] * len(dxf_file_paths)
 
@@ -500,7 +652,13 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 section_blocks.append(f'{cut_name} = [20, 15, 10];\n{param_name} = [40, 0, 0];')
             section_cut_depth_concat = f'section_cut_depth = [{', '.join(section_cut_depth_names)}];\n'
             section_parameters_concat = f'section_parameters = [{', '.join(section_param_names)}];\n'
-
+            # Prepare SCAD strings for any raised/blocker DXFs found earlier
+            dxf_file_paths_raised = raised_paths if 'raised_paths' in locals() else []
+            dxf_raised_heights = raised_heights if 'raised_heights' in locals() else []
+            dxf_file_paths_blocker = blocker_paths if 'blocker_paths' in locals() else []
+            dxf_raised_paths_scad = 'dxf_file_paths_raised = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths_raised]) + '\n];\n'
+            dxf_raised_heights_scad = 'dxf_raised_heights = [' + ', '.join([_fmt_num(h) for h in dxf_raised_heights]) + '];\n'
+            dxf_blocker_paths_scad = 'dxf_file_paths_blocker = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths_blocker]) + '\n];\n'
             # Generate position_1, position_2, ... and position array using pos_xy from temp file
             pos_xy = None
             try:
@@ -546,8 +704,10 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 flags=re.DOTALL
             )
 
+            # Recompute dxf_paths_scad to reflect any split (cuts-only) done above
+            dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
             # Insert all blocks inside /* [Section Adjustments] */ in the requested order
-            scad_block = dxf_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
+            scad_block = dxf_paths_scad + dxf_raised_paths_scad + dxf_raised_heights_scad + dxf_blocker_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
             updated_scad_content = updated_scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
                 scad_block

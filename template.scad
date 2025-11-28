@@ -21,6 +21,12 @@ lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not sta
 /* [DXF Options] */
 // DXF file path 
 dxf_file_path = "examples/example.dxf";
+
+// DXF file paths for raised sections
+// NOTE: This block is populated by `src/processing.py` when generating
+// project SCAD; it is intentionally left as a placeholder here so the
+// generated SCAD contains only the Python-inserted arrays.
+
 // [x position, y position, rotation degrees]
 position = [[0, 0, 0]]; // .1
 
@@ -368,6 +374,37 @@ if (include_label) {
             translate([0, 0,label_thickness/2]) {
                 linear_extrude(height = text_thickness) {
                     text(input_text_value, size = label_text_size, font = text_font, halign = "center", valign = "center");
+                }
+            }
+        }
+    }
+}
+
+// Conditionally extrude raised DXF shapes
+// If `dxf_file_paths_raised` is provided and not empty, extrude each
+// starting at Z = height[0] + dxf_raised_heights[i] and extrude by
+// `dxf_raised_heights[i]`.
+if (len(dxf_file_paths_raised) > 0) {
+    for (i = [0 : len(dxf_file_paths_raised) - 1]) {
+        translate([0, 0, height[0]]*7) {
+            linear_extrude(height = dxf_raised_heights[i]) {
+                scale([1, 1, 1]) {
+                    import(dxf_file_paths_raised[i]);
+                }
+            }
+        }
+    }
+}
+
+// Conditionally extrude blocker DXF shapes
+// If `dxf_file_paths_blocker` is provided and not empty, extrude each
+// starting at Z = 7 and extrude by (height[0]-1)
+if (len(dxf_file_paths_blocker) > 0) {
+    for (i = [0 : len(dxf_file_paths_blocker) - 1]) {
+        translate([0, 0, 7]) {
+            linear_extrude(height = (height[0]-1)*7) {
+                scale([1, 1, 1]) {
+                    import(dxf_file_paths_blocker[i]);
                 }
             }
         }
