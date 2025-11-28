@@ -8,7 +8,7 @@ import Inspector from "./components/Inspector";
 import TraceCanvas from "./components/TraceCanvas";
 import RenderCanvas from "./components/RenderCanvas";
 import { parseDxf } from "./utils/dxf";
-import { convertTextShapeToPolygons } from "./lib/textToPolylines";
+import { convertTextShapeToPolygons, type TextShape, type Point } from "./lib/textToPolylines";
 function App() {
   // Generate a default project name like GSM-YYYYMMDD-Hmm (e.g. GSM-20251124-351)
   function getDefaultProjectName() {
@@ -116,6 +116,8 @@ function App() {
     if (touched) {
       const s = nextProject.shapes.find((sh) => sh.id === id);
       if (s && s.type === "text") {
+        // Debug: log update and whether dxfPaths exist before vectorization
+        console.info('updateShape: triggering vectorizeTextShape', { id: s.id, partial, hadDxf: !!(s.dxfPaths && s.dxfPaths.length), x: s.x, y: s.y, origin: s.origin, text: s.text, align: s.textAlign, valign: s.textValign, widthMM: s.widthMM, heightMM: s.heightMM });
         // fire-and-forget; updates will be applied when available
         void vectorizeTextShape(s);
       }
@@ -128,23 +130,29 @@ function App() {
   async function vectorizeTextShape(s: ToolShape) {
     if (!s || s.type !== 'text') return;
     try {
+      const fontFileVal = (s as unknown as { fontFile?: string }).fontFile;
+      console.info('vectorizeTextShape: start', { id: s.id, x: s.x, y: s.y, origin: s.origin, hasDxf: !!(s.dxfPaths && s.dxfPaths.length), text: s.text, fontSizeMM: s.fontSizeMM, fontFile: fontFileVal });
       const content = s.text ?? s.name ?? '';
-      const fontFile = (s as any).fontFile as string | undefined;
+      const fontFile = fontFileVal as string | undefined;
       const fontUrl = fontFile && (fontFile.startsWith('http://') || fontFile.startsWith('https://')) ? fontFile : (fontFile ? `http://localhost:5000/fonts/${fontFile}` : 'http://localhost:5000/fonts/verdana.ttf');
-      const libShape = {
+      const fontStyle = (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as 'normal' | 'bold' | 'italic';
+      const alignVal = (s.textAlign as 'left' | 'center' | 'right') || 'center';
+      const valignVal = (s.textValign as 'top' | 'middle' | 'bottom' | 'baseline') || 'baseline';
+
+      const libShape: TextShape = {
         id: s.id,
         kind: 'text',
         content,
         fontFamily: (s.fontName && typeof s.fontName === 'string') ? s.fontName.split(',')[0].trim() : 'Verdana',
-        fontStyle: (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as any,
+        fontStyle,
         heightMm: ((s.fontSizeMM ?? s.heightMM ?? 15) * FONT_SIZE_CORRECTION),
         positionMm: { x: s.x ?? 0, y: s.y ?? 0 },
         rotationDeg: s.rotateDeg ?? 0,
-        align: (s.textAlign as any) || 'center',
-        valign: (s.textValign as any) || 'baseline',
+        align: alignVal,
+        valign: valignVal,
       };
 
-      const polygons = await convertTextShapeToPolygons(libShape as any, fontUrl, 0.1);
+      const polygons = await convertTextShapeToPolygons(libShape, fontUrl, 0.1);
       if (!polygons || !polygons.length) return;
 
       // compute bbox and centroid/centroid-based placement
@@ -165,24 +173,58 @@ function App() {
       }
       const cx = isFinite(minX) ? (minX + maxX) / 2 : (s.x ?? 0);
       const cy = isFinite(minY) ? (minY + maxY) / 2 : (s.y ?? 0);
+      console.info('vectorizeTextShape: polygon bbox/centroid', { id: s.id, minX, minY, maxX, maxY, cx, cy });
 
-      // Store dxfPaths relative to the current shape position so we do not
-      // change the shape's on-canvas location when re-vectorizing.
-      const baseX = s.x ?? 0;
-      const baseY = s.y ?? 0;
+      // Normalize dxfPaths relative to the polygon centroid. Using a
+      // consistent centroid-relative basis avoids flips between anchor vs
+      // centroid interpretations and keeps visual placement stable when the
+      // Canvas interprets `x,y` as the displayed center.
+      const isFirstVectorize = !(s.dxfPaths && s.dxfPaths.length);
+      const effectiveOrigin: 'centroid' | 'anchor' = (s.origin as 'centroid' | 'anchor') ?? (isFirstVectorize ? 'anchor' : 'centroid');
+      // Warn if a shape claims centroid origin but its stored x,y do not
+      // match the computed centroid — keep effectiveOrigin for fallback
+      if (effectiveOrigin === 'centroid') {
+        const sx = s.x ?? 0;
+        const sy = s.y ?? 0;
+        const dx = Math.abs(sx - cx);
+        const dy = Math.abs(sy - cy);
+        if (dx > 0.5 || dy > 0.5) {
+          console.warn('vectorizeTextShape: origin centroid mismatch detected; preserving existing origin and normalizing dxfPaths to centroid', { id: s.id, sx, sy, cx, cy, dx, dy });
+        }
+      }
+
+      // Use the polygon centroid as the canonical base for stored dxfPaths.
+      // This keeps stored coordinates consistent (centroid-relative) and
+      // matches the behavior used when importing DXFs or creating text.
+      const baseX = cx;
+      const baseY = cy;
+
       const dxfPaths: Array<Array<{ x: number; y: number }>> = [];
       for (const p of polygons) {
-        if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
-        if (p.holes && p.holes.length) for (const h of p.holes) if (h && h.length) dxfPaths.push(h.map((pt) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
+        if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt: Point) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
+        if (p.holes && p.holes.length) for (const h of p.holes) if (h && h.length) dxfPaths.push(h.map((pt: Point) => ({ x: Math.round((pt.x - baseX) * 10) / 10, y: Math.round((pt.y - baseY) * 10) / 10 })));
       }
 
       const widthMM = isFinite(minX) ? Math.round((maxX - minX) * 10) / 10 : (s.widthMM ?? 0);
       const heightMM = isFinite(minY) ? Math.round((maxY - minY) * 10) / 10 : (s.heightMM ?? 0);
 
-      setProject((prev) => ({
-        ...prev,
-        shapes: prev.shapes.map((sh) => sh.id === s.id ? ({ ...sh, dxfPaths, widthMM, heightMM }) : sh),
-      }));
+      console.info('vectorizeTextShape: applying dxfPaths (keeping existing x/y to preserve anchor)', { id: s.id, isFirstVectorize, baseX, baseY, widthMM, heightMM, dxfCount: dxfPaths.length, originBefore: s.origin });
+      // Update dxfPaths/size but do NOT change `origin` here – preserving
+      // the existing interpretation (anchor vs centroid) prevents the
+      // on-canvas origin from flipping when vectorization runs later.
+      setProject((prev) => {
+        // prevShape removed (unused) to keep linter happy
+        // If we detected an origin mismatch above, persist the 'anchor' origin
+        // so future updates remain consistent and do not flip interpretation.
+        // Persist the effectiveOrigin we calculated above so future updates
+        // interpret `x,y` consistently and do not cause a visual jump.
+        const updatedShapes = prev.shapes.map((sh) => sh.id === s.id ? ({ ...sh, dxfPaths, widthMM, heightMM, origin: sh.origin ?? effectiveOrigin }) : sh);
+        // concise log: report update without dumping entire objects
+        const afterOrigin = (updatedShapes.find(sh => sh.id === s.id) as ToolShape | undefined)?.origin;
+        console.info('vectorizeTextShape: updated shape', { id: s.id, isFirstVectorize, baseX, baseY, widthMM, heightMM, dxfCount: dxfPaths.length, originBefore: s.origin, originAfter: afterOrigin });
+        return { ...prev, shapes: updatedShapes };
+      });
+      console.info('vectorizeTextShape: applied update for', { id: s.id });
     } catch (err) {
       console.warn('vectorizeTextShape failed for', s.id, err);
     }
@@ -308,7 +350,8 @@ function App() {
     // succeeds we store the generated polylines as a `dxf` shape so the canvas
     // displays the exact vector geometry and exports are deterministic.
     try {
-      const polygons = await convertTextShapeToPolygons(libShape as any, defaultFontUrl, 0.1);
+      const libShapeTyped: TextShape = libShape as unknown as TextShape;
+      const polygons = await convertTextShapeToPolygons(libShapeTyped, defaultFontUrl, 0.1);
       if (polygons && polygons.length) {
         // Compute bounding centroid to store dxfPaths relative to a center point
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -334,10 +377,10 @@ function App() {
         // Build dxfPaths relative to centroid (matching how imported DXFs are stored)
         const dxfPaths: Array<Array<{ x: number; y: number }>> = [];
         for (const p of polygons) {
-          if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt) => ({ x: pt.x - cx, y: pt.y - cy })));
+          if (p.outer && p.outer.length) dxfPaths.push(p.outer.map((pt: Point) => ({ x: pt.x - cx, y: pt.y - cy })));
           if (p.holes && p.holes.length) {
             for (const h of p.holes) {
-              if (h && h.length) dxfPaths.push(h.map((pt) => ({ x: pt.x - cx, y: pt.y - cy })));
+              if (h && h.length) dxfPaths.push(h.map((pt: Point) => ({ x: pt.x - cx, y: pt.y - cy })));
             }
           }
         }
@@ -354,6 +397,7 @@ function App() {
           name: `Text-${next}`,
           x: Math.round(cx * 10) / 10,
           y: Math.round(cy * 10) / 10,
+          origin: 'centroid',
           scale: 1,
           // vector geometry for deterministic rendering/export
           dxfPaths: dxfPaths,
@@ -389,6 +433,7 @@ function App() {
       name: `Text-${next}`,
       x: 0,
       y: boardHeightMM,
+      origin: 'anchor',
       textAlign: 'left',
       textValign: 'top',
       text: defaultText,
@@ -504,7 +549,7 @@ function App() {
     };
     reader.readAsText(file);
     // clear input so same file can be re-selected later
-    try { input.value = ""; } catch (err) { /* ignore */ }
+    try { input.value = ""; } catch { /* ignore */ }
   }
 
   // helper functions moved into Canvas component
@@ -595,13 +640,13 @@ function App() {
     }
 
     // allow re-selecting same file later
-    try { input.value = ""; } catch (err) { /* ignore */ }
+    try { input.value = ""; } catch { /* ignore */ }
   }
 
   // Export DXFs using the server endpoint. Extracted so Inspector can call it.
   async function exportDxfs(silent = false) {
     try {
-      const items: any[] = [];
+      const items: Array<Record<string, unknown>> = [];
       function rotatePoint(px: number, py: number, deg: number) {
         const r = (deg * Math.PI) / 180.0;
         const cosr = Math.cos(r);
@@ -614,8 +659,8 @@ function App() {
           if (s.dxfPaths && s.dxfPaths.length) {
             const scale = s.scale ?? 1;
             const rotDeg = s.rotateDeg || 0;
-            const polylines = s.dxfPaths.map((path: any) =>
-              path.map((p: any) => {
+            const polylines = s.dxfPaths.map((path: Array<{ x: number; y: number }>) =>
+              path.map((p: { x: number; y: number }) => {
                 const sx = (p.x || 0) * scale;
                 const sy = (p.y || 0) * scale;
                 const rpt = rotatePoint(sx, sy, -rotDeg);
@@ -657,8 +702,8 @@ function App() {
         }
 
         // primitives and text -> polylines
-        let cx = s.x || 0;
-        let cy = s.y || 0;
+        const cx = s.x || 0;
+        const cy = s.y || 0;
         const rot = s.rotateDeg || 0;
         const polylines: Array<Array<{ x: number; y: number }>> = [];
         if (s.type === 'rect') {
@@ -697,8 +742,8 @@ function App() {
           if (s.dxfPaths && s.dxfPaths.length) {
             const scale = s.scale ?? 1;
             const rotDeg = s.rotateDeg || 0;
-            const polylines = s.dxfPaths.map((path: any) =>
-              path.map((p: any) => {
+            const polylines = s.dxfPaths.map((path: Array<{ x: number; y: number }>) =>
+              path.map((p: { x: number; y: number }) => {
                 const sx = (p.x || 0) * scale;
                 const sy = (p.y || 0) * scale;
                 const rpt = rotatePoint(sx, sy, -rotDeg);
@@ -724,28 +769,31 @@ function App() {
           }
           try {
             // Map our internal ToolShape to the library TextShape shape
-            const libShape = {
+            const fontStyle = (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as 'normal' | 'bold' | 'italic';
+            const alignVal = (s.textAlign as 'left' | 'center' | 'right') || 'center';
+            const valignVal = (s.textValign as 'top' | 'middle' | 'bottom' | 'baseline') || 'baseline';
+            const libShape: TextShape = {
               id: s.id,
               kind: 'text',
               content: s.text || s.name || '',
               // fontFamily may be a CSS-like family string or a direct filename (e.g. 'verdana.ttf')
               fontFamily: (s.fontName && typeof s.fontName === 'string') ? s.fontName.split(',')[0].trim() : 'Verdana',
-              fontStyle: (s.fontBold ? 'bold' : s.fontItalic ? 'italic' : 'normal') as any,
+              fontStyle,
               // apply the same visual correction used by the canvas so DXF matches on-screen size
               heightMm: ((s.fontSizeMM || s.heightMM || 15) * FONT_SIZE_CORRECTION),
               positionMm: { x: cx, y: cy },
               rotationDeg: rot,
-              align: (s.textAlign as any) || 'center',
-              valign: (s.textValign as any) || 'baseline',
+              align: alignVal,
+              valign: valignVal,
             };
 
             // Attempt to load fonts by guessing likely TTF filenames derived from the
             // UI font family (try bold/italic variants), falling back to Verdana.
-            const family = (libShape.fontFamily || 'verdana').replace(/['\"]/g, '').trim();
+            const family = (libShape.fontFamily || 'verdana').replace(/['"]/g, '').trim();
             const candidates: string[] = [];
             const base = family.split(',')[0].trim();
             // If the inspector set an explicit font file on the shape, prefer it
-            const fontFile = (s as any).fontFile as string | undefined;
+            const fontFile = (s as unknown as { fontFile?: string }).fontFile as string | undefined;
             const addCandidate = (fn: string) => candidates.push(`http://localhost:5000/fonts/${fn}`);
             if (fontFile) {
               const baseName = fontFile.replace(/\.[^.]+$/, '');
@@ -786,7 +834,7 @@ function App() {
               addCandidate('verdana.ttf');
             }
 
-            let polygons: any[] | null = null;
+            let polygons: Array<{ outer: Point[]; holes: Point[][] }> | null = null;
             let usedFontUrl: string | null = null;
             for (const url of candidates) {
               try {
@@ -808,10 +856,10 @@ function App() {
             const dxfPolylines: Array<Array<{ x: number; y: number }>> = [];
             if (polygons) {
               for (const p of polygons) {
-                if (p.outer && p.outer.length) dxfPolylines.push(p.outer.map((pt) => ({ x: pt.x, y: pt.y })));
+                if (p.outer && p.outer.length) dxfPolylines.push(p.outer.map((pt: Point) => ({ x: pt.x, y: pt.y })));
                 if (p.holes && p.holes.length) {
                   for (const h of p.holes) {
-                    if (h && h.length) dxfPolylines.push(h.map((pt) => ({ x: pt.x, y: pt.y })));
+                    if (h && h.length) dxfPolylines.push(h.map((pt: Point) => ({ x: pt.x, y: pt.y })));
                   }
                 }
               }
@@ -937,7 +985,7 @@ function App() {
         alert('Upload failed: ' + err.message);
       })
       .finally(() => {
-        try { input.value = ""; } catch (err) { /* ignore */ }
+        try { input.value = ""; } catch { /* ignore */ }
       });
   }
 

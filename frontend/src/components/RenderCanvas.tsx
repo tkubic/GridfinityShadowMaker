@@ -1,5 +1,4 @@
-import React from "react";
-
+ 
 type Props = {
   projectName?: string;
 };

@@ -38,6 +38,10 @@ export type ToolShape = {
   textAlign?: 'left' | 'center' | 'right';
   // vertical alignment: top/middle/baseline/bottom
   textValign?: 'top' | 'middle' | 'baseline' | 'bottom';
+  // origin indicates how `x,y` should be interpreted when `dxfPaths` exist.
+  // 'centroid' means `x,y` is the geometry center (default for imported DXFs).
+  // 'anchor' means `x,y` is an anchor derived from textAlign/textValign.
+  origin?: 'centroid' | 'anchor';
   // for imported DXF/custom shapes
   scale?: number;
   dxfName?: string;
