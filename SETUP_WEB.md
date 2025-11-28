@@ -90,9 +90,26 @@ Omitted (for now)
 
 Next steps / recommendations
 - Add a short `requirements.txt` or `pyproject.toml` to lock Python deps.
-- Add a short `README-DEV.md` with a checklist for building the Windows environment: matching Python version, GPU/CPU OpenCV advice, and PyQt notes.
 - Consider a small script to create and activate the Python venv and install dependencies automatically.
 
 If you want, I can:
 - Add this content into `README.md` (replacing or appending the current setup section), or
 - Commit this as a new `SETUP_WEB.md` file (already prepared). Which do you prefer?
+
+Additional Windows notes
+-----------------------
+- OpenSCAD CLI: when running headless renders the project prefers a CLI
+  binary such as `openscad.com` on Windows. If the backend returns an error
+  or opens the OpenSCAD GUI, try pointing the server at the CLI wrapper by
+  setting `OPENSCAD_BIN` to the full path, for example in PowerShell:
+
+```powershell
+$env:OPENSCAD_BIN = 'C:\Program Files\OpenSCAD\openscad.com'
+```
+
+- Developer dashboard: `tools/dev_dashboard.py` provides a small Tk UI to
+  start/stop the frontend and backend, view logs, and launch the browser.
+  On Windows you can also use the single-file launcher `Launch GSM Server.py`
+  in the repo root to open the same dashboard.
+
+See the **Developer quickstart & Windows notes** section in `README.md` for a compact Windows quickstart and troubleshooting tips.

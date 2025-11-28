@@ -1,3 +1,14 @@
+opencv_python
+Pillow
+ezdxf
+pyperclip
+numpy
+colorama
+fonttools
+iniconfig
+packaging
+pytest
+typing_extensions
 # Pinned Python dependencies for GridfinityShadowMaker processing
 opencv-python==4.8.0.76
 Pillow==9.5.0

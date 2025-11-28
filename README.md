@@ -1,6 +1,8 @@
 # Gridfinity Shadow Maker
 
-This template is used to create Gridfinity shadow boards using Python scripts and OpenSCAD.
+A web-first toolchain (React frontend + Node.js backend) that uses
+Python processing pipeline and OpenSCAD to generate Gridfinity
+shadow boards and STL/DXF assets.
 
 ## Highlights
 
@@ -24,20 +26,26 @@ This template is used to create Gridfinity shadow boards using Python scripts an
 3. **Crop Photos**: Ensure the borders of the photos are all white.
 4. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline. The basic Paint application is most popular. Black filled shapes do well to ensure crisp, high contrasting edges are found
 
-### Step 2: Trace the Objects
-1. Run the provided Python script to create your OpenSCAD files.
-2. Enter a project name. This will save all design files to a folder of that name to aide in documenting your work.
-# Gridfinity Shadow Maker
+### Step 2: Trace Object
+1. Launch the Server and then run the app at http://localhost:5173/
+2. Change your project Name at the top
+3. Click the Trace Object tab at the top then "Load Image"
+4. Adjust Threshold, offset, Token Size, and resolution to meet your needs and press Process Image Again if needed.
 
+### Step 3: 2D Canvas
+1. Draw shapes, import DXF's, and add text how you like
+2. Items can be extruded, cut, or blockers can be added to make islands on cut areas
+3. Adjust Cut Depths, scale, and rotate objects as needed
+
+### Step 3: Generate STL
+1. Press "Generate STL" to output the STL and view it in the "3D Render" tab
+2. Iterate as needed
+3. All design files will be saved within a folder with the same name as the project name
+
+# Gridfinity Shadow Maker
 A toolchain for generating Gridfinity shadow boards from photos — now rearchitected
 as a web-first app with a lightweight Node.js backend that runs the existing
 Python image-processing code.
-
-This repository historically shipped a PyQt-based desktop UI. This version
-(major refactor) adopts a React + TypeScript frontend and an Express (Node.js)
-backend that invokes the original Python processing code. The desktop PyQt UI
-is deprecated and will be retired in a future release; the core Python
-processing remains the single source of truth and is reused by the server.
 
 This README documents the new web+python developer setup and how to run the
 project locally. OpenSCAD/STL export is intentionally omitted here — it's a
@@ -50,12 +58,6 @@ Highlights
 - Reuses the existing Python processing code in `src/processing.py`
 - Preserves DXF coordinates and supports multi-file DXF import
 - Save project (.gsm) into per-project folders; deterministic reprocessing
-
-Important: Desktop UI retirement
-- The old PyQt desktop frontend is deprecated. The Python processing code in
-   `src/processing.py` is still used, but the PyQt UI will be retired and
-   removed in a future release. New development and documentation should target
-   the web frontend in `frontend/` and the Node.js backend in `backend/`.
 
 Quick Start (web + python)
 ---
@@ -84,12 +86,6 @@ pip install opencv_python pillow ezdxf pyperclip numpy
 ```powershell
 pip install colorama fonttools iniconfig packaging pytest typing_extensions
 ```
-Notes:
-- `pyqt5` is no longer required for the web workflow and will be removed
-   in upcoming releases. If you still use the legacy desktop UI, install
-   `pyqt5` in your venv.
-- OpenCV (`opencv_python`) can be large; follow OS-specific wheel advice if
-   installation fails.
 
 3) Install frontend dependencies
 ```powershell
@@ -154,44 +150,31 @@ Testing & troubleshooting
    by design) or re-export DXFs with coordinates relative to your desired
    board origin.
 
-Migration / Retirement plan for PyQt desktop UI
-- The desktop PyQt UI is deprecated. The processing code (`src/processing.py`)
-   will be kept as the canonical pipeline for image analysis and DXF export,
-   but UI interaction should move to the React frontend.
-- If you still need the old UI, install `pyqt5` in your Python environment.
-- Future releases will remove PyQt UI files or move them into an `archive/`
-   folder once documented migration is complete.
-
 Next recommended items
 - Create `requirements.txt` or `pyproject.toml` to pin Python dependencies.
-- Add a short `README-DEV.md` with troubleshooting steps for common Windows
-   installation problems, or
 - Consider adding a `scripts/setup.ps1` to automate venv + pip install steps.
 
 Convenience scripts
-- Location: the `scripts/` folder contains small PowerShell helpers to make
-   local development easier on Windows.
-   - `scripts/setup.ps1` — creates a `.venv`, upgrades `pip`, installs
-      `requirements.txt`, and optionally runs `npm install` in `frontend/`.
-   - `scripts/restart-backend.ps1` — stops any process listening on port
-      `5000` and launches the backend server (`backend/server.js`) in a new
-      PowerShell window.
-   - `scripts/restart-frontend.ps1` — stops any process listening on port
-      `5173` and launches the frontend (`npm run dev`) in a new PowerShell
-      window.
-   - `scripts/restart-dev.ps1` — runs both restart scripts to bring up the
-      full dev stack.
+- Location: the `scripts/` folder contains a small `setup.ps1` helper that
+  creates a `.venv`, upgrades `pip`, installs `requirements.txt`, and
+  optionally runs `npm install` in `frontend/`.
+- `openscad-cli.bat` is a Windows helper that prefers `openscad.com` (the
+  CLI wrapper) when running OpenSCAD so renders run headless where possible.
+- The GUI restart helpers (`restart-backend.ps1`, `restart-frontend.ps1`, and
+  `restart-dev.ps1`) were removed in favor of the single-file launcher
+  `Launch GSM Server.py` and the `tools/dev_dashboard.py` Tkinter dashboard.
 
-   Usage (from the repo root):
-   ```powershell
-   .\scripts\setup.ps1
-   .\scripts\restart-dev.ps1
-   ```
+  Usage (from the repo root):
+  ```powershell
+  .\scripts\setup.ps1
+  # To launch the dashboard/launcher use one of:
+  python tools/dev_dashboard.py
+  # or double-click Launch GSM Server.py (Windows)
+  ```
 
-   These scripts are convenience helpers; they use `Stop-Process` / `taskkill`
-   to free ports and open new windows so logs stay visible. If you prefer a
-   different workflow (single terminal, background services, or `pm2`), feel
-   free to modify them.
+  These helpers are optional; they aim to simplify first-time setup. For
+  CI or production automation prefer explicit commands that match your
+  environment's tooling.
 
 Contributing
 - Please follow the existing code style. Frontend changes live under
@@ -211,4 +194,83 @@ If you'd like, I can also:
 - Create `requirements.txt` and a `scripts/setup.ps1` installer to automate
    the venv + pip install steps.
 
-Tell me which additional item you'd like next and I'll add it.
+Developer quickstart & Windows notes
+-----------------------------------
+The following is a compact checklist for setting up and running this project
+on Windows (PowerShell). It replaces separate "-dev" docs so the repository
+remains production-focused while providing the necessary installation steps.
+
+Prerequisites
+- Node.js (v16+) and `npm` on PATH
+- Python 3.10+ (recommend 3.10–3.12) and `pip`
+- OpenSCAD installed (prefer `openscad.com` CLI on Windows)
+
+1) Create and activate a Python virtual environment
+```powershell
+# from repository root
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+2) Install Python dependencies
+```powershell
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+3) Install frontend dependencies
+```powershell
+cd frontend
+npm install
+cd ..
+```
+
+4) Set OpenSCAD binary (recommended on Windows)
+- On many Windows installs, `openscad.com` is a CLI wrapper that does not open
+   the GUI. If available prefer that. You can force the backend to use a specific
+   OpenSCAD binary by setting the `OPENSCAD_BIN` environment variable in PowerShell:
+
+```powershell
+$env:OPENSCAD_BIN = 'C:\Program Files\OpenSCAD\openscad.com'
+# Or use the full path to the CLI wrapper you prefer
+```
+
+If `openscad.com` is not available and you only have `openscad.exe`, be aware
+that `openscad.exe` may open the GUI and block; prefer `openscad.com` where
+possible to run headless renders.
+
+5) Start the backend server
+```powershell
+# from repo root
+node backend/server.js
+```
+
+6) Start the frontend dev server
+```powershell
+npm --prefix frontend run dev
+```
+
+7) Optional: Developer dashboard (starts/stops servers, shows logs)
+```powershell
+python tools/dev_dashboard.py
+# Or double-click `Launch GSM Server.py` (Windows) for a single-file launcher
+```
+
+Useful server endpoints
+- `POST /process-image` — upload an image for processing
+- `POST /save-project` — save `.gsm` project JSON into per-project folder
+- `GET /api/render/events` — SSE endpoint that emits `stl` events when a render completes
+- `GET /api/render/output-stl?project=<name>` — download rendered STL
+
+Troubleshooting
+- If the backend fails with Exit Code 1 when invoking OpenSCAD, confirm
+   `OPENSCAD_BIN` points to `openscad.com` (not `openscad.exe`) if available.
+- If `npm` is not found when launching from the dashboard, run `where.exe npm`
+   in PowerShell. If it's missing, add Node's installation `bin`/`npm` folder to your PATH
+   or set `GSM_FRONTEND_CMD` in the dashboard settings to the full path to `npm.cmd`.
+
+Notes
+- `assets/offset_pos_xy.pkl` is used by the processing pipeline and now lives
+   under `assets/` (not repository root).
+- The frontend subscribes to `/api/render/events` to automatically reload an
+   STL viewer when rendering completes; the backend emits `stl` SSE events.

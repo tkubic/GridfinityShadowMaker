@@ -375,6 +375,26 @@ export default function Canvas({
           if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) clickedInsideBBox = true;
         }
         const isBackground = (tgt === e.currentTarget || tgt.classList.contains("board-rect"));
+
+        // If the user clicked inside the multi-selection bounding box, start
+        // a group drag: compute offsets for every selected item and set
+        // dragging state so `onMouseMove` will translate the whole group.
+        if (isBackground && clickedInsideBBox && selectedItems && selectedItems.length > 1) {
+          const offsets: Record<string, { x: number; y: number }> = {};
+          for (const id of selectedItems) {
+            const s = drawShapes.find((d) => d.id === id);
+            if (!s) continue;
+            offsets[id] = { x: pt.x - (s.x ?? 0), y: pt.y - (s.y ?? 0) };
+          }
+          groupOffsetsRef.current = offsets;
+          // Use the first selected item as the dragging reference id
+          const refId = selectedItems[0];
+          const refShape = drawShapes.find((d) => d.id === refId);
+          setDragOffset({ x: pt.x - (refShape?.x ?? 0), y: pt.y - (refShape?.y ?? 0) });
+          setDraggingId(refId);
+          return;
+        }
+
         if (isBackground && !clickedInsideBBox) {
           selectItem("board");
         }

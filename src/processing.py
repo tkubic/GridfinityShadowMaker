@@ -179,7 +179,7 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
         # Save offset_pos_xy to a temp file for use in import_to_openscad
         try:
             import pickle
-            temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'offset_pos_xy.pkl')
+            temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'offset_pos_xy.pkl')
             with open(temp_centers_path, 'wb') as f:
                 pickle.dump(offset_pos_xy, f)
         except Exception as e:
@@ -663,7 +663,7 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             pos_xy = None
             try:
                 import pickle
-                temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'offset_pos_xy.pkl')
+                temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'offset_pos_xy.pkl')
                 if os.path.exists(temp_centers_path):
                     with open(temp_centers_path, 'rb') as f:
                         pos_xy = pickle.load(f)

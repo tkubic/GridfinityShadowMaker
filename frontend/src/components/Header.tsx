@@ -32,7 +32,7 @@ export default function Header({ projectName, onRename, onSave, onLoadClick, act
         <nav style={{ display: "flex", gap: 8 }} aria-label="Top tabs">
           <button className={"tab-btn" + (activeTab === "trace" ? " active" : "")} onClick={() => setActiveTab("trace")}>Trace Object</button>
           <button className={"tab-btn" + (activeTab === "canvas" ? " active" : "")} onClick={() => setActiveTab("canvas")}>2D Canvas</button>
-          <button className={"tab-btn" + (activeTab === "render" ? " active" : "")} onClick={() => setActiveTab("render")}>3D Render/Export</button>
+          <button className={"tab-btn" + (activeTab === "render" ? " active" : "")} onClick={() => setActiveTab("render")}>3D Viewer</button>
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>

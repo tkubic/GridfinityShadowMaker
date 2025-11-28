@@ -101,26 +101,28 @@ function App() {
     // Apply the partial update and, if the update touches text/font properties,
     // attempt to re-vectorize the text into `dxfPaths` so the canvas contains
     // exact vector geometry immediately.
-    const nextProject = ((): typeof project => {
+    setProject((prev) => {
       const next = {
-        ...project,
-        shapes: project.shapes.map((s) => (s.id === id ? { ...s, ...partial } : s)),
+        ...prev,
+        shapes: prev.shapes.map((s) => (s.id === id ? { ...s, ...partial } : s)),
       } as typeof project;
       return next;
-    })();
-    setProject(nextProject);
+    });
 
     // If the updated shape is a text shape and the partial touches any of the
     // properties that affect glyph outlines, re-vectorize.
     const vectKeys = ["text", "fontSizeMM", "fontFile", "fontName", "fontBold", "fontItalic"];
     const touched = Object.keys(partial).some((k) => vectKeys.includes(k));
     if (touched) {
-      const s = nextProject.shapes.find((sh) => sh.id === id);
-      if (s && s.type === "text") {
-        // Debug: log update and whether dxfPaths exist before vectorization
-        console.info('updateShape: triggering vectorizeTextShape', { id: s.id, partial, hadDxf: !!(s.dxfPaths && s.dxfPaths.length), x: s.x, y: s.y, origin: s.origin, text: s.text, align: s.textAlign, valign: s.textValign, widthMM: s.widthMM, heightMM: s.heightMM });
-        // fire-and-forget; updates will be applied when available
-        void vectorizeTextShape(s);
+      // derive an updated shape object by merging partial onto the current
+      // project snapshot (may be slightly stale but is sufficient for
+      // vectorization input). Call vectorize asynchronously so the state
+      // update above has time to apply.
+      const s0 = project.shapes.find((sh) => sh.id === id);
+      const merged = s0 ? ({ ...s0, ...partial } as ToolShape) : null;
+      if (merged && merged.type === 'text') {
+        console.info('updateShape: triggering vectorizeTextShape', { id: merged.id, partial, hadDxf: !!(merged.dxfPaths && merged.dxfPaths.length), x: merged.x, y: merged.y, origin: merged.origin, text: merged.text, align: merged.textAlign, valign: merged.textValign, widthMM: merged.widthMM, heightMM: merged.heightMM });
+        setTimeout(() => void vectorizeTextShape(merged), 0);
       }
     }
   }
