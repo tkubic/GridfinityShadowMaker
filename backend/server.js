@@ -33,6 +33,17 @@ function findPythonCmd(repoRoot) {
     return { cmd: pythonCmd, args: pythonArgs };
   }
 
+  // Prefer 'python' on PATH first (avoids py-launcher mapping to a removed installation)
+  try {
+    const probe2 = spawnSync('python', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+    if (!probe2.error && probe2.status === 0) {
+      pythonCmd = 'python';
+      console.log('Using python from PATH');
+      return { cmd: pythonCmd, args: pythonArgs };
+    }
+  } catch (e) { /* ignore */ }
+
+  // Fallback: try 'py -3' on Windows
   if (process.platform === 'win32') {
     try {
       const probe = spawnSync('py', ['-3', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
@@ -44,15 +55,6 @@ function findPythonCmd(repoRoot) {
       }
     } catch (e) { /* ignore */ }
   }
-
-  try {
-    const probe2 = spawnSync('python', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
-    if (!probe2.error && probe2.status === 0) {
-      pythonCmd = 'python';
-      console.log('Using python from PATH');
-      return { cmd: pythonCmd, args: pythonArgs };
-    }
-  } catch (e) { /* ignore */ }
 
   return null;
 }
@@ -109,6 +111,32 @@ app.get('/fonts/list', (req, res) => {
   } catch (e) {
     console.error('Failed to list fonts', e);
     return res.status(500).json({ error: 'failed to list fonts' });
+  }
+});
+
+// Diagnostics: report which Python the server would use and basic env info
+app.get('/diagnostics/python', (req, res) => {
+  try {
+    const probe = findPythonCmd(REPO_ROOT);
+    const venvPath = path.join(REPO_ROOT, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+    const venvExists = fs.existsSync(venvPath);
+    const envGsm = process.env.GSM_PYTHON_EXE || null;
+    const pathEnv = process.env.PATH || process.env.Path || '';
+
+    let execResult = null;
+    if (probe && probe.cmd) {
+      try {
+        const fullArgs = (probe.args || []).concat(['-c', 'import sys; print(sys.executable); print(sys.version)']);
+        const sp = spawnSync(probe.cmd, fullArgs, { encoding: 'utf8', timeout: 5000 });
+        execResult = { status: sp.status, stdout: sp.stdout, stderr: sp.stderr };
+      } catch (e) {
+        execResult = { error: String(e) };
+      }
+    }
+
+    return res.json({ probe, venvExists, envGsm, pathEnv, execResult });
+  } catch (e) {
+    return res.status(500).json({ error: 'diagnostics_failed', message: String(e) });
   }
 });
 
@@ -334,21 +362,32 @@ app.post('/process-image', upload.single('image'), (req, res) => {
     console.log('Using repo .venv python:', pythonCmd);
   }
 
-  // 3) try 'py -3' on Windows
-  if (!pythonCmd && process.platform === 'win32') {
+    // 3) try 'python' on PATH
     try {
-      const probe = spawnSync('py', ['-3', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
-      if (!probe.error && probe.status === 0) {
-        pythonCmd = 'py';
-        pythonPrefixArgs = ['-3'];
-        console.log('Using py -3 launcher for Python');
+      const probe2 = spawnSync('python', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+      if (!probe2.error && probe2.status === 0) {
+        pythonCmd = 'python';
+        console.log('Using python from PATH');
       } else {
-        console.log('py -3 probe failed or not available');
+        console.log('python probe failed; no python found on PATH');
       }
     } catch (e) {
       // ignore
     }
-  }
+
+    // 4) try 'py -3' on Windows as a fallback
+    if (!pythonCmd && process.platform === 'win32') {
+      try {
+        const probe = spawnSync('py', ['-3', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+        if (!probe.error && probe.status === 0) {
+          pythonCmd = 'py';
+          pythonPrefixArgs = ['-3'];
+          console.log('Using py -3 launcher for Python');
+        } else {
+          console.log('py -3 probe failed or not available');
+        }
+      } catch (e) { /* ignore */ }
+    }
 
   // 4) fallback to 'python' on PATH
   if (!pythonCmd) {
@@ -365,12 +404,13 @@ app.post('/process-image', upload.single('image'), (req, res) => {
     }
   }
 
-  if (!pythonCmd) {
+  const python = findPythonCmd(repoRoot);
+  if (!python) {
     console.error('No Python interpreter found. Set GSM_PYTHON_EXE to an absolute python path or install Python and ensure py/python is on PATH.');
     return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
   }
 
-  const pyArgs = pythonPrefixArgs.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
+  const pyArgs = python.args.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
   if (projectFolder) {
     // Also tell the Python side where to put per-project outputs and where the
     // project image lives.
@@ -381,7 +421,7 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   if (token) pyArgs.push('--token', String(token));
   if (resolution) pyArgs.push('--resolution', String(resolution));
 
-  const py = spawn(pythonCmd, pyArgs, { stdio: 'inherit' });
+  const py = spawn(python.cmd ? python.cmd : python, pyArgs, { stdio: 'inherit' });
 
   console.log('Spawning python with args:', pyArgs);
   console.log('Final workInputPath before processing:', workInputPath);

@@ -9,6 +9,7 @@ iniconfig
 packaging
 pytest
 typing_extensions
+pyqt5
 
 # Notes:
 # - Versions are intentionally left unpinned to allow pip to select
