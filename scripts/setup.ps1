@@ -57,9 +57,41 @@ if (-not (Test-Path ".venv")) {
 # is not required in this script. This avoids depending on the Activate.ps1
 # script being present in interactive shells.
 $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    Write-Warning "Virtualenv python not found at $VenvPython. Falling back to system 'python'."
-    $VenvPython = 'python'
+function Test-VenvPythonWorking {
+    param([string]$ExePath)
+    try {
+        $out = & $ExePath -c "import sys; print(sys.version_info[:3])" 2>$null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+# If the venv python is missing or doesn't run (e.g. system Python was uninstalled
+# or the venv was created with a different interpreter), recreate the venv so it
+# matches the current system python launcher.
+if (-not (Test-Path $VenvPython) -or -not (Test-VenvPythonWorking -ExePath $VenvPython)) {
+    Write-Warning "Existing virtual environment is missing or broken; recreating .venv using current Python launcher ($PythonLauncher)."
+    if (Test-Path ".venv") {
+        try {
+            Remove-Item -Recurse -Force ".venv"
+        } catch {
+            Write-Warning "Could not remove existing .venv. Try removing it manually and re-run this script. Error: $_"
+            Write-Host "Continuing and attempting to create venv anyway..."
+        }
+    }
+    if ($PythonLauncher -eq 'py') {
+        & py -3 -m venv .venv
+    } else {
+        & python -m venv .venv
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to create virtual environment using $PythonLauncher. Aborting."
+        exit 1
+    }
+}
+else {
+    Write-Host "Using existing virtual environment python: $VenvPython"
 }
 
 Write-Host "Installing Python dependencies using: $VenvPython"
@@ -94,21 +126,25 @@ if (-not (Test-Path "requirements.txt")) {
 } else {
     Write-Host "Installing Python packages from requirements.txt (see $pipLog for details)..."
     if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary','-r','requirements.txt') -LogFile $pipLog)) {
-        Write-Warning "Initial pip install failed. Attempting targeted retries for common binary packages."
-        # Try targeted install attempts
-        $retryPkgs = @('Pillow','opencv_python','numpy')
-        if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments ( @('-m','pip','install','--prefer-binary') + $retryPkgs ) -LogFile $pipLog)) {
-            Write-Warning "Targeted package install also failed. See $pipLog for details."
+        Write-Warning "Initial pip install failed. Attempting per-package installs to isolate failures."
+        $failedPkgs = @()
+        # Read package names from requirements.txt (ignore comments/blank lines)
+        $reqs = Get-Content -Path (Join-Path $RepoRoot 'requirements.txt') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }
+        foreach ($pkg in $reqs) {
+            Write-Host "Installing individual package: $pkg"
+            if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary',$pkg) -LogFile $pipLog)) {
+                Write-Warning "Package install failed: $pkg"
+                $failedPkgs += $pkg
+            }
         }
-        # Retry full requirements once more
-        if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary','-r','requirements.txt') -LogFile $pipLog)) {
-            Write-Warning "Retry of full requirements failed. See $pipLog for details."
+        if ($failedPkgs.Count -gt 0) {
+            Write-Warning "Some packages failed to install: $($failedPkgs -join ', ')"
             Write-Host "Common fixes:"
             Write-Host " - Ensure Visual C++ Build Tools / Redistributable are installed for building wheels where needed."
             Write-Host " - Try running pip manually in an elevated shell and inspect $pipLog."
             Write-Host "Manual retry: & $VenvPython -m pip install -r requirements.txt"
         } else {
-            Write-Host "Python packages installed successfully on retry."
+            Write-Host "Python packages installed successfully via per-package install."
         }
     } else {
         Write-Host "Python packages installed successfully."

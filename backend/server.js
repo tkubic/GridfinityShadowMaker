@@ -254,6 +254,9 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   // Always pass the repository root as the projectdir so Python imports the
   // canonical `src` package from the repository (single source of truth).
   const repoRoot = path.join(__dirname, '..');
+  // Prefer using the repository virtual environment python if it exists
+  const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+  const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
   const pyArgs = [path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot];
   if (projectFolder) {
     // Also tell the Python side where to put per-project outputs and where the
@@ -265,7 +268,7 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   if (token) pyArgs.push('--token', String(token));
   if (resolution) pyArgs.push('--resolution', String(resolution));
 
-  const py = spawn('python', pyArgs, { stdio: 'inherit' });
+  const py = spawn(pythonCmd, pyArgs, { stdio: 'inherit' });
 
   console.log('Spawning python with args:', pyArgs);
   console.log('Final workInputPath before processing:', workInputPath);
@@ -565,7 +568,9 @@ app.post('/export-dxfs', async (req, res) => {
       }
     }
 
-    const py = spawn('python', [path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot], { stdio: 'inherit' });
+    const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+    const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
+    const py = spawn(pythonCmd, [path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot], { stdio: 'inherit' });
     py.on('close', (code) => {
       // Clean up any temporary per-shape JSON files so processing_output
       // only contains final DXF assets. This removes .poly.json and
@@ -656,7 +661,9 @@ app.post('/export-scad', (req, res) => {
 
       // Delegate SCAD generation to the Python helper which will call
       // src.processing.import_to_openscad for robust behavior.
-      const py = spawn('python', [path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectdir', repoRoot], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+      const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
+      const py = spawn(pythonCmd, [path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectdir', repoRoot], { stdio: ['ignore', 'pipe', 'pipe'] });
       let outBuf = '';
       let errBuf = '';
       py.stdout.on('data', (c) => { outBuf += String(c || ''); });
