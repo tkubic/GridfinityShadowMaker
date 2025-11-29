@@ -256,36 +256,71 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   const repoRoot = path.join(__dirname, '..');
   // Prefer using the repository virtual environment python if it exists
   const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
-  let pythonCmd = 'python';
-  let pythonExtraArgs = [];
 
-  // Allow explicit override via env var for testing (e.g. GSM_PYTHON_EXE)
+  // Decide which python command to spawn. We avoid hard-coding absolute
+  // interpreter paths unless explicitly provided via GSM_PYTHON_EXE. Try in
+  // order: GSM_PYTHON_EXE (if exists), .venv python, 'py -3' launcher (Windows),
+  // then 'python' on PATH. We detect availability by doing a quick spawnSync
+  // probe that does not throw when the command is absent.
+  let pythonCmd = null;
+  let pythonPrefixArgs = [];
+
+  // 1) explicit override
   if (process.env.GSM_PYTHON_EXE) {
     try {
       const candidate = String(process.env.GSM_PYTHON_EXE);
       if (fs.existsSync(candidate)) {
         pythonCmd = candidate;
         console.log('Using GSM_PYTHON_EXE override:', pythonCmd);
+      } else {
+        console.log('GSM_PYTHON_EXE is set but path not found:', candidate);
       }
     } catch (e) { /* ignore */ }
   }
 
-  if (fs.existsSync(venvPython)) {
+  // 2) repo venv
+  if (!pythonCmd && fs.existsSync(venvPython)) {
     pythonCmd = venvPython;
-  } else if (process.platform === 'win32') {
-    // Prefer the py launcher on Windows when no venv is available (py -3 selects a Python 3 interpreter)
+    console.log('Using repo .venv python:', pythonCmd);
+  }
+
+  // 3) try 'py -3' on Windows
+  if (!pythonCmd && process.platform === 'win32') {
     try {
-      // Check if 'py' exists in PATH by attempting to run 'py -3 -V'
-      execSync('py -3 -V', { stdio: 'ignore' });
-      pythonCmd = 'py';
-      pythonExtraArgs = ['-3'];
+      const probe = spawnSync('py', ['-3', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+      if (!probe.error && probe.status === 0) {
+        pythonCmd = 'py';
+        pythonPrefixArgs = ['-3'];
+        console.log('Using py -3 launcher for Python');
+      } else {
+        console.log('py -3 probe failed or not available');
+      }
     } catch (e) {
-      // fallback to 'python' on PATH
-      pythonCmd = 'python';
+      // ignore
     }
   }
 
-  const pyArgs = pythonExtraArgs.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
+  // 4) fallback to 'python' on PATH
+  if (!pythonCmd) {
+    try {
+      const probe2 = spawnSync('python', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+      if (!probe2.error && probe2.status === 0) {
+        pythonCmd = 'python';
+        console.log('Using python from PATH');
+      } else {
+        console.log('python probe failed; no python found on PATH');
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  if (!pythonCmd) {
+    console.error('No Python interpreter found. Set GSM_PYTHON_EXE to an absolute python path or install Python and ensure py/python is on PATH.');
+    return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
+  }
+
+  const pyArgs = pythonPrefixArgs.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
   if (projectFolder) {
     // Also tell the Python side where to put per-project outputs and where the
     // project image lives.
