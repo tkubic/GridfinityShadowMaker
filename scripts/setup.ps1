@@ -108,11 +108,31 @@ if (-not $SkipFrontendInstall) {
         if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
             Write-Warning "npm not found on PATH; please install Node.js/npm and run 'npm install' in frontend/."
         } else {
-            if (Test-Path "package-lock.json") {
-                Invoke-LoggedCommand -Exe 'npm' -Arguments @('ci') -LogFile $frontendLog | Out-Null
-            } else {
-                Invoke-LoggedCommand -Exe 'npm' -Arguments @('install') -LogFile $frontendLog | Out-Null
-            }
+                # Choose install command (prefer ci when lockfile present)
+                $npmArgs = if (Test-Path "package-lock.json") { @('ci') } else { @('install') }
+                $ok = Invoke-LoggedCommand -Exe 'npm' -Arguments $npmArgs -LogFile $frontendLog
+                if (-not $ok) {
+                    # Inspect recent log lines for common Windows file-lock / EPERM errors
+                    $tail = Get-Content $frontendLog -Tail 80 -ErrorAction SilentlyContinue | Out-String
+                    if ($tail -match 'EPERM' -or $tail -match '\-4048' -or $tail -match 'EBUSY') {
+                        Write-Warning "Detected EPERM/locked-file error during frontend npm install. Attempting automated recovery..."
+                        # Stop any running node processes that may hold file handles
+                        Get-Process node -ErrorAction SilentlyContinue | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {} }
+                        # Remove node_modules and retry install
+                        if (Test-Path "node_modules") {
+                            try { Remove-Item -Recurse -Force "node_modules" -ErrorAction SilentlyContinue } catch {}
+                        }
+                        Write-Host "Retrying npm $($npmArgs -join ' ') after cleanup..."
+                        $ok2 = Invoke-LoggedCommand -Exe 'npm' -Arguments $npmArgs -LogFile $frontendLog
+                        if (-not $ok2) {
+                            Write-Warning "Retry of frontend npm install failed. See $frontendLog for details."
+                        } else {
+                            Write-Host "Frontend npm install succeeded after recovery."
+                        }
+                    } else {
+                        Write-Warning "Frontend npm install failed; see $frontendLog"
+                    }
+                }
         }
         Pop-Location
     } else {
