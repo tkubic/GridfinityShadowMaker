@@ -3,7 +3,7 @@ scripts/check-prereqs.ps1
 
 Quick prereqs checker for Windows developers. Detects:
  - Python or py launcher and version
- - repo .venv and packages (ezdxf, cv2, Pillow, pyperclip)
+ - repo .venv and packages (ezdxf, cv2, Pillow, pyperclip, numpy)
  - Node and npm
  - OpenSCAD CLI
  - Visual C++ build tools (cl.exe on PATH)
@@ -14,55 +14,69 @@ Run from the repository root:
 
 param()
 
-function Write-Status($name, $ok, $msg = '') {
-    if ($ok) { Write-Host "[OK]    $name" -ForegroundColor Green }
-    else { Write-Host "[MISSING] $name - $msg" -ForegroundColor Yellow }
+function Write-Status {
+    param(
+        [string]$Name,
+        [bool]$Ok,
+        [string]$Msg = ''
+    )
+    if ($Ok) {
+        Write-Host "[OK]    $Name" -ForegroundColor Green
+    } else {
+        Write-Host "[MISSING] $Name - $Msg" -ForegroundColor Yellow
+    }
 }
 
-Push-Location -ErrorAction SilentlyContinue (Split-Path -Parent $MyInvocation.MyCommand.Definition) | Out-Null
-Set-Location (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) '..')
+# Change directory to repo root (one level above this script)
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+try { Push-Location -ErrorAction Stop $scriptDir | Out-Null } catch { }
+try { Set-Location (Resolve-Path (Join-Path $scriptDir '..')) } catch { }
 
-$repoRoot = Get-Location
+$repoRoot = (Get-Location).Path
 Write-Host "Checking prerequisites in repository: $repoRoot`n"
 
-# Find Python launcher
+## Determine Python interpreter to use. Prefer repo venv when available.
+$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 $pythonCmd = $null
-if (Get-Command python -ErrorAction SilentlyContinue) { $pythonCmd = 'python' }
-elseif (Get-Command py -ErrorAction SilentlyContinue) { $pythonCmd = 'py' }
+if (Test-Path $venvPython) {
+    $pythonCmd = $venvPython
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $pythonCmd = (Get-Command python).Source
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    # prefer 'py -3' launcher when explicit path not available
+    $pythonCmd = 'py -3'
+}
 
 if (-not $pythonCmd) {
     Write-Status 'Python (python/py on PATH)' $false 'Install Python 3.10+ from https://python.org and enable "Add Python to PATH".'
 } else {
     try {
-        $ver = & $pythonCmd -c "import sys; v=sys.version_info; print(f'{v[0]}.{v[1]}.{v[2]}')" 2>$null
-        $ver = $ver.Trim()
+        function Invoke-Python {
+            param([string[]]$Args)
+            if ($pythonCmd -eq 'py -3') { & py -3 @Args } else { & $pythonCmd @Args }
+        }
+        $verOut = Invoke-Python -Args @('-c', "import sys; v=sys.version_info; print(f'{v[0]}.{v[1]}.{v[2]}')") 2>$null
+        $ver = $verOut -join "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -First 1
+        if (-not $ver) { throw 'no-version' }
         $parts = $ver.Split('.') | ForEach-Object { [int]$_ }
         $ok = ($parts[0] -gt 3) -or (($parts[0] -eq 3) -and ($parts[1] -ge 10))
-        Write-Status "Python ($pythonCmd) version $ver" $ok (if ($ok) { '' } else { 'Requires Python 3.10+' })
+        Write-Status "Python (interpreter: $pythonCmd) version $ver" $ok (if ($ok) { '' } else { 'Requires Python 3.10+' })
     } catch {
-        Write-Status "Python ($pythonCmd)" $false 'Could not run python to check version.'
+        Write-Status "Python (interpreter: $pythonCmd)" $false 'Could not run python to check version.'
     }
 }
 
-# Check repository venv
-$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
-if (Test-Path $venvPython) {
-    Write-Status '.venv present' $true "Using $venvPython"
-    $checkerPython = $venvPython
-} else {
-    Write-Status '.venv present' $false 'Run .\scripts\setup.ps1 to create .venv'
-    $checkerPython = $pythonCmd
-}
+## Which python to use for import checks
+$checkerPython = $pythonCmd
+if (Test-Path $venvPython) { $checkerPython = $venvPython }
 
-# Check common Python packages by attempting to import via the chosen python
 if ($checkerPython) {
     $pkgs = @('ezdxf','cv2','PIL','pyperclip','numpy')
     $installed = @()
-    $missing = @()
-    foreach ($p in $pkgs) { $missing += $p }
+    $missing = $pkgs.Clone()
     try {
-        $code = @"
-import importlib,sys
+        $pyCode = @'
+import importlib.util
 pkgs = ['ezdxf','cv2','PIL','pyperclip','numpy']
 ok = []
 for p in pkgs:
@@ -73,10 +87,14 @@ for p in pkgs:
     except Exception:
         pass
 print(','.join(ok))
-"@
-        $out = & $checkerPython -c $code 2>$null
-        $out = $out.Trim()
-        if ($out) { $installed = $out.Split(',') } else { $installed = @() }
+'@
+        function Invoke-CheckerPython {
+            param([string[]]$Args)
+            if ($checkerPython -eq 'py -3' -or $pythonCmd -eq 'py -3') { & py -3 @Args } else { & $checkerPython @Args }
+        }
+        $out = Invoke-CheckerPython -Args @('-c', $pyCode) 2>$null
+        $out = ($out -join "`n").Trim()
+        if ($out) { $installed = $out -split ',' } else { $installed = @() }
         foreach ($i in $installed) { $missing = $missing | Where-Object { $_ -ne $i } }
         foreach ($i in $installed) { Write-Status "Python package: $i" $true }
         foreach ($m in $missing) { Write-Status "Python package: $m" $false 'Not importable in chosen interpreter' }
@@ -87,13 +105,13 @@ print(','.join(ok))
     Write-Host 'Skipping Python package checks because no Python interpreter found.' -ForegroundColor Yellow
 }
 
-# Check Node & npm
+## Node & npm
 $node = Get-Command node -ErrorAction SilentlyContinue
 $npm = Get-Command npm -ErrorAction SilentlyContinue
 Write-Status 'Node.js (node on PATH)' ($node -ne $null) (if ($node) { $node.Source } else { 'Install Node.js (https://nodejs.org/) or nvm-windows' })
 Write-Status 'npm (npm on PATH)' ($npm -ne $null) (if ($npm) { $npm.Source } else { 'Install Node.js to get npm, or ensure npm is on PATH' })
 
-# Check OpenSCAD
+## OpenSCAD
 $openScadEnv = $env:OPENSCAD_BIN
 $openscadCmd = $null
 if ($openScadEnv -and (Test-Path $openScadEnv)) { $openscadCmd = $openScadEnv }
@@ -103,16 +121,18 @@ else {
 }
 Write-Status 'OpenSCAD CLI' ($openscadCmd -ne $null) (if ($openscadCmd) { $openscadCmd } else { 'Install OpenSCAD and ensure openscad.com is on PATH, or set OPENSCAD_BIN env var' })
 
-# Check Visual C++ Build Tools (cl.exe) presence
+## MSVC toolchain
 $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
 Write-Status 'MSVC toolchain (cl.exe on PATH)' ($cl -ne $null) (if ($cl) { $cl.Source } else { 'If pip builds fail, install "Build Tools for Visual Studio" (C++ build tools)' })
 
-Write-Host "`nSummary & suggestions:`
+$summary = @"
+Summary & suggestions:
  - If Python packages are missing in the venv, run:  .\scripts\setup.ps1  and check pip-install.log
  - If OpenSCAD missing, install from https://openscad.org and add openscad.com to PATH
  - If Node/npm missing or failing, install Node.js from https://nodejs.org or use nvm-windows
  - If pip builds fail (compiling extensions), install Visual C++ Build Tools
-" -ForegroundColor Cyan
+"@
+Write-Host $summary -ForegroundColor Cyan
 
 Pop-Location -ErrorAction SilentlyContinue | Out-Null
 

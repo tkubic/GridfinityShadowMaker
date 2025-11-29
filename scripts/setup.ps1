@@ -5,8 +5,7 @@ Usage: run from repository root in PowerShell (preferably as Administrator if
 you need to modify system PATHs).
 
 This script:
-- creates a `.venv` Python virtual environment if missing
-- activates the venv for the duration of the script
+- installs Python packages from `requirements.txt` using the system Python (no automatic `.venv`)
 - upgrades pip and installs `requirements.txt`
 - runs `npm install` in `frontend/` if a `package.json` exists
 
@@ -23,78 +22,25 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
 
-Write-Host "Setting up Python venv in: $RepoRoot"
+Write-Host "Setting up Python (system interpreter will be used; no .venv) in: $RepoRoot"
 
-# Detect available Python launcher: prefer 'python', fall back to the 'py' launcher
-$PythonLauncher = $null
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    $PythonLauncher = 'python'
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    # Use 'py -3' to ensure Python 3 is selected
-    $PythonLauncher = 'py'
-    
+## Detect system Python interpreter to use for pip installs. Prefer the
+## 'py' launcher with -3 (if available) to ensure a Python 3 interpreter,
+## otherwise prefer the 'python' on PATH.
+$PythonExe = $null
+$PythonArgs = @()
+if (Get-Command py -ErrorAction SilentlyContinue) {
+    $PythonExe = 'py'
+    $PythonArgs = @('-3')
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $PythonExe = (Get-Command python).Source
+    $PythonArgs = @()
 } else {
     Write-Error "Python is not found on PATH. Install Python 3.10+ from python.org and re-run this script."
     exit 1
 }
 
-if (-not (Test-Path ".venv")) {
-    Write-Host "Creating virtual environment .venv..."
-    if ($PythonLauncher -eq 'py') {
-        & py -3 -m venv .venv
-    } else {
-        & python -m venv .venv
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to create virtual environment using $PythonLauncher. Aborting."
-        exit 1
-    }
-} else {
-    Write-Host "Virtual environment already exists: .venv"
-}
-
-# Install Python dependencies using the venv python executable so activation
-# is not required in this script. This avoids depending on the Activate.ps1
-# script being present in interactive shells.
-$VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-function Test-VenvPythonWorking {
-    param([string]$ExePath)
-    try {
-        $out = & $ExePath -c "import sys; print(sys.version_info[:3])" 2>$null
-        return $true
-    } catch {
-        return $false
-    }
-}
-
-# If the venv python is missing or doesn't run (e.g. system Python was uninstalled
-# or the venv was created with a different interpreter), recreate the venv so it
-# matches the current system python launcher.
-if (-not (Test-Path $VenvPython) -or -not (Test-VenvPythonWorking -ExePath $VenvPython)) {
-    Write-Warning "Existing virtual environment is missing or broken; recreating .venv using current Python launcher ($PythonLauncher)."
-    if (Test-Path ".venv") {
-        try {
-            Remove-Item -Recurse -Force ".venv"
-        } catch {
-            Write-Warning "Could not remove existing .venv. Try removing it manually and re-run this script. Error: $_"
-            Write-Host "Continuing and attempting to create venv anyway..."
-        }
-    }
-    if ($PythonLauncher -eq 'py') {
-        & py -3 -m venv .venv
-    } else {
-        & python -m venv .venv
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to create virtual environment using $PythonLauncher. Aborting."
-        exit 1
-    }
-}
-else {
-    Write-Host "Using existing virtual environment python: $VenvPython"
-}
-
-Write-Host "Installing Python dependencies using: $VenvPython"
+Write-Host "Using Python executable: $PythonExe $($PythonArgs -join ' ')"
 
 function Invoke-LoggedCommand {
     param(
@@ -117,7 +63,8 @@ function Invoke-LoggedCommand {
 # Upgrade pip/setuptools/wheel to prefer binary wheels
 $pipLog = Join-Path $RepoRoot "pip-install.log"
 Write-Host "Upgrading pip/setuptools/wheel (log: $pipLog)"
-if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--upgrade','pip','setuptools','wheel') -LogFile $pipLog)) {
+$upgradeArgs = $PythonArgs + @('-m','pip','install','--upgrade','pip','setuptools','wheel')
+if (-not (Invoke-LoggedCommand -Exe $PythonExe -Arguments $upgradeArgs -LogFile $pipLog)) {
     Write-Warning "Failed to upgrade pip/setuptools/wheel; continuing but installs may fail. See $pipLog"
 }
 
@@ -125,14 +72,16 @@ if (-not (Test-Path "requirements.txt")) {
     Write-Warning "requirements.txt not found at repo root. Skipping pip install."
 } else {
     Write-Host "Installing Python packages from requirements.txt (see $pipLog for details)..."
-    if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary','-r','requirements.txt') -LogFile $pipLog)) {
+    $installArgs = $PythonArgs + @('-m','pip','install','--prefer-binary','-r','requirements.txt')
+    if (-not (Invoke-LoggedCommand -Exe $PythonExe -Arguments $installArgs -LogFile $pipLog)) {
         Write-Warning "Initial pip install failed. Attempting per-package installs to isolate failures."
         $failedPkgs = @()
         # Read package names from requirements.txt (ignore comments/blank lines)
         $reqs = Get-Content -Path (Join-Path $RepoRoot 'requirements.txt') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }
         foreach ($pkg in $reqs) {
             Write-Host "Installing individual package: $pkg"
-            if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary',$pkg) -LogFile $pipLog)) {
+            $singleArgs = $PythonArgs + @('-m','pip','install','--prefer-binary',$pkg)
+            if (-not (Invoke-LoggedCommand -Exe $PythonExe -Arguments $singleArgs -LogFile $pipLog)) {
                 Write-Warning "Package install failed: $pkg"
                 $failedPkgs += $pkg
             }
@@ -142,7 +91,7 @@ if (-not (Test-Path "requirements.txt")) {
             Write-Host "Common fixes:"
             Write-Host " - Ensure Visual C++ Build Tools / Redistributable are installed for building wheels where needed."
             Write-Host " - Try running pip manually in an elevated shell and inspect $pipLog."
-            Write-Host "Manual retry: & $VenvPython -m pip install -r requirements.txt"
+            Write-Host "Manual retry: & $PythonExe $($PythonArgs -join ' ') -m pip install -r requirements.txt"
         } else {
             Write-Host "Python packages installed successfully via per-package install."
         }
@@ -195,9 +144,8 @@ Write-Host "Setup complete. You can now launch the dashboard/launcher to start t
 Write-Host "To run the graphical launcher (Windows):"
 Write-Host "  - Double-click 'Launch GSM Server.py' in File Explorer, or"
 Write-Host "  - Run: python \"Launch GSM Server.py\" from the repository root"
-Write-Host "If you prefer to run servers manually, activate the venv in your shell and then run the backend/frontend commands as needed."
-Write-Host "Activate venv (PowerShell):"
-Write-Host "  . .\.venv\Scripts\Activate.ps1"
+Write-Host "If you prefer to run servers manually, you can run pip-installed tools using the system Python chosen above."
+Write-Host "To explicitly use a virtual environment instead, create and activate one with your preferred tools (optional)."
 
 # Report log files if they exist
 $logs = @('pip-install.log','frontend-npm.log','backend-npm.log') | ForEach-Object { Join-Path $RepoRoot $_ }
