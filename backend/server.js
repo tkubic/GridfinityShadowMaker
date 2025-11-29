@@ -256,8 +256,36 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   const repoRoot = path.join(__dirname, '..');
   // Prefer using the repository virtual environment python if it exists
   const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
-  const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
-  const pyArgs = [path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot];
+  let pythonCmd = 'python';
+  let pythonExtraArgs = [];
+
+  // Allow explicit override via env var for testing (e.g. GSM_PYTHON_EXE)
+  if (process.env.GSM_PYTHON_EXE) {
+    try {
+      const candidate = String(process.env.GSM_PYTHON_EXE);
+      if (fs.existsSync(candidate)) {
+        pythonCmd = candidate;
+        console.log('Using GSM_PYTHON_EXE override:', pythonCmd);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (fs.existsSync(venvPython)) {
+    pythonCmd = venvPython;
+  } else if (process.platform === 'win32') {
+    // Prefer the py launcher on Windows when no venv is available (py -3 selects a Python 3 interpreter)
+    try {
+      // Check if 'py' exists in PATH by attempting to run 'py -3 -V'
+      execSync('py -3 -V', { stdio: 'ignore' });
+      pythonCmd = 'py';
+      pythonExtraArgs = ['-3'];
+    } catch (e) {
+      // fallback to 'python' on PATH
+      pythonCmd = 'python';
+    }
+  }
+
+  const pyArgs = pythonExtraArgs.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
   if (projectFolder) {
     // Also tell the Python side where to put per-project outputs and where the
     // project image lives.
