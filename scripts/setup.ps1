@@ -47,12 +47,45 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 Write-Host "Installing Python dependencies using: $VenvPython"
-& $VenvPython -m pip install --upgrade pip
 
+# Ensure build/install tooling is up-to-date so binary wheels are preferred when available
+& $VenvPython -m pip install --upgrade pip setuptools wheel
+
+$pipLog = Join-Path $RepoRoot "pip-install.log"
 if (-not (Test-Path "requirements.txt")) {
     Write-Warning "requirements.txt not found at repo root. Skipping pip install."
 } else {
-    & $VenvPython -m pip install -r requirements.txt
+    Write-Host "Installing Python packages from requirements.txt (see $pipLog for details)..."
+    $installSucceeded = $true
+    try {
+        & $VenvPython -m pip install --prefer-binary -r requirements.txt *>&1 | Tee-Object -FilePath $pipLog
+    } catch {
+        $installSucceeded = $false
+    }
+
+    if (-not $installSucceeded) {
+        Write-Warning "Initial pip install failed. I'll attempt a best-effort retry for common binary packages (Pillow/opencv)."
+        try {
+            # Try installing commonly problematic packages with binary wheels explicitly
+            & $VenvPython -m pip install --prefer-binary Pillow opencv_python numpy *>&1 | Tee-Object -FilePath $pipLog -Append
+            # Retry full requirements using prefer-binary
+            & $VenvPython -m pip install --prefer-binary -r requirements.txt *>&1 | Tee-Object -FilePath $pipLog -Append
+            $installSucceeded = $true
+        } catch {
+            $installSucceeded = $false
+        }
+    }
+
+    if (-not $installSucceeded) {
+        Write-Warning "Python dependency installation encountered errors. See $pipLog for details."
+        Write-Host "Common fixes:"
+        Write-Host " - Make sure you have a recent pip/setuptools/wheel (we attempted to upgrade them)."
+        Write-Host " - Install Microsoft Build Tools / Visual C++ Redistributable if pip needs to compile wheels."
+        Write-Host " - Try installing Pillow/opencv_python via binaries, or install from the official Python installer (use same Python version as the venv)."
+        Write-Host "You can retry manually: `& $VenvPython -m pip install -r requirements.txt`"
+    } else {
+        Write-Host "Python packages installed successfully."
+    }
 }
 
 if (-not $SkipFrontendInstall) {
