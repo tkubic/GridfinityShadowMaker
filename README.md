@@ -65,12 +65,37 @@ project locally.
 
 # Quick Start (web + python)
 ---
-These steps assume you're on Windows (PowerShell) — adjust shell commands for
-macOS/Linux where appropriate.
+These steps assume you're on Windows (PowerShell).
 
 Prerequisites
-- Node.js (v16+ recommended) and npm or yarn
-- Python 3.10+ and pip
+
+Node.js (v16+ recommended) and npm
+- Official downloads & docs: https://nodejs.org/
+- Windows quick install (winget):
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+- Verify installation:
+   ```powershell
+   node --version
+   npm --version
+   ```
+
+Python 3.10+ and pip
+- Official downloads & docs: https://www.python.org/downloads/
+- Windows quick install (winget):
+   ```powershell
+   winget install --id=Python.Python.3 -e
+   ```
+- During installation, ensure "Add Python to PATH" is selected. Verify:
+   ```powershell
+   python --version
+   python -m pip --version
+   ```
+
+Notes
+- This repository's helper scripts are designed for Windows PowerShell. Use `.
+   scripts\setup.ps1` from the repository root to install dependencies and set up the environment.
 
 1) Run the setup script (installs Python and frontend dependencies)
 ```powershell
