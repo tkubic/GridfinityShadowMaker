@@ -55,12 +55,46 @@ shadow boards and STL/DXF assets.
 1. Bring into your favorite slicer
 2. Color, slice, print
 
-# Gridfinity Shadow Maker
-A toolchain for generating Gridfinity shadow boards from photos. The project
-is a web-first app with a lightweight Node.js backend that runs the Python
-image-processing pipeline.
+Python 3.10+ and pip
+- Official downloads & docs: https://www.python.org/downloads/
+- Recommended install: use the official python.org Windows installer
+   ```powershell
+   # Download and run the official Windows installer from:
+   # https://www.python.org/downloads/windows/
+   # During the installer, CHECK the "Add Python to PATH" checkbox before installing.
+   ```
 
-This README documents the web + Python developer setup and how to run the
+- Verify installation (open a new PowerShell window after installing):
+   ```powershell
+   python --version
+   python -m pip --version
+   ```
+
+Important: If you ran the installer from Command Prompt, close and re-open that Command Prompt (or PowerShell) before running the verification commands so PATH changes take effect.
+
+Notes:
+- We recommend the python.org installer so you get an explicit "Add Python to PATH" option and predictable behavior.
+- If you installed Python from the Microsoft Store or another source and `python` is not found in PowerShell, open a new PowerShell window and retry the verification commands above.
+- If `python` is still not found, you can add Python to the current session or permanently to your User PATH (replace the path with your actual install folder):
+
+   Temporary (current session only):
+   ```powershell
+   $env:Path += ';C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39;C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39\Scripts'
+   python --version
+   ```
+
+   Permanent (applies after you close and reopen PowerShell):
+   ```powershell
+   $pythonFolder = 'C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39'
+   $scriptsFolder = "$pythonFolder\Scripts"
+   $existing = [Environment]::GetEnvironmentVariable('Path','User')
+   if (-not ($existing -like "*$pythonFolder*")) {
+      [Environment]::SetEnvironmentVariable('Path', $existing + ';' + $pythonFolder + ';' + $scriptsFolder, 'User')
+      Write-Host "Appended $pythonFolder and Scripts to User PATH. Close and reopen PowerShell."
+   } else {
+      Write-Host "Python path already present in User PATH."
+   }
+   ```
 project locally.
 
 # Quick Start (web + python)
@@ -75,7 +109,7 @@ Node.js (v16+ recommended) and npm
    ```powershell
    winget install OpenJS.NodeJS.LTS
    ```
-- Verify installation:
+- Verify installation (run these in PowerShell — if you installed Node from Command Prompt, open a new PowerShell window before running):
    ```powershell
    node --version
    npm --version
@@ -85,13 +119,59 @@ Python 3.10+ and pip
 - Official downloads & docs: https://www.python.org/downloads/
 - Windows quick install (winget):
    ```powershell
+   # First, list available Python packages and note the exact Id shown
+   winget search python
+
+   # Use the exact Id from the search results when installing. Examples you may see:
+   winget install --id=Python.Python.3.11 -e
+   winget install --id=Python.Python.3.12 -e
+   winget install --id=Python.Python.3.13 -e
+
+   # If the search shows a generic Id such as 'Python.Python.3' you can install that too:
    winget install --id=Python.Python.3 -e
    ```
-- During installation, ensure "Add Python to PATH" is selected. Verify:
+- During installation, ensure "Add Python to PATH" is selected. If you installed via the Microsoft Store or an installer, open a new PowerShell window before verifying the install. Verify:
    ```powershell
    python --version
    python -m pip --version
    ```
+
+Notes:
+- `winget` manifests vary by system and region; `winget search python` shows the exact `Id` you should pass to `winget install` on your machine.
+- If `winget` fails or you prefer a GUI installer, download the official installer from python.org and enable "Add Python to PATH" during setup.
+- Some installers (including certain Microsoft Store or winget manifests) do not prompt to add Python to your PATH. If after installing Python you get a "python is not recognized" error in PowerShell, do one of the following:
+
+   1) Open a new PowerShell window (PATH changes apply only to new shells) and verify if `python` is now available:
+   ```powershell
+   python --version
+   python -m pip --version
+   ```
+
+   2) Temporarily add Python to the current PowerShell session (replace the path below with the folder that contains your `python.exe`):
+   ```powershell
+   # Example common locations; pick the one that exists on your machine
+   Test-Path "$env:LOCALAPPDATA\Programs\Python\Python39\python.exe"
+   Test-Path 'C:\Program Files\Python39\python.exe'
+
+   # If python.exe is at C:\Users\<You>\AppData\Local\Programs\Python\Python39, add it to this session's PATH:
+   $env:Path += ';C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39;C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39\Scripts'
+   python --version
+   ```
+
+   3) Permanently add Python to your User PATH (replace the path with the one that matches your install). Run this in PowerShell and then close/reopen PowerShell:
+   ```powershell
+   $pythonFolder = 'C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39'
+   $scriptsFolder = "$pythonFolder\Scripts"
+   $existing = [Environment]::GetEnvironmentVariable('Path','User')
+   if (-not ($existing -like "*$pythonFolder*")) {
+      [Environment]::SetEnvironmentVariable('Path', $existing + ';' + $pythonFolder + ';' + $scriptsFolder, 'User')
+      Write-Host "Appended $pythonFolder and Scripts to User PATH. Close and reopen PowerShell."
+   } else {
+      Write-Host "Python path already present in User PATH."
+   }
+   ```
+
+   4) If you prefer a simpler developer workflow, consider installing `nvm-windows` and managing Node/Python versions via nvm or use the python.org installer which exposes an explicit "Add to PATH" option.
 
 Notes
 - This repository's helper scripts are designed for Windows PowerShell. Use `.

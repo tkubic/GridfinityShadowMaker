@@ -15,7 +15,8 @@ Run:
 #>
 
 Param(
-    [switch]$SkipFrontendInstall
+    [switch]$SkipFrontendInstall,
+    [switch]$NoPause
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -69,8 +70,37 @@ if (-not $SkipFrontendInstall) {
     }
 }
 
+# Install backend npm packages if present. This makes the setup idempotent
+# and ensures required server-side modules (e.g. express) are available.
+if (Test-Path "backend\package.json") {
+    Write-Host "Installing backend npm packages (backend/)..."
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Warning "npm not found on PATH; backend dependencies were not installed. Please install Node.js/npm and run 'npm install' in backend/."
+    } else {
+        Push-Location backend
+        # npm install is idempotent; safe to run multiple times
+        npm install
+        Pop-Location
+    }
+} else {
+    Write-Host "No backend/package.json; skipping backend npm install."
+}
+
 Write-Host "Setup complete. You can now launch the dashboard/launcher to start the servers."
 Write-Host "To run the graphical launcher (Windows):"
 Write-Host "  - Double-click 'Launch GSM Server.py' in File Explorer, or"
 Write-Host "  - Run: python .\"Launch GSM Server.py\""
 Write-Host "If you prefer to run servers manually, activate the venv in your shell:\n  . .\.venv\Scripts\Activate.ps1"
+
+# By default, pause at the end so users running the script by double-click
+# or in a new terminal can read the output. Set -NoPause to skip this behavior
+# (useful for CI or scripted runs).
+if (-not $NoPause) {
+    Write-Host ""
+    Write-Host "Press Enter to close this window or Ctrl+C to cancel..."
+    try {
+        Read-Host | Out-Null
+    } catch {
+        # In non-interactive hosts Read-Host may fail; ignore and continue.
+    }
+}
