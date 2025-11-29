@@ -25,14 +25,30 @@ Set-Location $RepoRoot
 
 Write-Host "Setting up Python venv in: $RepoRoot"
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Error "Python is not found on PATH. Install Python 3.10+ and re-run this script."
+# Detect available Python launcher: prefer 'python', fall back to the 'py' launcher
+$PythonLauncher = $null
+if (Get-Command python -ErrorAction SilentlyContinue) {
+    $PythonLauncher = 'python'
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    # Use 'py -3' to ensure Python 3 is selected
+    $PythonLauncher = 'py'
+    
+} else {
+    Write-Error "Python is not found on PATH. Install Python 3.10+ from python.org and re-run this script."
     exit 1
 }
 
 if (-not (Test-Path ".venv")) {
     Write-Host "Creating virtual environment .venv..."
-    python -m venv .venv
+    if ($PythonLauncher -eq 'py') {
+        & py -3 -m venv .venv
+    } else {
+        & python -m venv .venv
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to create virtual environment using $PythonLauncher. Aborting."
+        exit 1
+    }
 } else {
     Write-Host "Virtual environment already exists: .venv"
 }
@@ -48,41 +64,52 @@ if (-not (Test-Path $VenvPython)) {
 
 Write-Host "Installing Python dependencies using: $VenvPython"
 
-# Ensure build/install tooling is up-to-date so binary wheels are preferred when available
-& $VenvPython -m pip install --upgrade pip setuptools wheel
+function Invoke-LoggedCommand {
+    param(
+        [string]$Exe,
+        [string[]]$Arguments,
+        [string]$LogFile
+    )
+    $cmd = "$Exe $($Arguments -join ' ')"
+    Write-Host "Running: $cmd"
+    # Ensure log file exists
+    if (-not (Test-Path $LogFile)) { New-Item -Path $LogFile -ItemType File -Force | Out-Null }
+    & $Exe @Arguments *>&1 | Tee-Object -FilePath $LogFile -Append
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Command failed (exit code $LASTEXITCODE): $cmd"
+        return $false
+    }
+    return $true
+}
 
+# Upgrade pip/setuptools/wheel to prefer binary wheels
 $pipLog = Join-Path $RepoRoot "pip-install.log"
+Write-Host "Upgrading pip/setuptools/wheel (log: $pipLog)"
+if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--upgrade','pip','setuptools','wheel') -LogFile $pipLog)) {
+    Write-Warning "Failed to upgrade pip/setuptools/wheel; continuing but installs may fail. See $pipLog"
+}
+
 if (-not (Test-Path "requirements.txt")) {
     Write-Warning "requirements.txt not found at repo root. Skipping pip install."
 } else {
     Write-Host "Installing Python packages from requirements.txt (see $pipLog for details)..."
-    $installSucceeded = $true
-    try {
-        & $VenvPython -m pip install --prefer-binary -r requirements.txt *>&1 | Tee-Object -FilePath $pipLog
-    } catch {
-        $installSucceeded = $false
-    }
-
-    if (-not $installSucceeded) {
-        Write-Warning "Initial pip install failed. I'll attempt a best-effort retry for common binary packages (Pillow/opencv)."
-        try {
-            # Try installing commonly problematic packages with binary wheels explicitly
-            & $VenvPython -m pip install --prefer-binary Pillow opencv_python numpy *>&1 | Tee-Object -FilePath $pipLog -Append
-            # Retry full requirements using prefer-binary
-            & $VenvPython -m pip install --prefer-binary -r requirements.txt *>&1 | Tee-Object -FilePath $pipLog -Append
-            $installSucceeded = $true
-        } catch {
-            $installSucceeded = $false
+    if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary','-r','requirements.txt') -LogFile $pipLog)) {
+        Write-Warning "Initial pip install failed. Attempting targeted retries for common binary packages."
+        # Try targeted install attempts
+        $retryPkgs = @('Pillow','opencv_python','numpy')
+        if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments ( @('-m','pip','install','--prefer-binary') + $retryPkgs ) -LogFile $pipLog)) {
+            Write-Warning "Targeted package install also failed. See $pipLog for details."
         }
-    }
-
-    if (-not $installSucceeded) {
-        Write-Warning "Python dependency installation encountered errors. See $pipLog for details."
-        Write-Host "Common fixes:"
-        Write-Host " - Make sure you have a recent pip/setuptools/wheel (we attempted to upgrade them)."
-        Write-Host " - Install Microsoft Build Tools / Visual C++ Redistributable if pip needs to compile wheels."
-        Write-Host " - Try installing Pillow/opencv_python via binaries, or install from the official Python installer (use same Python version as the venv)."
-        Write-Host "You can retry manually: `& $VenvPython -m pip install -r requirements.txt`"
+        # Retry full requirements once more
+        if (-not (Invoke-LoggedCommand -Exe $VenvPython -Arguments @('-m','pip','install','--prefer-binary','-r','requirements.txt') -LogFile $pipLog)) {
+            Write-Warning "Retry of full requirements failed. See $pipLog for details."
+            Write-Host "Common fixes:"
+            Write-Host " - Ensure Visual C++ Build Tools / Redistributable are installed for building wheels where needed."
+            Write-Host " - Try running pip manually in an elevated shell and inspect $pipLog."
+            Write-Host "Manual retry: & $VenvPython -m pip install -r requirements.txt"
+        } else {
+            Write-Host "Python packages installed successfully on retry."
+        }
     } else {
         Write-Host "Python packages installed successfully."
     }
@@ -92,10 +119,15 @@ if (-not $SkipFrontendInstall) {
     if (Test-Path "frontend\package.json") {
         Write-Host "Installing frontend npm packages (frontend/)..."
         Push-Location frontend
+        $frontendLog = Join-Path $RepoRoot "frontend-npm.log"
         if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
             Write-Warning "npm not found on PATH; please install Node.js/npm and run 'npm install' in frontend/."
         } else {
-            npm install
+            if (Test-Path "package-lock.json") {
+                Invoke-LoggedCommand -Exe 'npm' -Arguments @('ci') -LogFile $frontendLog | Out-Null
+            } else {
+                Invoke-LoggedCommand -Exe 'npm' -Arguments @('install') -LogFile $frontendLog | Out-Null
+            }
         }
         Pop-Location
     } else {
@@ -110,9 +142,13 @@ if (Test-Path "backend\package.json") {
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
         Write-Warning "npm not found on PATH; backend dependencies were not installed. Please install Node.js/npm and run 'npm install' in backend/."
     } else {
+        $backendLog = Join-Path $RepoRoot "backend-npm.log"
         Push-Location backend
-        # npm install is idempotent; safe to run multiple times
-        npm install
+        if (Test-Path "package-lock.json") {
+            Invoke-LoggedCommand -Exe 'npm' -Arguments @('ci') -LogFile $backendLog | Out-Null
+        } else {
+            Invoke-LoggedCommand -Exe 'npm' -Arguments @('install') -LogFile $backendLog | Out-Null
+        }
         Pop-Location
     }
 } else {
@@ -122,8 +158,16 @@ if (Test-Path "backend\package.json") {
 Write-Host "Setup complete. You can now launch the dashboard/launcher to start the servers."
 Write-Host "To run the graphical launcher (Windows):"
 Write-Host "  - Double-click 'Launch GSM Server.py' in File Explorer, or"
-Write-Host "  - Run: python .\"Launch GSM Server.py\""
-Write-Host "If you prefer to run servers manually, activate the venv in your shell:\n  . .\.venv\Scripts\Activate.ps1"
+Write-Host "  - Run: python \"Launch GSM Server.py\" from the repository root"
+Write-Host "If you prefer to run servers manually, activate the venv in your shell and then run the backend/frontend commands as needed."
+Write-Host "Activate venv (PowerShell):"
+Write-Host "  . .\.venv\Scripts\Activate.ps1"
+
+# Report log files if they exist
+$logs = @('pip-install.log','frontend-npm.log','backend-npm.log') | ForEach-Object { Join-Path $RepoRoot $_ }
+foreach ($log in $logs) {
+    if (Test-Path $log) { Write-Host "Log available: $log" }
+}
 
 # By default, pause at the end so users running the script by double-click
 # or in a new terminal can read the output. Set -NoPause to skip this behavior
