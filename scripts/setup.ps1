@@ -36,14 +36,22 @@ if (-not (Test-Path ".venv")) {
     Write-Host "Virtual environment already exists: .venv"
 }
 
-Write-Host "Activating .venv and installing Python dependencies..."
-& ".\.venv\Scripts\Activate.ps1"
-python -m pip install --upgrade pip
+# Install Python dependencies using the venv python executable so activation
+# is not required in this script. This avoids depending on the Activate.ps1
+# script being present in interactive shells.
+$VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $VenvPython)) {
+    Write-Warning "Virtualenv python not found at $VenvPython. Falling back to system 'python'."
+    $VenvPython = 'python'
+}
+
+Write-Host "Installing Python dependencies using: $VenvPython"
+& $VenvPython -m pip install --upgrade pip
 
 if (-not (Test-Path "requirements.txt")) {
     Write-Warning "requirements.txt not found at repo root. Skipping pip install."
 } else {
-    pip install -r requirements.txt
+    & $VenvPython -m pip install -r requirements.txt
 }
 
 if (-not $SkipFrontendInstall) {
@@ -61,4 +69,8 @@ if (-not $SkipFrontendInstall) {
     }
 }
 
-Write-Host "Setup complete. To activate the venv in your interactive shell run:`n. .\\.venv\\Scripts\\Activate.ps1`"
+Write-Host "Setup complete. You can now launch the dashboard/launcher to start the servers."
+Write-Host "To run the graphical launcher (Windows):"
+Write-Host "  - Double-click 'Launch GSM Server.py' in File Explorer, or"
+Write-Host "  - Run: python .\"Launch GSM Server.py\""
+Write-Host "If you prefer to run servers manually, activate the venv in your shell:\n  . .\.venv\Scripts\Activate.ps1"

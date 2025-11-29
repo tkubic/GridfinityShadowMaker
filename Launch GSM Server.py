@@ -61,6 +61,94 @@ def make_command_list(cmd_str: str):
 REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
 
 
+def find_pids_by_port(port: int):
+    """Return a list of PIDs listening on the given TCP port (best-effort).
+    Uses platform tools: `netstat -ano` on Windows, `lsof` or `ss` on POSIX.
+    This is a heuristic helper for cleaning up previously-running servers.
+    """
+    pids = set()
+    try:
+        if os.name == 'nt':
+            # Try using PowerShell's Get-NetTCPConnection (more reliable)
+            try:
+                out = subprocess.check_output([
+                    'powershell', '-NoProfile', '-Command',
+                    f"Get-NetTCPConnection -LocalPort {port} -State Listen | Select-Object -ExpandProperty OwningProcess"
+                ], stderr=subprocess.DEVNULL, text=True)
+                for line in out.splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        pids.add(int(line))
+            except Exception:
+                # Fallback to netstat parsing
+                cmd = 'netstat -ano -p tcp'
+                out = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True)
+                for line in out.splitlines():
+                    if f':{port} ' in line or f':{port}\r' in line or line.strip().endswith(f':{port}'):
+                        parts = line.split()
+                        if parts:
+                            pid = parts[-1]
+                            if pid.isdigit():
+                                pids.add(int(pid))
+        else:
+            # Try lsof first
+            try:
+                out = subprocess.check_output(['lsof', '-nP', f'-iTCP:{port}', '-sTCP:LISTEN'], stderr=subprocess.DEVNULL, text=True)
+                for line in out.splitlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        pids.add(int(parts[1]))
+            except Exception:
+                # Fallback to ss parsing
+                try:
+                    out = subprocess.check_output(['ss', '-ltnp'], stderr=subprocess.DEVNULL, text=True)
+                    for line in out.splitlines():
+                        if f':{port} ' in line or f':{port}\n' in line:
+                            m = re.search(r'pid=(\d+),', line)
+                            if m:
+                                pids.add(int(m.group(1)))
+                except Exception:
+                    pass
+    except subprocess.CalledProcessError:
+        pass
+    except Exception:
+        pass
+    return list(pids)
+
+
+def kill_pids(pids, logger=None):
+    """Kill the given PIDs. If `logger` is provided (a ProcessPanel), log actions."""
+    for pid in pids:
+        try:
+            if logger:
+                logger.log(f"[Killing process {pid}]\n")
+            if os.name == 'nt':
+                # Use taskkill for robust termination on Windows; include /T to kill child processes
+                try:
+                    subprocess.check_call(['taskkill', '/F', '/PID', str(pid), '/T'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if logger:
+                        logger.log(f"[Killed {pid}]\n")
+                except subprocess.CalledProcessError:
+                    if logger:
+                        logger.log(f"[taskkill failed for {pid}]\n")
+            else:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    if logger:
+                        logger.log(f"[Sent SIGTERM to {pid}]\n")
+                except Exception:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        if logger:
+                            logger.log(f"[Sent SIGKILL to {pid}]\n")
+                    except Exception:
+                        if logger:
+                            logger.log(f"[Failed to kill {pid}]\n")
+        except Exception:
+            if logger:
+                logger.log(f"[Failed to kill {pid}]\n")
+
+
 class ProcessPanel:
     def __init__(self, parent, title):
         self.frame = ttk.Frame(parent)
@@ -270,15 +358,16 @@ class TerminalDashboardApp:
         except Exception:
             pass
 
+        # Allow a 2x2 grid: two rows and two columns both grow
         root.rowconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
         root.columnconfigure(0, weight=1)
-        root.columnconfigure(1, weight=0)
+        root.columnconfigure(1, weight=1)
 
-        left_frame = ttk.Frame(root)
-        left_frame.grid(row=0, column=0, sticky="nsew")
-
-        left_pane = ttk.PanedWindow(left_frame, orient="vertical")
-        left_pane.pack(fill="both", expand=True)
+        # Left panes: use a vertical split that will occupy the left column
+        # of a 2x2 grid (rows 0..1, column 0)
+        left_pane = ttk.PanedWindow(root, orient="vertical")
+        left_pane.grid(row=0, column=0, rowspan=2, sticky="nsew")
 
         self.frontend_panel = ProcessPanel(left_pane, "Frontend Server")
         self.backend_panel = ProcessPanel(left_pane, "Backend Server")
@@ -286,21 +375,35 @@ class TerminalDashboardApp:
         left_pane.add(self.frontend_panel.frame, weight=1)
         left_pane.add(self.backend_panel.frame, weight=1)
 
-        # Right controls
+        # Right controls: split into two stacked rows so they align with left pane halves
         right_frame = ttk.Frame(root, padding=10)
-        right_frame.grid(row=0, column=1, sticky="nsew")
-        # allow rows so frontend/backend controls can align with the left panes
+        right_frame.grid(row=0, column=1, rowspan=2, sticky="nsew")
+        right_frame.columnconfigure(0, weight=1)
         right_frame.rowconfigure(0, weight=1)
         right_frame.rowconfigure(1, weight=1)
-        right_frame.rowconfigure(2, weight=0)
-        right_frame.columnconfigure(0, weight=1)
-        # Split controls into frontend (top) and backend (bottom)
-        ttk.Label(right_frame, text="Controls", font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky='nw', pady=(0, 6))
 
-        top_controls = ttk.LabelFrame(right_frame, text="Frontend")
-        top_controls.grid(row=0, column=0, sticky='nw', pady=(4, 8))
-        btn_start_frontend = ttk.Button(top_controls, text="Start Frontend", command=self.start_frontend)
-        btn_start_frontend.pack(fill="x", pady=4, padx=6)
+        # Top-right container: Controls header, Start bar, Frontend controls
+        top_container = ttk.Frame(right_frame)
+        top_container.grid(row=0, column=0, sticky='nsew')
+        top_container.columnconfigure(0, weight=1)
+
+        ttk.Label(top_container, text="Controls", font=("Segoe UI", 11, "bold")).grid(row=0, column=0, sticky='nw', pady=(0, 6))
+
+        top_bar = ttk.Frame(top_container)
+        top_bar.grid(row=1, column=0, sticky='ew', pady=(0, 8))
+        top_bar.columnconfigure(0, weight=1)
+        btn_start_servers = ttk.Button(top_bar, text="Start Servers", command=self.start_servers)
+        btn_start_servers.grid(row=0, column=0, sticky='w', padx=(0,6))
+        status_frame = ttk.Frame(top_bar)
+        status_frame.grid(row=0, column=1, sticky='e')
+        self._status_canvas = tk.Canvas(status_frame, width=14, height=14, highlightthickness=0)
+        self._status_canvas.grid(row=0, column=0, padx=(0,6))
+        self._status_indicator = self._status_canvas.create_oval(2, 2, 12, 12, fill='red')
+        ttk.Label(status_frame, text="Server Status").grid(row=0, column=1)
+
+        top_controls = ttk.LabelFrame(top_container, text="Frontend")
+        top_controls.grid(row=2, column=0, sticky='nsew', padx=(0,6), pady=(4,8))
+        top_controls.columnconfigure(0, weight=1)
         btn_restart_frontend = ttk.Button(top_controls, text="Restart Frontend", command=self.restart_frontend)
         btn_restart_frontend.pack(fill="x", pady=4, padx=6)
         btn_stop_frontend = ttk.Button(top_controls, text="Stop Frontend", command=self.stop_frontend)
@@ -308,10 +411,14 @@ class TerminalDashboardApp:
         btn_clear_frontend = ttk.Button(top_controls, text="Clear Frontend Log", command=self.clear_frontend)
         btn_clear_frontend.pack(fill="x", pady=(0,4), padx=6)
 
-        bottom_controls = ttk.LabelFrame(right_frame, text="Backend")
-        bottom_controls.grid(row=1, column=0, sticky='nw', pady=(0, 8))
-        btn_start_backend = ttk.Button(bottom_controls, text="Start Backend", command=self.start_backend)
-        btn_start_backend.pack(fill="x", pady=4, padx=6)
+        # Bottom-right container: Backend controls and launch/help
+        bottom_container = ttk.Frame(right_frame)
+        bottom_container.grid(row=1, column=0, sticky='nsew')
+        bottom_container.columnconfigure(0, weight=1)
+
+        bottom_controls = ttk.LabelFrame(bottom_container, text="Backend")
+        bottom_controls.grid(row=0, column=0, sticky='nsew', pady=(4,8))
+        bottom_controls.columnconfigure(0, weight=1)
         btn_restart_backend = ttk.Button(bottom_controls, text="Restart Backend", command=self.restart_backend)
         btn_restart_backend.pack(fill="x", pady=4, padx=6)
         btn_stop_backend = ttk.Button(bottom_controls, text="Stop Backend", command=self.stop_backend)
@@ -319,11 +426,16 @@ class TerminalDashboardApp:
         btn_clear_backend = ttk.Button(bottom_controls, text="Clear Backend Log", command=self.clear_backend)
         btn_clear_backend.pack(fill="x", pady=(0,4), padx=6)
 
-        # Launch button placed above the helper label
-        btn_launch = ttk.Button(right_frame, text="Launch App", command=self.launch_app)
-        btn_launch.grid(row=2, column=0, sticky='sew', pady=(6, 4))
+        # Launch button and helper text placed under backend controls, aligned with bottom-right
+        btn_launch = ttk.Button(bottom_container, text="Launch App", command=self.launch_app)
+        btn_launch.grid(row=1, column=0, sticky='sew', pady=(6, 4))
+        ttk.Label(bottom_container, text="(Uses PowerShell scripts or commands)", font=("Segoe UI", 8)).grid(row=2, column=0, sticky='nw', pady=(6, 0))
 
-        ttk.Label(right_frame, text="(Uses PowerShell scripts or commands)", font=("Segoe UI", 8)).grid(row=3, column=0, sticky='nw', pady=(6, 0))
+        # Launch button placed below controls
+        btn_launch = ttk.Button(right_frame, text="Launch App", command=self.launch_app)
+        btn_launch.grid(row=4, column=0, sticky='sew', pady=(6, 4))
+
+        ttk.Label(right_frame, text="(Uses PowerShell scripts or commands)", font=("Segoe UI", 8)).grid(row=5, column=0, sticky='nw', pady=(6, 0))
 
         # Poll queues
         self._schedule_queue_poll()
@@ -333,7 +445,22 @@ class TerminalDashboardApp:
     def _schedule_queue_poll(self):
         self.frontend_panel.poll_queue()
         self.backend_panel.poll_queue()
+        self._update_status()
         self.root.after(100, self._schedule_queue_poll)
+
+    def _update_status(self):
+        """Update the server status indicator: green when both servers are running."""
+        try:
+            fproc = self.frontend_panel.process
+            bproc = self.backend_panel.process
+            running = (fproc is not None and fproc.poll() is None) and (bproc is not None and bproc.poll() is None)
+            color = 'green' if running else 'red'
+            try:
+                self._status_canvas.itemconfig(self._status_indicator, fill=color)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def start_frontend(self):
         cmd_list = make_command_list(FRONTEND_CMD)
@@ -386,6 +513,37 @@ class TerminalDashboardApp:
 
     def restart_backend(self):
         self.backend_panel.start_process(make_command_list(BACKEND_CMD))
+
+    def start_servers(self):
+        """Start both frontend and backend servers."""
+        try:
+            self.frontend_panel.log('[Starting both servers]\n')
+        except Exception:
+            pass
+
+        # Kill any existing processes listening on the expected ports
+        # Frontend default port: 5173, Backend default port: 5000
+        try:
+            f_pids = find_pids_by_port(5173)
+            b_pids = find_pids_by_port(5000)
+            if f_pids:
+                self.frontend_panel.log(f"[Found existing frontend PIDs on 5173: {f_pids}]\n")
+                kill_pids(f_pids, logger=self.frontend_panel)
+            if b_pids:
+                self.backend_panel.log(f"[Found existing backend PIDs on 5000: {b_pids}]\n")
+                kill_pids(b_pids, logger=self.backend_panel)
+        except Exception:
+            pass
+
+        # Start frontend then backend
+        try:
+            self.start_frontend()
+        except Exception:
+            pass
+        try:
+            self.start_backend()
+        except Exception:
+            pass
 
     def launch_app(self):
         url = os.environ.get('GSM_LAUNCH_URL', 'http://localhost:5173/')
