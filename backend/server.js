@@ -2,10 +2,60 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, spawnSync } = require('child_process');
 
 const app = express();
 const REPO_ROOT = path.join(__dirname, '..');
+
+// Helper: find an available Python command to run. Returns an object { cmd, args }
+// or null if none found. Order: GSM_PYTHON_EXE -> repo .venv -> py -3 (probe) -> python on PATH (probe).
+function findPythonCmd(repoRoot) {
+  const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+  let pythonCmd = null;
+  let pythonArgs = [];
+
+  if (process.env.GSM_PYTHON_EXE) {
+    try {
+      const candidate = String(process.env.GSM_PYTHON_EXE);
+      if (fs.existsSync(candidate)) {
+        pythonCmd = candidate;
+        console.log('Using GSM_PYTHON_EXE override:', pythonCmd);
+        return { cmd: pythonCmd, args: pythonArgs };
+      } else {
+        console.log('GSM_PYTHON_EXE set but path not found:', candidate);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (fs.existsSync(venvPython)) {
+    pythonCmd = venvPython;
+    console.log('Using repo .venv python:', pythonCmd);
+    return { cmd: pythonCmd, args: pythonArgs };
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      const probe = spawnSync('py', ['-3', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+      if (!probe.error && probe.status === 0) {
+        pythonCmd = 'py';
+        pythonArgs = ['-3'];
+        console.log('Using py -3 launcher for Python');
+        return { cmd: pythonCmd, args: pythonArgs };
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  try {
+    const probe2 = spawnSync('python', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+    if (!probe2.error && probe2.status === 0) {
+      pythonCmd = 'python';
+      console.log('Using python from PATH');
+      return { cmd: pythonCmd, args: pythonArgs };
+    }
+  } catch (e) { /* ignore */ }
+
+  return null;
+}
 
 // Simple Server-Sent Events (SSE) clients registry for render notifications
 const sseClients = new Set();
@@ -631,9 +681,11 @@ app.post('/export-dxfs', async (req, res) => {
       }
     }
 
-    const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
-    const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
-    const py = spawn(pythonCmd, [path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot], { stdio: 'inherit' });
+    const python = findPythonCmd(repoRoot);
+    if (!python) {
+      return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
+    }
+    const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot]), { stdio: 'inherit' });
     py.on('close', (code) => {
       // Clean up any temporary per-shape JSON files so processing_output
       // only contains final DXF assets. This removes .poly.json and
@@ -724,9 +776,11 @@ app.post('/export-scad', (req, res) => {
 
       // Delegate SCAD generation to the Python helper which will call
       // src.processing.import_to_openscad for robust behavior.
-      const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
-      const pythonCmd = (fs.existsSync(venvPython) ? venvPython : 'python');
-      const py = spawn(pythonCmd, [path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectdir', repoRoot], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const python = findPythonCmd(repoRoot);
+      if (!python) {
+        return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
+      }
+      const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectdir', repoRoot]), { stdio: ['ignore', 'pipe', 'pipe'] });
       let outBuf = '';
       let errBuf = '';
       py.stdout.on('data', (c) => { outBuf += String(c || ''); });
