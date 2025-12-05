@@ -1,6 +1,6 @@
-use <src/modules/module_gridfinity_cup.scad>
-use <src/modules/module_finger_slot.scad>
-use <src/gridfinity_shape_cutter.scad>
+use <../src/modules/module_gridfinity_cup.scad>
+use <../src/modules/module_finger_slot.scad>
+use <../src/gridfinity_shape_cutter.scad>
 
 // ===== PARAMETERS ===== //
 /* [General Settings] */

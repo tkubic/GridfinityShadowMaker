@@ -54,6 +54,18 @@
   border-left: 1px solid #e0e0e0;
 }
 
+/* Make side panels independently scrollable so the header and canvas stay fixed */
+.panel-left,
+.panel-right {
+  display: flex;
+  flex-direction: column;
+  /* allow the panels to take the full height of the main area and
+     scroll internally when content overflows */
+  max-height: 100%;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Center canvas container */
 .canvas-container {
   flex: 1 1 0;

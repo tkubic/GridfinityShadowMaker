@@ -52,6 +52,12 @@ function App() {
   // Refs and state for measuring and adjusting SVG text size so mm->px mapping is accurate
   // removed measurement refs — using direct mm->px scale for font sizing
 
+  // Keep a ref to the latest project so async callbacks (vectorize) can read
+  // the most-recent shape values (x,y,rotateDeg,origin) instead of using
+  // potentially-stale closures captured at render time.
+  const projectRef = useRef(project);
+  React.useEffect(() => { projectRef.current = project; }, [project]);
+
   // Measure and correct text node sizes after paint to better match requested mm height.
   // (Effect will be placed after scaleX/scaleY are defined.)
 
@@ -114,15 +120,14 @@ function App() {
     const vectKeys = ["text", "fontSizeMM", "fontFile", "fontName", "fontBold", "fontItalic"];
     const touched = Object.keys(partial).some((k) => vectKeys.includes(k));
     if (touched) {
-      // derive an updated shape object by merging partial onto the current
-      // project snapshot (may be slightly stale but is sufficient for
-      // vectorization input). Call vectorize asynchronously so the state
-      // update above has time to apply.
+      // After updating state, run vectorization against the most-recent
+      // snapshot of the shape (read via projectRef) so we don't use stale
+      // closure values that could reset position or rotation.
       const s0 = project.shapes.find((sh) => sh.id === id);
       const merged = s0 ? ({ ...s0, ...partial } as ToolShape) : null;
       if (merged && merged.type === 'text') {
-        console.info('updateShape: triggering vectorizeTextShape', { id: merged.id, partial, hadDxf: !!(merged.dxfPaths && merged.dxfPaths.length), x: merged.x, y: merged.y, origin: merged.origin, text: merged.text, align: merged.textAlign, valign: merged.textValign, widthMM: merged.widthMM, heightMM: merged.heightMM });
-        setTimeout(() => void vectorizeTextShape(merged), 0);
+        console.info('updateShape: scheduling vectorizeTextShape for', { id: merged.id });
+        setTimeout(() => void vectorizeTextShapeById(merged.id), 0);
       }
     }
   }
@@ -130,8 +135,12 @@ function App() {
   // Vectorize a text shape in-place: convert glyphs -> polygons and store
   // the resulting polylines in `dxfPaths` on the same ToolShape entry so the
   // Canvas renders the exact vectors while the shape remains type 'text'.
-  async function vectorizeTextShape(s: ToolShape) {
-    if (!s || s.type !== 'text') return;
+  // This variant reads the current shape from `projectRef` to ensure we use
+  // the up-to-date `rotateDeg`, `x`, and `y` values when redrawing.
+  async function vectorizeTextShapeById(id: string) {
+    const sCurr = projectRef.current.shapes.find((sh) => sh.id === id) as ToolShape | undefined;
+    if (!sCurr || sCurr.type !== 'text') return;
+    const s = sCurr;
     try {
       const fontFileVal = (s as unknown as { fontFile?: string }).fontFile;
       console.info('vectorizeTextShape: start', { id: s.id, x: s.x, y: s.y, origin: s.origin, hasDxf: !!(s.dxfPaths && s.dxfPaths.length), text: s.text, fontSizeMM: s.fontSizeMM, fontFile: fontFileVal });
@@ -150,7 +159,12 @@ function App() {
         fontStyle,
         heightMm: ((s.fontSizeMM ?? s.heightMM ?? 15) * FONT_SIZE_CORRECTION),
         positionMm: { x: s.x ?? 0, y: s.y ?? 0 },
-        rotationDeg: s.rotateDeg ?? 0,
+        // Request unrotated polygons from the converter so we can apply
+        // the shape's rotation consistently at render time. Some font
+        // conversion backends apply rotation sign conventions differently
+        // which causes visual mismatches; generating unrotated geometry and
+        // rotating it in the Canvas keeps behavior deterministic.
+        rotationDeg: 0,
         align: alignVal,
         valign: valignVal,
       };
@@ -183,7 +197,10 @@ function App() {
       // centroid interpretations and keeps visual placement stable when the
       // Canvas interprets `x,y` as the displayed center.
       const isFirstVectorize = !(s.dxfPaths && s.dxfPaths.length);
-      const effectiveOrigin: 'centroid' | 'anchor' = (s.origin as 'centroid' | 'anchor') ?? (isFirstVectorize ? 'anchor' : 'centroid');
+      // Keep origin stable: prefer the existing stored origin if present,
+      // otherwise default to 'anchor' to avoid flipping between anchor/centroid
+      // interpretations when vectorizing multiple times.
+      const effectiveOrigin: 'centroid' | 'anchor' = (s.origin as 'centroid' | 'anchor') ?? 'anchor';
       // Warn if a shape claims centroid origin but its stored x,y do not
       // match the computed centroid — keep effectiveOrigin for fallback
       if (effectiveOrigin === 'centroid') {
@@ -221,7 +238,10 @@ function App() {
         // so future updates remain consistent and do not flip interpretation.
         // Persist the effectiveOrigin we calculated above so future updates
         // interpret `x,y` consistently and do not cause a visual jump.
-        const updatedShapes = prev.shapes.map((sh) => sh.id === s.id ? ({ ...sh, dxfPaths, widthMM, heightMM, origin: sh.origin ?? effectiveOrigin }) : sh);
+        // Preserve existing x/y/rotateDeg from the stored shape in `prev` to
+        // ensure visual placement and rotation are not reset when the UI
+        // triggers a re-vectorization.
+        const updatedShapes = prev.shapes.map((sh) => sh.id === s.id ? ({ ...sh, dxfPaths, widthMM, heightMM, origin: sh.origin ?? effectiveOrigin, x: sh.x, y: sh.y, rotateDeg: sh.rotateDeg }) : sh);
         // concise log: report update without dumping entire objects
         const afterOrigin = (updatedShapes.find(sh => sh.id === s.id) as ToolShape | undefined)?.origin;
         console.info('vectorizeTextShape: updated shape', { id: s.id, isFirstVectorize, baseX, baseY, widthMM, heightMM, dxfCount: dxfPaths.length, originBefore: s.origin, originAfter: afterOrigin });
@@ -474,6 +494,16 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<"trace" | "canvas" | "render">("canvas");
   const [processedImages, setProcessedImages] = useState<{ original?: string | null; traced?: string | null; offset?: string | null; dxf?: { dxf_path?: string | null; gridx_size?: number; gridy_size?: number } | null; used_input?: string | null } | null>(null);
+
+  // Pending polylines returned from the processing endpoint but not yet
+  // transferred into the canvas. Each polyline is an array of points {x,y}
+  // expressed in mm in the project coordinate space.
+  const [pendingPolylines, setPendingPolylines] = useState<Array<Array<{ x: number; y: number }>> | null>(null);
+  // Pending grid sizes returned from processing (optional). When Transfer
+  // is pressed we'll apply these to the board's Width/Depth (gridX/gridY).
+  const [pendingGrid, setPendingGrid] = useState<{ gridx?: number; gridy?: number } | null>(null);
+  // Clipboard for copy/paste (stores shape-like objects without ids)
+  const [clipboardShapes, setClipboardShapes] = useState<Array<Partial<ToolShape>> | null>(null);
 
   // Lifted trace params so Load Image can include the inspector values
   const [traceParams, setTraceParams] = useState<{ threshold: number; offset: number; token: number; resolution: number }>({ threshold: 145, offset: 0.1, token: 3.0, resolution: 20 });
@@ -987,6 +1017,21 @@ function App() {
           return;
         }
         setProcessedImages({ original: j.original, traced: j.traced, offset: j.offset, dxf: j.dxf, used_input: j.used_input });
+        try {
+          const pls = j.dxf && j.dxf.polylines ? j.dxf.polylines : null;
+          setPendingPolylines(pls && Array.isArray(pls) ? pls : null);
+          // capture optional grid sizes if provided by the processing meta
+          const gx = j.dxf && (j.dxf.gridx_size ?? j.dxf.gridx);
+          const gy = j.dxf && (j.dxf.gridy_size ?? j.dxf.gridy);
+          if (typeof gx === 'number' || typeof gy === 'number') {
+            setPendingGrid({ gridx: typeof gx === 'number' ? gx : undefined, gridy: typeof gy === 'number' ? gy : undefined });
+          } else {
+            setPendingGrid(null);
+          }
+        } catch (e) {
+          setPendingPolylines(null);
+          setPendingGrid(null);
+        }
       })
       .catch((err) => {
         console.error('upload failed', err);
@@ -1000,6 +1045,155 @@ function App() {
   function captureImage() {
     alert("Capture Image not implemented in this UI mockup.");
   }
+
+  function transferPendingPolylines() {
+    if (!pendingPolylines || !pendingPolylines.length) return;
+    let nextCounter = shapeCounter;
+    const created: any[] = [];
+    for (let i = 0; i < pendingPolylines.length; i++) {
+      const poly = pendingPolylines[i];
+      if (!poly || !poly.length) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of poly) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const rel = poly.map((p: any) => ({ x: Math.round((p.x - cx) * 10) / 10, y: Math.round((p.y - cy) * 10) / 10 }));
+      nextCounter += 1;
+      const id = `shape-${nextCounter}`;
+      const newShape = {
+        id,
+        type: 'dxf',
+        name: `Trace-${nextCounter}`,
+        x: Math.round(cx * 10) / 10,
+        y: Math.round(cy * 10) / 10,
+        scale: 1,
+        dxfPaths: [rel],
+        widthMM: Math.round((maxX - minX) * 10) / 10,
+        heightMM: Math.round((maxY - minY) * 10) / 10,
+        depthMM: 15,
+        cutType: 'Cut',
+      } as any;
+      created.push(newShape);
+    }
+    if (created.length) {
+      setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
+      setShapeCounter(nextCounter);
+    }
+    // If processing returned grid sizes, apply them to the board Width/Depth
+    if (pendingGrid) {
+      const gx = typeof pendingGrid.gridx === 'number' ? pendingGrid.gridx : undefined;
+      const gy = typeof pendingGrid.gridy === 'number' ? pendingGrid.gridy : undefined;
+      if (typeof gx === 'number' || typeof gy === 'number') {
+        updateBoard({ ...(gx !== undefined ? { gridX: gx } : {}), ...(gy !== undefined ? { gridY: gy } : {}) });
+      }
+    }
+    setPendingPolylines(null);
+    setPendingGrid(null);
+    // Switch to the 2D Canvas tab so the user sees the imported shapes
+    setActiveTab('canvas');
+  }
+
+  // Copy selected shapes into an in-memory clipboard (Ctrl+C)
+  function handleCopy() {
+    try {
+      // prefer multi-selection; fall back to single selectedItem
+      const ids = selectedItems && selectedItems.length ? selectedItems : (selectedItem && selectedItem !== 'board' ? [selectedItem] : []);
+      if (!ids || !ids.length) return;
+      const copies: Array<Partial<ToolShape>> = [];
+      for (const id of ids) {
+        const s = project.shapes.find((sh) => sh.id === id);
+        if (!s) continue;
+        const clone = JSON.parse(JSON.stringify(s)) as any;
+        delete clone.id;
+        copies.push(clone as Partial<ToolShape>);
+      }
+      if (copies.length) {
+        setClipboardShapes(copies);
+        try { showToast && showToast(`Copied ${copies.length} shape${copies.length>1?'s':''}`); } catch {}
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+    }
+  }
+
+  // Paste shapes from clipboard (Ctrl+V) with a +5mm x/y offset
+  function handlePaste() {
+    try {
+      if (!clipboardShapes || !clipboardShapes.length) return;
+      let next = shapeCounter;
+      const created: ToolShape[] = [];
+      // collect existing names to avoid duplicates when naming pasted shapes
+      const existingNames = new Set<string>(project.shapes.map((s) => s.name || ''));
+      for (const base of clipboardShapes) {
+        next += 1;
+        const id = `shape-${next}`;
+        const clone: any = JSON.parse(JSON.stringify(base));
+        // default position to center if missing
+        const baseX = (typeof clone.x === 'number') ? clone.x : (board.gridX * board.cellSizeMM) / 2;
+        const baseY = (typeof clone.y === 'number') ? clone.y : (board.gridY * board.cellSizeMM) / 2;
+        // Ensure pasted shape has a unique display name
+        const originalName = (clone.name && String(clone.name)) || '';
+        const baseName = originalName || `Shape-${next}`;
+        let newName = baseName;
+        if (existingNames.has(newName)) {
+          let copyIndex = 1;
+          let candidate = '';
+          while (true) {
+            candidate = `${baseName}-${copyIndex}`;
+            if (!existingNames.has(candidate)) break;
+            copyIndex += 1;
+          }
+          newName = candidate;
+        }
+        existingNames.add(newName);
+        clone.name = newName;
+        clone.id = id;
+        clone.x = Math.round((baseX + 5) * 10) / 10;
+        clone.y = Math.round((baseY + 5) * 10) / 10;
+        created.push(clone as ToolShape);
+      }
+      if (created.length) {
+        setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
+        setShapeCounter(next);
+        // select pasted shapes
+        const newIds = created.map((s) => s.id);
+        setSelectedItems(newIds);
+        setSelectedItem(newIds[newIds.length - 1]);
+        try { showToast && showToast(`Pasted ${created.length} shape${created.length>1?'s':''}`); } catch {}
+        // ensure user sees canvas
+        setActiveTab('canvas');
+      }
+    } catch (e) {
+      console.error('Paste failed', e);
+    }
+  }
+
+  // Keyboard shortcuts: Ctrl+C / Ctrl+V for copy/paste. Ignore when typing in inputs.
+  React.useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target && target.tagName ? target.tagName.toUpperCase() : '';
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable);
+      if (isInput) return;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = (e.key || '').toLowerCase();
+        if (k === 'c') {
+          e.preventDefault();
+          handleCopy();
+        } else if (k === 'v') {
+          e.preventDefault();
+          handlePaste();
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [clipboardShapes, project, selectedItem, selectedItems, shapeCounter, board]);
 
   const selectedShape =
     selectedItem === "board"
@@ -1164,6 +1358,12 @@ function App() {
                   return;
                 }
                 setProcessedImages({ original: j.original, traced: j.traced, offset: j.offset, dxf: j.dxf, used_input: j.used_input });
+                try {
+                  const pls = j.dxf && j.dxf.polylines ? j.dxf.polylines : null;
+                  setPendingPolylines(pls && Array.isArray(pls) ? pls : null);
+                } catch (e) {
+                  setPendingPolylines(null);
+                }
               })
               .catch((err) => {
                 console.error('reprocess failed', err);
@@ -1172,6 +1372,8 @@ function App() {
           }}
           traceParams={traceParams}
           setTraceParams={setTraceParams}
+          transferPolylines={transferPendingPolylines}
+          hasPendingPolylines={!!(pendingPolylines && pendingPolylines.length)}
         />
       </div>
     </div>

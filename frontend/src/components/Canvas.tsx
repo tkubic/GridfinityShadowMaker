@@ -621,7 +621,12 @@ export default function Canvas({
             <g
               key={shape.id}
               className={"shape-text" + (isSelected ? " shape-selected" : "")}
-              transform={rotDeg ? `rotate(${rotDeg} ${centerXpx} ${centerYpx})` : undefined}
+              // If we have vector paths we rotate points in-place when
+              // constructing the `d` attribute. In that case, avoid applying
+              // an additional group-level transform which would double-rotate
+              // the glyphs. For fallback text (no dxfPaths) keep the group
+              // transform so placeholders still rotate visually.
+              transform={hasPaths ? undefined : (rotDeg ? `rotate(${rotDeg} ${centerXpx} ${centerYpx})` : undefined)}
               onMouseDown={(e) => {
                 // keep same drag/select behavior as before
                 if ((e as React.MouseEvent).detail > 1) return;
@@ -657,13 +662,27 @@ export default function Canvas({
                     processed.push(idx);
                   }
 
+                  // When rendering vectorized text, rotate each glyph polyline
+                  // in-place around the stored centroid using shape.rotateDeg
+                  // rather than relying on a group-level transform. This avoids
+                  // mismatches where the bounding box is rotated but the glyph
+                  // geometry appears unrotated after re-vectorization.
+                  const rotDeg = shape.rotateDeg ?? 0;
                   return paths.map((path, idx) => {
                     if (!path || !path.length) return null;
                     const isHole = !!holeFlags[idx];
                     const fill = isHole ? 'rgba(0, 0, 0, 1)' : fillColorFor(shape);
                     const d = path.map((p: { x: number; y: number }, i: number) => {
-                      const px = centerXpx + p.x * s * scaleX;
-                      const py = centerYpx - p.y * s * scaleY;
+                      // rotate the local point (p.x/p.y are relative to centroid)
+                      // Use negated angle to match SVG/group rotation direction
+                      // (canvas Y axis is inverted vs. math Y axis).
+                      const theta = (-rotDeg * Math.PI) / 180.0;
+                      const cosr = Math.cos(theta);
+                      const sinr = Math.sin(theta);
+                      const rx = p.x * cosr - p.y * sinr;
+                      const ry = p.x * sinr + p.y * cosr;
+                      const px = centerXpx + rx * s * scaleX;
+                      const py = centerYpx - ry * s * scaleY;
                       return `${i === 0 ? "M" : "L"} ${px} ${py}`;
                     }).join(" ") + " Z";
 

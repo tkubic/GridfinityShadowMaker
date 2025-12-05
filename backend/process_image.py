@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--export-dxfs', dest='export_dxfs', type=str, default=None, help='Directory containing .poly.json/.text.json to convert to DXF')
     parser.add_argument('--generate-scad', dest='generate_scad', type=str, default=None, help='Project folder to generate SCAD for')
+    parser.add_argument('--projectname', dest='projectname', type=str, default=None, help='Optional project name (used when project folder is the shared projects/ dir)')
     parser.add_argument('--projectdir', type=str, default=None)
     parser.add_argument('--workfolder', type=str, default=None)
     parser.add_argument('--threshold', type=float, default=None)
@@ -45,7 +46,7 @@ def main():
     # Handle generate-scad mode
     if args.generate_scad:
         try:
-            do_generate_scad(args.generate_scad, args.projectdir)
+            do_generate_scad(args.generate_scad, args.projectdir, args.projectname)
             return 0
         except Exception as e:
             print('generate-scad failed:', e)
@@ -60,6 +61,20 @@ def main():
 
     # forward all args to src.processing.cli_main
     try:
+        # Ensure the out_dir argument (second positional) is created and
+        # become the current working directory so any relative file writes
+        # the CLI performs land in the server-provided output folder.
+        if len(sys.argv) >= 3 and sys.argv[2]:
+            out_dir_arg = sys.argv[2]
+            try:
+                os.makedirs(out_dir_arg, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                # chdir to out_dir to make relative writes deterministic
+                os.chdir(out_dir_arg)
+            except Exception:
+                pass
         return sp.cli_main(sys.argv[1:])
     except Exception as e:
         print('Delegated processing failed:', e)
@@ -310,7 +325,7 @@ def do_export_dxfs(export_dir, projectdir=None):
                     print('Error processing manifest entry', entry, e)
 
 
-def do_generate_scad(project_folder, projectdir=None):
+def do_generate_scad(project_folder, projectdir=None, project_name=None):
     """Generate SCAD for the given project folder by calling src.processing.import_to_openscad.
     This reads `processing_output/meta.json` (if present) to discover dxf paths
     and grid sizes, copies repo `src` into the project folder if needed, and
@@ -319,31 +334,59 @@ def do_generate_scad(project_folder, projectdir=None):
     try:
         import json
         import shutil
-        export_dir = os.path.join(project_folder, 'processing_output')
-        if not os.path.exists(project_folder):
-            print('Project folder not found:', project_folder)
-            return
+        # Normalize project target to live under the repository `projects/` folder.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        projects_root = os.path.join(repo_root, 'projects')
+        try:
+            os.makedirs(projects_root, exist_ok=True)
+        except Exception:
+            pass
+
+        # Accept either a project name or a full path. If the caller passed
+        # an existing directory, use it directly; otherwise treat the value
+        # as a project name under repo/projects. If an explicit project_name
+        # was provided (from the server), prefer that as the canonical project
+        # base name so SCAD files are named using the project name even when
+        # resolving to the shared `projects/` folder for GSM-* projects.
+        if os.path.exists(project_folder) and os.path.isdir(project_folder):
+            project_path = project_folder
+            proj_basename = os.path.basename(project_path.rstrip(os.sep))
+        else:
+            proj_basename = os.path.basename(str(project_folder).rstrip(os.sep))
+            # physical project folder on disk (under repo/projects)
+            project_path = os.path.join(projects_root, proj_basename)
+            if not os.path.exists(project_path):
+                print('Project folder not found under projects/:', project_path)
+                return
+
+        # If the caller supplied an explicit project_name, use it as the
+        # canonical project basename so SCAD/GSM filenames use the expected
+        # project name rather than the folder's basename (which may be
+        # 'projects' when using the shared projects/ directory for GSM- names).
+        if project_name:
+            try:
+                pn = str(project_name).strip()
+                if pn:
+                    proj_basename = pn
+            except Exception:
+                pass
+        export_dir = os.path.join(project_path, 'processing_output')
         if not os.path.exists(export_dir):
             print('processing_output not found in project folder:', export_dir)
             return
 
-        # Ensure project has a local copy of the repository `src` so OpenSCAD includes work
-        if projectdir:
-            repo_src = os.path.join(projectdir, 'src')
-            dst_src = os.path.join(project_folder, 'src')
-            try:
-                if os.path.exists(repo_src):
-                    shutil.copytree(repo_src, dst_src, dirs_exist_ok=True)
-            except Exception as e:
-                print('Warning: could not copy src into project folder:', e)
+        # Do not copy repository `src` into the project folder. The SCAD
+        # template should reference files with relative paths; callers that
+        # want a local copy can manage that separately. This avoids creating
+        # duplicate source trees in user projects.
 
         # Build dxf_paths from the project's GSM file if possible.
         # Strictly preserve the order of the `shapes` array and use the
         # shape `name` as the expected DXF filename (append .dxf if missing).
         dxf_paths = []
         try:
-            proj_name = os.path.basename(project_folder.rstrip(os.sep))
-            gsm_path = os.path.join(project_folder, f"{proj_name}.gsm")
+            proj_name = proj_basename
+            gsm_path = os.path.join(project_path, f"{proj_name}.gsm")
             if os.path.exists(gsm_path):
                 try:
                     import json as _json
@@ -412,9 +455,9 @@ def do_generate_scad(project_folder, projectdir=None):
 
         # Prefer project file values (gsm or project.json) when present
         try:
-            proj_name = os.path.basename(project_folder.rstrip(os.sep))
-            gsm_path = os.path.join(project_folder, f"{proj_name}.gsm")
-            pj_path = os.path.join(project_folder, 'project.json')
+            proj_name = proj_basename
+            gsm_path = os.path.join(project_path, f"{proj_name}.gsm")
+            pj_path = os.path.join(project_path, 'project.json')
             project_obj = None
             if os.path.exists(gsm_path):
                 try:
@@ -499,18 +542,22 @@ def do_generate_scad(project_folder, projectdir=None):
             def setText(self, s):
                 print('console:', s)
 
-        file_name = os.path.basename(project_folder.rstrip(os.sep))
-        folder_name = os.path.basename(project_folder.rstrip(os.sep))
+        # file_name: base project name; folder_name_rel: relative path under repo used by import_to_openscad
+        file_name = proj_basename
+        try:
+            folder_name_rel = os.path.relpath(project_path, repo_root)
+        except Exception:
+            folder_name_rel = os.path.join('projects', proj_basename)
 
         # Call import_to_openscad. It accepts either a single path or a list.
         try:
             if len(dxf_paths) > 1:
-                sp.import_to_openscad(dxf_paths, gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=True, gridz_size=gridz)
+                sp.import_to_openscad(dxf_paths, gridx, gridy, DummyConsole(), file_name, folder_name_rel, splitDXF=True, gridz_size=gridz)
             elif len(dxf_paths) == 1:
-                sp.import_to_openscad(dxf_paths[0], gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=False, gridz_size=gridz)
+                sp.import_to_openscad(dxf_paths[0], gridx, gridy, DummyConsole(), file_name, folder_name_rel, splitDXF=False, gridz_size=gridz)
             else:
                 # No DXFs; still call to produce a SCAD with defaults
-                sp.import_to_openscad('', gridx, gridy, DummyConsole(), file_name, folder_name, splitDXF=False, gridz_size=gridz)
+                sp.import_to_openscad('', gridx, gridy, DummyConsole(), file_name, folder_name_rel, splitDXF=False, gridz_size=gridz)
             scad_path = os.path.join(project_folder, f"{file_name}.scad")
             print('Generated SCAD:', scad_path)
         except Exception as e:

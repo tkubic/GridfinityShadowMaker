@@ -7,6 +7,18 @@ const { spawn, execSync, spawnSync } = require('child_process');
 const app = express();
 const REPO_ROOT = path.join(__dirname, '..');
 
+// Helper: resolve project folder. For auto-generated GSM project names
+// (starting with 'GSM-') the user prefers a single `projects` folder
+// instead of creating per-project subfolders. This function implements
+// that policy. Pass a sanitized projectName string.
+function resolveProjectFolder(projectName) {
+  const projectsRoot = path.join(__dirname, '..', 'projects');
+  // Flatten: always use the shared `projects/` folder for all projects.
+  // This places all project artifacts under the single repository-level
+  // `projects/` directory regardless of the provided projectName.
+  return projectsRoot;
+}
+
 // Helper: find an available Python command to run. Returns an object { cmd, args }
 // or null if none found. Order: GSM_PYTHON_EXE -> repo .venv -> py -3 (probe) -> python on PATH (probe).
 function findPythonCmd(repoRoot) {
@@ -213,7 +225,7 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   let projectFolder = null;
   if (projectName) {
     try {
-      projectFolder = path.join(__dirname, '..', projectName);
+      projectFolder = resolveProjectFolder(projectName);
       fs.mkdirSync(projectFolder, { recursive: true });
 
       // Do NOT copy repo `src` into the project folder. The server will always
@@ -231,11 +243,23 @@ app.post('/process-image', upload.single('image'), (req, res) => {
               workInputPath = savedPath;
               // persist canonical original filename in project.json so reprocess can deterministically use it
               try {
-                const meta = { original: origName };
-                fs.writeFileSync(path.join(projectFolder, 'project.json'), JSON.stringify(meta, null, 2), 'utf8');
-                console.log('Wrote project.json with original:', origName);
+                // Write a canonical GSM snapshot so the project metadata is
+                // preserved under the preferred .gsm format instead of a
+                // transient project.json. This keeps a single canonical
+                // snapshot file per project name.
+                try {
+                  writeGsmSnapshot(projectFolder, projectName, { project: { original: origName } }, null);
+                  console.log('Wrote GSM snapshot with original:', origName);
+                } catch (wj) {
+                  // Fallback: if for any reason writing GSM fails, persist
+                  // a minimal project.json so reprocess flows can still find
+                  // the uploaded filename.
+                  const meta = { original: origName };
+                  fs.writeFileSync(path.join(projectFolder, 'project.json'), JSON.stringify(meta, null, 2), 'utf8');
+                  console.error('Failed to write GSM snapshot, wrote project.json instead', wj);
+                }
               } catch (wj) {
-                console.error('Failed to write project.json', wj);
+                console.error('Failed to persist uploaded original filename', wj);
               }
             } catch (err) {
               console.error('Failed to save uploaded file into project folder, will continue using temp file:', err);
@@ -421,17 +445,149 @@ app.post('/process-image', upload.single('image'), (req, res) => {
   if (token) pyArgs.push('--token', String(token));
   if (resolution) pyArgs.push('--resolution', String(resolution));
 
-  const py = spawn(python.cmd ? python.cmd : python, pyArgs, { stdio: 'inherit' });
+  // Capture stdout/stderr so we can detect where Python actually wrote outputs
+  const py = spawn(python.cmd ? python.cmd : python, pyArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   console.log('Spawning python with args:', pyArgs);
   console.log('Final workInputPath before processing:', workInputPath);
 
+  let pyOut = '';
+  let pyErr = '';
+  py.stdout.on('data', (c) => { pyOut += String(c || ''); });
+  py.stderr.on('data', (c) => { pyErr += String(c || ''); });
+
   py.on('close', (code) => {
     if (code !== 0) {
-      return res.status(500).json({ error: 'python failed', code });
+      console.error('python exited with code', code, 'stderr:', pyErr);
+      return res.status(500).json({ error: 'python failed', code, stderr: pyErr });
     }
 
     try {
+      // Python may have written outputs to a temporary directory. The CLI
+      // prints a line like: 'Processing finished. Outputs in: <outdir>'
+      // Try to parse that and, if present, move outputs into the project
+      // folder's processing_output so they persist under `projects/<name>`.
+      let actualOutDir = workingOutDir;
+      try {
+        // First, try to capture the printed output path. Use a permissive
+        // match that accepts spaces and any characters until the end of line.
+        let candidate = null;
+        const m1 = /Processing finished\. Outputs in:\s*(.+)/m.exec(pyOut);
+        if (m1 && m1[1]) {
+          candidate = m1[1].trim();
+          // Trim any trailing punctuation
+          candidate = candidate.replace(/["'\r\n]+$/g, '').trim();
+        }
+
+        // If that didn't yield an existing path, look for absolute windows paths
+        // (e.g., C:\...) or unix-style absolute paths in the stdout.
+        if (!candidate || !fs.existsSync(candidate)) {
+          const m2 = /([A-Za-z]:\\[^\r\n]+)/.exec(pyOut) || /\/(?:[^\s\r\n]+\/?)+processing_output/m.exec(pyOut);
+          if (m2 && m2[1]) candidate = m2[1].trim();
+        }
+
+        // As a last resort, search the repo and system temp for any
+        // 'processing_output' directories modified in the last 120 seconds.
+        if ((!candidate || !fs.existsSync(candidate)) && projectFolder) {
+          const candidates = [];
+          const searchDirs = [path.join(__dirname, '..'), require('os').tmpdir()];
+          const now = Date.now();
+          const maxAge = 120 * 1000; // 120s
+          for (const sd of searchDirs) {
+            try {
+              const walk = (dir) => {
+                try {
+                  const list = fs.readdirSync(dir, { withFileTypes: true });
+                  for (const ent of list) {
+                    const p = path.join(dir, ent.name);
+                    try {
+                      if (ent.isDirectory()) {
+                        if (ent.name === 'processing_output') {
+                          try {
+                            const st = fs.statSync(p);
+                            if ((now - st.mtimeMs) < maxAge) candidates.push(p);
+                          } catch (e) { }
+                        }
+                        // recurse lightly (depth-limited)
+                        if (p.split(path.sep).length - sd.split(path.sep).length < 6) walk(p);
+                      }
+                    } catch (e) { }
+                  }
+                } catch (e) { }
+              };
+              if (fs.existsSync(sd)) walk(sd);
+            } catch (e) { }
+          }
+          if (candidates.length) {
+            // prefer the most-recent candidate
+            candidates.sort((a,b)=> {
+              try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch (e) { return 0; }
+            });
+            candidate = candidates[0];
+          }
+        }
+
+        if (candidate && fs.existsSync(candidate)) {
+          try {
+            const st = fs.lstatSync(candidate);
+            if (st.isDirectory()) {
+              actualOutDir = candidate;
+              if (projectFolder) {
+                try {
+                  fs.mkdirSync(workingOutDir, { recursive: true });
+                  const copyRecursive = (src, dst) => {
+                    const entries = fs.readdirSync(src, { withFileTypes: true });
+                    for (const ent of entries) {
+                      const s = path.join(src, ent.name);
+                      const d = path.join(dst, ent.name);
+                      if (ent.isDirectory()) {
+                        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+                        copyRecursive(s, d);
+                      } else {
+                        try { fs.copyFileSync(s, d); } catch (e) { console.warn('copy file failed', s, d, e); }
+                      }
+                    }
+                  };
+                  copyRecursive(actualOutDir, workingOutDir);
+                  console.log('Copied Python outputs from', actualOutDir, 'to', workingOutDir);
+                  // Normalize legacy CLI image names to canonical names used by the server/frontend
+                  try {
+                    const auxPath = path.join(workingOutDir, 'aux_region3.png');
+                    const tracedPath = path.join(workingOutDir, 'traced.png');
+                    const offsetPath = path.join(workingOutDir, 'offset.png');
+                    const originalPath = path.join(workingOutDir, 'original.png');
+                    // If legacy aux_region3 exists but offset.png does not, rename it
+                    if (fs.existsSync(auxPath) && !fs.existsSync(offsetPath)) {
+                      try { fs.renameSync(auxPath, offsetPath); console.log('Renamed aux_region3.png -> offset.png'); } catch (e) { console.warn('rename aux->offset failed', e); }
+                    }
+                    // If traced.png is missing but there is a file named 'region_2.png', rename it
+                    const region2 = path.join(workingOutDir, 'region_2.png');
+                    if (!fs.existsSync(tracedPath) && fs.existsSync(region2)) {
+                      try { fs.renameSync(region2, tracedPath); console.log('Renamed region_2.png -> traced.png'); } catch (e) { console.warn('rename region2->traced failed', e); }
+                    }
+                    // If original.png missing but there is 'region_1.png', rename it
+                    const region1 = path.join(workingOutDir, 'region_1.png');
+                    if (!fs.existsSync(originalPath) && fs.existsSync(region1)) {
+                      try { fs.renameSync(region1, originalPath); console.log('Renamed region_1.png -> original.png'); } catch (e) { console.warn('rename region1->original failed', e); }
+                    }
+                  } catch (e) {
+                    console.warn('Failed to normalize legacy image names', e);
+                  }
+                } catch (e) {
+                  console.warn('Failed to copy python outputs into project processing_output', e);
+                }
+              }
+            } else {
+              console.warn('Parsed candidate path from Python stdout is not a directory, skipping copy:', candidate);
+            }
+          } catch (e) {
+            console.warn('Failed to stat candidate path, skipping copy:', candidate, e);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to locate/copy python outputs', e);
+      }
+
       const original = fs.readFileSync(workInputPath).toString('base64');
       const tracedPath = path.join(workingOutDir, 'traced.png');
       const offsetPath = path.join(workingOutDir, 'offset.png');
@@ -450,11 +606,43 @@ app.post('/process-image', upload.single('image'), (req, res) => {
         }
       }
 
+      // If we have projectFolder and meta info, merge the processing meta
+      // into the project's canonical .gsm snapshot so the .gsm becomes the
+      // single source of truth for UI and downstream tooling.
+      if (projectFolder && projectName && dxfInfo) {
+        try {
+          // Write under a `processing` key so existing project fields are preserved.
+          writeGsmSnapshot(projectFolder, projectName, { project: { processing: dxfInfo } }, null);
+          console.log('Merged processing meta into .gsm for project', projectName);
+          // Remove meta.json from processing_output now that we've merged it
+          try {
+            if (fs.existsSync(metaPath)) {
+              fs.unlinkSync(metaPath);
+              console.log('Removed meta.json from', metaPath, 'after merging into .gsm');
+            }
+          } catch (e) {
+            console.warn('Failed to remove meta.json after merging into .gsm', e);
+          }
+        } catch (e) {
+          console.warn('Failed to merge processing meta into .gsm', e);
+        }
+      }
+
+      // Attempt to remove meta.json from processing_output so GSM is canonical
+      try {
+        if (fs.existsSync(metaPath)) {
+          fs.unlinkSync(metaPath);
+          console.log('Removed meta.json from processing_output (post-process cleanup)');
+        }
+      } catch (e) {
+        console.warn('Failed to remove meta.json during cleanup', e);
+      }
+
       // include which input file was used so frontend can verify
       res.json({ original, traced, offset, dxf: dxfInfo, used_input: workInputPath });
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'failed to read outputs' });
+      res.status(500).json({ error: 'failed to read outputs', detail: String(err) });
     }
   });
 });
@@ -467,8 +655,8 @@ app.post('/save-project', (req, res) => {
     const gsmName = String(body.gsmName || `${projectName}.gsm`);
     const projectObj = body.project;
 
-    const projectFolder = path.join(__dirname, '..', projectName);
-    fs.mkdirSync(projectFolder, { recursive: true });
+    const projectFolder = resolveProjectFolder(projectName);
+    if (!fs.existsSync(projectFolder)) fs.mkdirSync(projectFolder, { recursive: true });
 
     // Use the shared helper so Save and Output DXF's produce identical GSMs
     const projToSave = Object.assign({}, projectObj || {});
@@ -520,7 +708,7 @@ app.post('/export-dxfs', async (req, res) => {
     const projectName = String(body.projectName || 'default_project').replace(/[<>:\"/\\|?*\x00-\x1F]/g, '_') || 'default_project';
     const items = Array.isArray(body.items) ? body.items : [];
     const repoRoot = path.join(__dirname, '..');
-    const projectFolder = path.join(repoRoot, projectName);
+    const projectFolder = resolveProjectFolder(projectName);
     if (!fs.existsSync(projectFolder)) fs.mkdirSync(projectFolder, { recursive: true });
     const out = path.join(projectFolder, 'processing_output');
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
@@ -562,6 +750,66 @@ app.post('/export-dxfs', async (req, res) => {
       writeGsmSnapshot(projectFolder, projectName, { project: projectObj }, incomingBoard2);
     } catch (e) {
       console.warn('Failed to write project GSM snapshot', e);
+    }
+    // If no items were provided to export-dxfs, attempt to synthesize .poly.json
+    // files from the project's GSM processing metadata or from processing_output/meta.json
+    try {
+      const outFilesNow = fs.existsSync(out) ? fs.readdirSync(out) : [];
+      const hasPolyJson = outFilesNow.some(f => f.toLowerCase().endsWith('.poly.json'));
+      if (!hasPolyJson) {
+        // Try to read GSM for embedded polylines
+        const gsmPath = path.join(projectFolder, `${projectName}.gsm`);
+        let created = 0;
+        if (fs.existsSync(gsmPath)) {
+          try {
+            const raw = fs.readFileSync(gsmPath, 'utf8');
+            const gsmObj = JSON.parse(raw);
+            // Look for polylines under processing or meta
+            let proc = null;
+            if (gsmObj && typeof gsmObj === 'object') {
+              proc = gsmObj.processing || gsmObj.processing_meta || (gsmObj.project && gsmObj.project.processing) || null;
+            }
+            if (proc && Array.isArray(proc.polylines) && proc.polylines.length) {
+              for (let i = 0; i < proc.polylines.length; i++) {
+                const poly = proc.polylines[i];
+                const name = (proc.names && proc.names[i]) ? proc.names[i] : `shape_${i+1}`;
+                const polyObj = { name: name, polylines: [poly] };
+                const polyPath = path.join(out, `${name}.poly.json`);
+                try {
+                  fs.writeFileSync(polyPath, JSON.stringify(polyObj, null, 2), 'utf8');
+                  created += 1;
+                } catch (e) { console.warn('failed to write synthesized poly.json', polyPath, e); }
+              }
+            }
+          } catch (e) { /* ignore parse errors */ }
+        }
+
+        // Fall back to reading processing_output/meta.json directly
+        if (created === 0) {
+          const metaPath = path.join(projectFolder, 'processing_output', 'meta.json');
+          if (fs.existsSync(metaPath)) {
+            try {
+              const raw = fs.readFileSync(metaPath, 'utf8');
+              const metaObj = JSON.parse(raw);
+              if (metaObj && Array.isArray(metaObj.polylines) && metaObj.polylines.length) {
+                for (let i = 0; i < metaObj.polylines.length; i++) {
+                  const poly = metaObj.polylines[i];
+                  const name = metaObj.names && metaObj.names[i] ? metaObj.names[i] : `shape_${i+1}`;
+                  const polyObj = { name: name, polylines: [poly] };
+                  const polyPath = path.join(out, `${name}.poly.json`);
+                  try {
+                    fs.writeFileSync(polyPath, JSON.stringify(polyObj, null, 2), 'utf8');
+                    created += 1;
+                  } catch (e) { console.warn('failed to write synthesized poly.json from meta', polyPath, e); }
+                }
+              }
+            } catch (e) { /* ignore parse errors */ }
+          }
+        }
+        if (created) console.log(`Synthesized ${created} .poly.json files in ${out} from GSM/meta polylines`);
+      }
+    } catch (e) {
+      console.warn('Failed to synthesize poly.json files for export-dxfs', e);
     }
     for (let i = 0; i < items.length; i++) {
       const it = items[i] || {};
@@ -725,6 +973,16 @@ app.post('/export-dxfs', async (req, res) => {
     if (!python) {
       return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
     }
+
+    // Log processing_output contents and any synthesized .poly.json files
+    try {
+      const currentFiles = fs.existsSync(out) ? fs.readdirSync(out) : [];
+      console.log('processing_output contents before export-dxfs:', out, currentFiles);
+      const polyFiles = currentFiles.filter(f => f.toLowerCase().endsWith('.poly.json'));
+      if (polyFiles.length) console.log('Found .poly.json files to export:', polyFiles);
+      else console.log('No .poly.json files found in processing_output; Python export will have nothing to convert unless synthesis occurred.');
+    } catch (e) { console.warn('Failed to list processing_output before export:', e); }
+
     const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot]), { stdio: 'inherit' });
     py.on('close', (code) => {
       // Clean up any temporary per-shape JSON files so processing_output
@@ -780,7 +1038,7 @@ app.post('/export-scad', (req, res) => {
     const body = req.body || {};
     const projectName = String(body.projectName || 'default_project').replace(/[<>:\"/\\|?*\x00-\x1F]/g, '_') || 'default_project';
     const repoRoot = path.join(__dirname, '..');
-    const projectFolder = path.join(repoRoot, projectName);
+    const projectFolder = resolveProjectFolder(projectName);
     const out = path.join(projectFolder, 'processing_output');
     if (!fs.existsSync(projectFolder) || !fs.existsSync(out)) {
       return res.status(400).json({ error: 'project or processing_output not found', projectFolder, out });
@@ -788,31 +1046,9 @@ app.post('/export-scad', (req, res) => {
 
     // Prepare project folder for SCAD generation: ensure a local copy of `src`
     try {
-      const repoSrc = path.join(repoRoot, 'src');
-      const dstSrc = path.join(projectFolder, 'src');
-      if (fs.existsSync(repoSrc)) {
-        // prefer fs.cpSync when available (Node 16.7+), otherwise fallback to recursive copy
-        try {
-          if (fs.cpSync) {
-            fs.cpSync(repoSrc, dstSrc, { recursive: true });
-          } else {
-            // simple recursive copy
-            const copyRecursive = (src, dst) => {
-              if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
-              const entries = fs.readdirSync(src, { withFileTypes: true });
-              for (const ent of entries) {
-                const s = path.join(src, ent.name);
-                const d = path.join(dst, ent.name);
-                if (ent.isDirectory()) copyRecursive(s, d);
-                else fs.copyFileSync(s, d);
-              }
-            };
-            copyRecursive(repoSrc, dstSrc);
-          }
-        } catch (e) {
-          console.warn('Failed to copy repo src into project folder (continuing):', e);
-        }
-      }
+      // Do not copy the repository `src` into the project folder. The
+      // SCAD template and import routine should reference files relative
+      // to the repository or the project's folder under `projects/`.
 
       // Delegate SCAD generation to the Python helper which will call
       // src.processing.import_to_openscad for robust behavior.
@@ -820,7 +1056,7 @@ app.post('/export-scad', (req, res) => {
       if (!python) {
         return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
       }
-      const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectdir', repoRoot]), { stdio: ['ignore', 'pipe', 'pipe'] });
+      const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectname', projectName, '--projectdir', repoRoot]), { stdio: ['ignore', 'pipe', 'pipe'] });
       let outBuf = '';
       let errBuf = '';
       py.stdout.on('data', (c) => { outBuf += String(c || ''); });
@@ -835,6 +1071,34 @@ app.post('/export-scad', (req, res) => {
             // read manifest/dxfs list for response
             const dirList = fs.existsSync(out) ? fs.readdirSync(out) : [];
             const dxfFiles = dirList.filter(f => f.toLowerCase().endsWith('.dxf'));
+              // Hide legacy autogenerated `shape_N.dxf` files when a more
+              // descriptive `Trace-N.dxf` (or similarly named) file exists for
+              // the same numeric index. This avoids confusing downstream
+              // consumers with duplicate entries while preserving the
+              // on-disk files.
+              try {
+                const cleaned = [];
+                const namesSet = new Set(dxfFiles.map(f => path.parse(f).name));
+                const shapeRe = /^shape[_-]?(\d+)$/i;
+                for (const f of dxfFiles) {
+                  const base = path.parse(f).name;
+                  const m = base.match(shapeRe);
+                  if (m) {
+                    const idx = m[1];
+                    const traceName = `Trace-${idx}`;
+                    if (namesSet.has(traceName)) {
+                      // prefer Trace-N; skip adding shape_N to the returned list
+                      continue;
+                    }
+                  }
+                  cleaned.push(f);
+                }
+                // replace dxfFiles with cleaned list for the API response
+                dxfFiles.length = 0;
+                for (const f of cleaned) dxfFiles.push(f);
+              } catch (e) {
+                console.warn('Failed to dedupe dxfFiles for response', e);
+              }
             let manifest = [];
             const manifestPath = path.join(out, 'export_manifest.json');
             if (fs.existsSync(manifestPath)) {
@@ -902,6 +1166,26 @@ app.post('/export-scad', (req, res) => {
                     // Notify any SSE subscribers that an STL for this project is ready
                     sendSseEvent('stl', { projectName, stlUrl });
                   } catch (e) { /* non-fatal */ }
+                  // Cleanup: remove all contents of the project's processing_output
+                  try {
+                    if (fs.existsSync(out)) {
+                      const list = fs.readdirSync(out, { withFileTypes: true });
+                      for (const ent of list) {
+                        const p = path.join(out, ent.name);
+                        try {
+                          if (ent.isDirectory()) {
+                            try { fs.rmdirSync(p, { recursive: true }); } catch (e) { /* fallback */ fs.rmSync ? fs.rmSync(p, { recursive: true, force: true }) : null; }
+                          } else {
+                            try { fs.unlinkSync(p); } catch (e) { console.warn('Failed to unlink during processing_output cleanup', p, e); }
+                          }
+                        } catch (e) { console.warn('Failed to remove processing_output entry', p, e); }
+                      }
+                      console.log('Cleaned processing_output for project', projectName, 'at', out);
+                    }
+                  } catch (e) {
+                    console.warn('Failed to cleanup processing_output for project', projectName, e);
+                  }
+
                   return res.json({ ok: true, scad: outScad, stl: outStl, dxfFiles, manifest, python_stdout: outBuf, openscad_stdout: osOut });
                 }
                 console.error('openscad failed', ocode, osErr || osOut);
@@ -940,7 +1224,7 @@ app.post('/export-scad', (req, res) => {
 app.get('/api/render/output-stl', (req, res) => {
   try {
     const projectName = String(req.query.projectName || req.query.project || 'default_project').replace(/[<>:\"/\\|?*\x00-\x1F]/g, '_') || 'default_project';
-    const stlPath = path.join(REPO_ROOT, projectName, `${projectName}.stl`);
+    const stlPath = path.join(resolveProjectFolder(projectName), `${projectName}.stl`);
     if (!fs.existsSync(stlPath)) {
       return res.status(404).json({ error: 'stl not found', path: stlPath });
     }
@@ -954,10 +1238,16 @@ app.get('/api/render/output-stl', (req, res) => {
 // List projects that contain an output.stl file (for viewer auto-detection)
 app.get('/api/render/projects', (req, res) => {
   try {
-    const roots = fs.readdirSync(REPO_ROOT, { withFileTypes: true }).filter(d => d.isDirectory());
+    const projectsRoot = path.join(REPO_ROOT, 'projects');
+    if (!fs.existsSync(projectsRoot)) return res.json([]);
+    // When using single projects folder for GSM- auto projects we list
+    // subfolders (non-GSM) and also include the projects root itself if
+    // any STLs were written directly into it. Gather directories and
+    // check both the root and its subdirectories for stl files.
+    const roots = fs.readdirSync(projectsRoot, { withFileTypes: true }).filter(d => d.isDirectory());
     const projects = [];
     for (const d of roots) {
-      const stl = path.join(REPO_ROOT, d.name, `${d.name}.stl`);
+      const stl = path.join(projectsRoot, d.name, `${d.name}.stl`);
       if (fs.existsSync(stl)) {
         const stat = fs.statSync(stl);
         projects.push({ name: d.name, stlPath: stl, mtime: stat.mtimeMs });

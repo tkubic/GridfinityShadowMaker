@@ -23,6 +23,8 @@ interface InspectorProps {
   processImageAgain?: (params: { threshold?: number; offset?: number; token?: number; resolution?: number }) => void;
   traceParams?: { threshold: number; offset: number; token: number; resolution: number };
   setTraceParams?: (p: { threshold: number; offset: number; token: number; resolution: number }) => void;
+  transferPolylines?: () => void;
+  hasPendingPolylines?: boolean;
   // Actions handed down from App
   exportDxfs?: () => void;
   generateScad?: () => void;
@@ -43,6 +45,8 @@ export default function Inspector({
   processImageAgain,
   traceParams,
   setTraceParams,
+  transferPolylines,
+  hasPendingPolylines = false,
   exportDxfs,
   generateScad,
 }: InspectorProps) {
@@ -98,14 +102,29 @@ export default function Inspector({
           <label>Resolution</label>
           <input type="number" step="1" value={resolution} onChange={(e) => setTraceParams?.({ threshold, offset, token: tokenSize, resolution: parseInt(e.target.value || '0') })} />
         </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button
-            className="action-text-button"
-            onClick={() => processImageAgain?.({ threshold, offset, token: tokenSize, resolution })}
-            title="Process Image Again"
-          >
-            Process Image Again
-          </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexDirection: 'column' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="action-text-button"
+              onClick={() => processImageAgain?.({ threshold, offset, token: tokenSize, resolution })}
+              title="Process Image Again"
+            >
+              Process Image Again
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button
+              className="action-text-button"
+              onClick={() => transferPolylines?.()}
+              title="Transfer traced polylines to the canvas as shapes"
+              disabled={!hasPendingPolylines}
+            >
+              Transfer to Canvas
+            </button>
+          </div>
+          {!hasPendingPolylines && (
+            <div style={{ color: '#888', fontSize: '0.9rem', marginTop: 6 }}>No traced geometry to transfer</div>
+          )}
         </div>
       </aside>
     );
@@ -179,8 +198,6 @@ export default function Inspector({
 
       {selectedShape && selectedItem !== "board" && (
           <>
-          <h3>{selectedShape.name}</h3>
-
           <div className="field">
             <label>Name</label>
             <input
@@ -394,6 +411,18 @@ export default function Inspector({
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                />
+              </div>
+              <div className="field">
+                <label>Rotate (deg)</label>
+                <input
+                  type="number"
+                  step="1"
+                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                  onBlur={() => commitEditField("rotate")}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
+                  style={{ width: "100%" }}
                 />
               </div>
             </>

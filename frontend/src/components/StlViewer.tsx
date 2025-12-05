@@ -9,9 +9,9 @@ type Props = {
   pollIntervalMs?: number;
 };
 
-function Scene({ geometry, userInteracted, justLoadedRef }: { geometry: THREE.BufferGeometry | null, userInteracted: boolean, justLoadedRef: React.MutableRefObject<boolean> }) {
+function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geometry: THREE.BufferGeometry | null, userInteracted: boolean, justLoadedRef: React.MutableRefObject<boolean>, controlsRef: React.RefObject<any> }) {
   const meshRef = useRef<THREE.Mesh | null>(null);
-  const { camera } = useThree();
+  const { camera, size } = useThree();
 
   useEffect(() => {
     if (!geometry || !camera) return;
@@ -20,23 +20,48 @@ function Scene({ geometry, userInteracted, justLoadedRef }: { geometry: THREE.Bu
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox;
     if (!bbox) return;
-    const size = new THREE.Vector3();
-    bbox.getSize(size);
+    const dims = new THREE.Vector3();
+    bbox.getSize(dims);
     const center = new THREE.Vector3();
     bbox.getCenter(center);
-    // position camera
-    const maxDim = Math.max(size.x, size.y, size.z);
-    // use a milder perspective (smaller fov) for less dramatic foreshortening
-    const desiredFov = 35;
-    (camera as any).fov = desiredFov;
-    camera.updateProjectionMatrix && camera.updateProjectionMatrix();
-    const distance = maxDim / (2 * Math.tan((Math.PI * desiredFov) / 360));
-    camera.position.set(center.x + distance, center.y + distance, center.z + distance);
+
+    // Top-down view: position camera along +Z above the object's center
+    // Compute distances required to fit the object's X and Y extents into
+    // the camera frustum (respecting aspect ratio) and pick the larger
+    // distance so the whole object is visible.
+    const vfovDeg = (camera as any).fov || 50;
+    const vfov = THREE.MathUtils.degToRad(vfovDeg);
+    const aspect = (size && size.width && size.height) ? (size.width / size.height) : 1;
+    // horizontal fov derived from vertical fov and aspect
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
+
+    const halfHeight = dims.y / 2;
+    const halfWidth = dims.x / 2;
+    const distForHeight = halfHeight / Math.tan(vfov / 2);
+    const distForWidth = halfWidth / Math.tan(hfov / 2);
+    // choose the larger distance to ensure full visibility, add small margin
+    const distance = Math.max(distForHeight, distForWidth) * 1.05;
+
+    // enforce top view orientation
+    camera.up.set(0, 1, 0);
+    camera.position.set(center.x, center.y, center.z + distance);
     camera.lookAt(center);
+
+    // Update OrbitControls target if available so controls orbit around center
+    try {
+      const ctrl = controlsRef && controlsRef.current;
+      if (ctrl && ctrl.target) {
+        ctrl.target.set(center.x, center.y, center.z);
+        if (typeof ctrl.update === 'function') ctrl.update();
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
     // clear the justLoaded flag after fitting so subsequent geometry loads don't
     // auto-fit unless explicitly set
     if (justLoadedRef.current) justLoadedRef.current = false;
-  }, [geometry, camera]);
+  }, [geometry, camera, size, controlsRef]);
 
   if (!geometry) return null;
 
@@ -220,7 +245,7 @@ export default function StlViewer({ projectName, pollIntervalMs = 0 }: Props) {
           <Canvas style={{ position: 'absolute', inset: 0, touchAction: 'none' }}>
             <ambientLight intensity={0.6} />
             <directionalLight position={[10, 10, 10]} intensity={0.8} />
-            <Scene geometry={geometry} userInteracted={userInteractedRef.current} justLoadedRef={justLoadedRef} />
+            <Scene geometry={geometry} userInteracted={userInteractedRef.current} justLoadedRef={justLoadedRef} controlsRef={controlsRef} />
             <OrbitControls ref={controlsRef as any} enablePan enableZoom enableRotate onStart={() => { userInteractedRef.current = true; }} onChange={() => { userInteractedRef.current = true; }} />
           </Canvas>
         )}
