@@ -232,8 +232,32 @@ export default function StlViewer({ projectName, pollIntervalMs = 0 }: Props) {
         <div style={{ color: '#666', fontSize: 13 }}>
           {loading ? 'Loading STL...' : lastSuccessTs ? `Last updated ${new Date(lastSuccessTs).toLocaleTimeString()}` : 'No STL loaded'}
         </div>
-        <div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="action-text-button" onClick={reload} style={{ marginRight: 8 }}>Reload</button>
+          <button className="action-text-button" onClick={async () => {
+            if (!activeProject) return;
+            try {
+              const backendBase = 'http://localhost:5000';
+              const url = `${backendBase}/api/render/output-stl?projectName=${encodeURIComponent(activeProject)}`;
+              const resp = await fetch(url);
+              if (!resp.ok) {
+                console.warn('Failed to download STL, server returned', resp.status);
+                return;
+              }
+              const blob = await resp.blob();
+              const filename = `${activeProject || 'project'}.stl`;
+              const urlBlob = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = urlBlob;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              window.URL.revokeObjectURL(urlBlob);
+            } catch (e) {
+              console.warn('Download STL failed', e);
+            }
+          }} style={{ marginRight: 8 }}>Download STL</button>
         </div>
       </div>
       <div style={{ flex: 1, position: 'relative' }}>

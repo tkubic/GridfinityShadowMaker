@@ -12,15 +12,13 @@ type Props = {
 };
 
 export default function Header({ projectName, onRename, onSave, onLoadClick, activeTab, setActiveTab }: Props) {
-  const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(projectName);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Initialize draft from prop; when editing starts we set it explicitly.
-
+  // Keep draft synchronized with external projectName changes
   useEffect(() => {
-    if (isEditing) inputRef.current?.focus();
-  }, [isEditing]);
+    setDraft(projectName);
+  }, [projectName]);
 
   return (
     <header className="app-header">
@@ -37,47 +35,21 @@ export default function Header({ projectName, onRename, onSave, onLoadClick, act
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
           <div style={{ fontSize: 12, color: "#333" }}>Project Name</div>
-          {!isEditing ? (
-            <div
-              onDoubleClick={() => { setDraft(projectName); setIsEditing(true); }}
-              title="Double-click to rename project"
-              style={{
-                cursor: "text",
-                fontWeight: 600,
-                display: "inline-block",
-                background: "#fff",
-                padding: "6px 10px",
-                borderRadius: 4,
-                border: "1px solid #000",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                maxWidth: "60vw",
-                minWidth: 200,
-                boxSizing: "border-box",
-              }}
-            >
-              {projectName}
-            </div>
-          ) : (
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => {
-                onRename(draft);
-                setIsEditing(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  onRename(draft);
-                  setIsEditing(false);
-                }
-                if (e.key === "Escape") setIsEditing(false);
-              }}
-              style={{ width: "auto", maxWidth: "60vw", minWidth: 200, padding: "4px 6px", border: "1px solid #000", borderRadius: 4, whiteSpace: "nowrap", boxSizing: "border-box" }}
-            />
-          )}
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (draft !== projectName) onRename(draft);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (draft !== projectName) onRename(draft);
+                inputRef.current?.blur();
+              }
+            }}
+            style={{ width: "auto", maxWidth: "60vw", minWidth: 200, padding: "6px 8px", border: "1px solid #000", borderRadius: 4, whiteSpace: "nowrap", boxSizing: "border-box" }}
+          />
         </div>
       </div>
 
