@@ -426,12 +426,8 @@ class TerminalDashboardApp:
         btn_clear_backend = ttk.Button(bottom_controls, text="Clear Backend Log", command=self.clear_backend)
         btn_clear_backend.pack(fill="x", pady=(0,4), padx=6)
 
-        # Launch button and helper text placed under backend controls, aligned with bottom-right
-        btn_launch = ttk.Button(bottom_container, text="Launch App", command=self.launch_app)
-        btn_launch.grid(row=1, column=0, sticky='sew', pady=(6, 4))
-        ttk.Label(bottom_container, text="(Uses PowerShell scripts or commands)", font=("Segoe UI", 8)).grid(row=2, column=0, sticky='nw', pady=(6, 0))
-
-        # Launch button placed below controls
+        # Note: single Launch App button (bottom-right) — remove duplicate below backend controls
+        # Launch button placed below controls (bottom-right)
         btn_launch = ttk.Button(right_frame, text="Launch App", command=self.launch_app)
         btn_launch.grid(row=4, column=0, sticky='sew', pady=(6, 4))
 
@@ -439,6 +435,18 @@ class TerminalDashboardApp:
 
         # Poll queues
         self._schedule_queue_poll()
+
+        # Notify user and auto-start servers once shortly after the GUI initializes
+        # so the user doesn't need to press "Start Servers" the first time.
+        try:
+            # Show a short helper message in the Frontend Server console
+            try:
+                self.frontend_panel.log('[Starting Servers, please wait]\n')
+            except Exception:
+                pass
+            self.root.after(250, self.start_servers)
+        except Exception:
+            pass
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 

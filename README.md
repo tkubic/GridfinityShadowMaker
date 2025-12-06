@@ -1,229 +1,167 @@
-# Gridfinity Shadow Maker
+﻿# Gridfinity Shadow Maker
 
-A web-first toolchain (React frontend + Node.js backend) that uses
-Python processing pipeline and OpenSCAD to generate Gridfinity
-shadow boards and STL/DXF assets.
+**Gridfinity Shadow Maker (GSM)** is an easy-to-use, open-source tool that turns **photos of your tools** into clean, printable **Gridfinity shadow boards**.  
+You don’t need CAD experience — just take a picture, let the program automatically trace the outline, arrange your layout, export the STL, color it in your slicer, and print. The entire workflow is designed so you can go from **tool in hand to printing in under five minutes.**
 
-## Highlights
+Created to support **industrial 5S/Standardize programs** and high-reliability tool control, while still being accessible and helpful for home makers and hobbyists who appreciate organized tool storage.
 
-- Accurately traces objects from photos with adjustable preprocessing and threshold controls.
-- Outputs standard design formats for downstream tooling: `DXF` for vector/CAD workflows and `STL` for 3D printing.
-- Preserves all project assets and design files (images, OpenSCAD sources, DXF files, and canvas geometry stored as JSON).
-- Save and share projects as a single `.gsm` file that contains everything required to reload the project.
-
-<table>
-   <tr>
-      <td><img src="assets/images/1%20GSM%20Server%20Dashboard.png" alt="GSM Server Dashboard" width="400"></td>
-      <td><img src="assets/images/2%20Trace%20Object.png" alt="Trace Object" width="400"></td>
-   </tr>
-   <tr>
-      <td colspan="2"><img src="assets/images/3%202D%20Canvas.png" alt="2D Canvas (hero)" width="800"></td>
-   </tr>
-   <tr>
-      <td><img src="assets/images/4%203D%20Viewer.png" alt="3D Viewer" width="400"></td>
-      <td><img src="assets/images/5%20orcastudio%20example.png" alt="Orca Studio example" width="400"></td>
-   </tr>
-</table>
-
-
-
-## Step-by-Step Guide
-
-### Step 1: Take and Edit Pictures
-1. **Take Photos**: Use a lightboard to take photos of your tools or components. Best images can be taken in an enclosure or dark room. Ensure to include a 3" token in the photo for scale reference (you can 3d print the token found in the main folder folder). Based on your ambient lighting conditions, you will need to fine-tune your Threshold Input value.
-2. **Example Images**: An example image taken on a lightbox is located in the `examples` folder. You can use these to learn the workflow or debug problems.
-3. **Crop Photos**: Ensure the borders of the photos are all white.
-4. **Touch-Up Photos**: Edit the photos as needed to create the shape you want to outline. The basic Paint application is most popular. Black filled shapes do well to ensure crisp, high contrasting edges are found
-
-### Step 2: Trace Object
-1. **Launch the Server** and then run the app at http://localhost:5173/
-2. Change your **Project Name** at the top
-3. Click the **Trace Object** tab at the top then "Load Image"
-4. Adjust **Threshold, offset, Token Size, and resolution** to meet your needs and press **Process Image** Again if needed.
-
-### Step 3: 2D Canvas
-1. Draw shapes, import DXF's, and add text how you like
-2. Items can be extruded, cut, or blockers can be added to make islands on cut areas
-3. Adjust Cut Depths, scale, and rotate objects as needed
-
-### Step 3: Generate STL
-1. Press "Generate STL" to output the STL and view it in the "3D Render" tab
-2. Iterate as needed
-3. All design files will be saved within a folder with the same name as the project name
-
-### Step 4: Color and Slice
-1. Bring into your favorite slicer
-2. Color, slice, print
-
-Python 3.10+ and pip
-- Official downloads & docs: https://www.python.org/downloads/
-- Recommended install: use the official python.org Windows installer
-   ```powershell
-   # Download and run the official Windows installer from:
-   # https://www.python.org/downloads/windows/
-   # During the installer, CHECK the "Add Python to PATH" checkbox before installing.
-   ```
-
-- Verify installation (open a new PowerShell window after installing):
-   ```powershell
-   python --version
-   python -m pip --version
-   ```
-
-Important: If you ran the installer from Command Prompt, close and re-open that Command Prompt (or PowerShell) before running the verification commands so PATH changes take effect.
-
-Notes:
-- We recommend the python.org installer so you get an explicit "Add Python to PATH" option and predictable behavior.
-- If you installed Python from the Microsoft Store or another source and `python` is not found in PowerShell, open a new PowerShell window and retry the verification commands above.
-- If `python` is still not found, you can add Python to the current session or permanently to your User PATH (replace the path with your actual install folder):
-
-   Temporary (current session only):
-   ```powershell
-   $env:Path += ';C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39;C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39\Scripts'
-   python --version
-   ```
-
-   Permanent (applies after you close and reopen PowerShell):
-   ```powershell
-   $pythonFolder = 'C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39'
-   $scriptsFolder = "$pythonFolder\Scripts"
-   $existing = [Environment]::GetEnvironmentVariable('Path','User')
-   if (-not ($existing -like "*$pythonFolder*")) {
-      [Environment]::SetEnvironmentVariable('Path', $existing + ';' + $pythonFolder + ';' + $scriptsFolder, 'User')
-      Write-Host "Appended $pythonFolder and Scripts to User PATH. Close and reopen PowerShell."
-   } else {
-      Write-Host "Python path already present in User PATH."
-   }
-   ```
-project locally.
-
-# Quick Start (web + python)
 ---
-These steps assume you're on Windows (PowerShell).
 
-Prerequisites
+## ⭐ Highlights
 
-Node.js (v16+ recommended) and npm
-- Official downloads & docs: https://nodejs.org/
-- Windows quick install (winget):
-   ```powershell
-   winget install OpenJS.NodeJS.LTS
-   ```
-- Verify installation (run these in PowerShell — if you installed Node from Command Prompt, open a new PowerShell window before running):
-   ```powershell
-   node --version
-   npm --version
-   ```
+- **Automatically trace objects** from photos with adjustable thresholding and filters  
+- **Import DXF files**, draw rectangles/circles, and add text on a 2D canvas  
+- **Arrange, rotate, resize, and set cut depths** per object  
+- **Generate STL and DXF** outputs for 3D printing or CAD  
+- Built-in **3D viewer** for previewing your layout  
+- Save & share whole projects as a single **`.gsm` file**   
 
-Python 3.10+ and pip
-- Official downloads & docs: https://www.python.org/downloads/
-- Windows quick install (winget):
-   ```powershell
-   # First, list available Python packages and note the exact Id shown
-   winget search python
+---
 
-   # Use the exact Id from the search results when installing. Examples you may see:
-   winget install --id=Python.Python.3.11 -e
-   winget install --id=Python.Python.3.12 -e
-   winget install --id=Python.Python.3.13 -e
+# 🟢 Installation (Windows Only)
 
-   # If the search shows a generic Id such as 'Python.Python.3' you can install that too:
-   winget install --id=Python.Python.3 -e
-   ```
-- During installation, ensure "Add Python to PATH" is selected. If you installed via the Microsoft Store or an installer, open a new PowerShell window before verifying the install. Verify:
-   ```powershell
-   python --version
-   python -m pip --version
-   ```
+GSM is designed so **non-technical users can install it easily**.
 
-Notes:
-- `winget` manifests vary by system and region; `winget search python` shows the exact `Id` you should pass to `winget install` on your machine.
-- If `winget` fails or you prefer a GUI installer, download the official installer from python.org and enable "Add Python to PATH" during setup.
-- Some installers (including certain Microsoft Store or winget manifests) do not prompt to add Python to your PATH. If after installing Python you get a "python is not recognized" error in PowerShell, do one of the following:
+### ✔ You only need to install:
+1. **Python 3.13+** (official python.org installer recommended; choose 64‑bit and select *Add to PATH*)  
+2. **OpenSCAD Nightly**  
+3. Then run the **setup.ps1** script in PowerShell
 
-   1) Open a new PowerShell window (PATH changes apply only to new shells) and verify if `python` is now available:
-   ```powershell
-   python --version
-   python -m pip --version
-   ```
+---
 
-   2) Temporarily add Python to the current PowerShell session (replace the path below with the folder that contains your `python.exe`):
-   ```powershell
-   # Example common locations; pick the one that exists on your machine
-   Test-Path "$env:LOCALAPPDATA\Programs\Python\Python39\python.exe"
-   Test-Path 'C:\Program Files\Python39\python.exe'
+## 1) Install Python 3.13
 
-   # If python.exe is at C:\Users\<You>\AppData\Local\Programs\Python\Python39, add it to this session's PATH:
-   $env:Path += ';C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39;C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39\Scripts'
-   python --version
-   ```
+Download version 3.13 from python.org and make sure to select **Add to PATH**.
 
-   3) Permanently add Python to your User PATH (replace the path with the one that matches your install). Run this in PowerShell and then close/reopen PowerShell:
-   ```powershell
-   $pythonFolder = 'C:\Users\<YourUser>\AppData\Local\Programs\Python\Python39'
-   $scriptsFolder = "$pythonFolder\Scripts"
-   $existing = [Environment]::GetEnvironmentVariable('Path','User')
-   if (-not ($existing -like "*$pythonFolder*")) {
-      [Environment]::SetEnvironmentVariable('Path', $existing + ';' + $pythonFolder + ';' + $scriptsFolder, 'User')
-      Write-Host "Appended $pythonFolder and Scripts to User PATH. Close and reopen PowerShell."
-   } else {
-      Write-Host "Python path already present in User PATH."
-   }
-   ```
+Verify the install in a command prompt or PowerShell:
 
-   4) If you prefer a simpler developer workflow, consider installing `nvm-windows` and managing Node/Python versions via nvm or use the python.org installer which exposes an explicit "Add to PATH" option.
-
-Notes
-- This repository's helper scripts are designed for Windows PowerShell. Use `.
-   scripts\setup.ps1` from the repository root to install dependencies and set up the environment.
-
-1) Run the setup script (installs Python and frontend dependencies)
 ```powershell
-# from repo root
+python --version
+pip --version
+```
+
+> If "python not recognized" appears, close PowerShell and reopen — PATH updates only apply to new shells.  
+
+---
+
+## 2) Install OpenSCAD Nightly
+
+Download the latest **nightly build**:  
+https://openscad.org/downloads.html#snapshots
+
+You **must** install the nightly version.  
+The 2021 “stable” build only supports extremely slow CGAL rendering and will not work well with GSM's fast manifold pipeline.
+
+
+---
+
+## 3) Run the Setup Script
+
+Inside the `scripts` folder, right‑click **setup.ps1** → *Run with PowerShell*.  
+If Windows SmartScreen blocks it, click **More info → Run anyway**.
+
+The script will:
+
+- Install Python dependencies  
+- Install Node.js automatically (if missing)  
+- Install all frontend dependencies (`npm install` inside `frontend/`)  
+
+No additional steps are required.
+
+---
+
+## 4) Launch Gridfinity Shadow Maker
+
+Double-click **Launch GSM Server.py** from the root folder.  
+If needed, right-click → *Open with Python*.
+
+The two dashboard windows display frontend and backend server logs and status.
+
+Click **Launch App** to open GSM in your browser.
+
+---
+
+# 🚀 Using Gridfinity Shadow Maker
+
+## Step 1 — Take & Prepare Photos
+
+- Place tools on a **lightboard or bright contrasting background**  
+- Use the included **3-inch scaling token** (printable STL in repo root)  
+- Crop images so **all four borders are white** — this helps the tracer detect edges cleanly  
+- Optional but helpful: fill tool shapes with black in MS Paint to enhance contrast  
+
+Example photos are included in `/examples`.
+
+---
+
+## Step 2 — Trace the Object
+
+1. Go to the **Trace Object** tab  
+2. Click **Load Image** and select your photo  
+3. Adjust:
+   - Threshold  
+   - Offset  
+   - Token size  
+   - Resolution  
+4. Click **Process Image Again**, if needed, to regenerate the outline
+   - Repeat adjustments as needed.
+5. Once ready, click **Transfer to Canvas** to move the traces onto your canvas.
+
+
+---
+
+## Step 3 — Build Your Layout on the 2D Canvas
+
+- Import **DXF** files  
+- Draw **Rectangles**, **Circles**, and **Text**  
+- **Move, rotate, scale** any item  
+- Set **cut depth** per object  
+- Add **blockers** to create islands and stepped pockets  
+- Use the **Properties Panel** to fine‑tune rotation, scale, extrusion, and depth  
+
+Your project saves when you click **Save** or when you **Generate STL**, default save location is the projects folder.
+
+---
+
+## Step 4 — Generate the Final STL
+
+1. Click **Generate STL**  
+2. Inspect the 3D preview  
+3. Export the STL  
+4. Open in your slicer → color → slice → print  
+
+---
+
+# 🛠 Troubleshooting
+
+### Python not found
+Close PowerShell → reopen → run:
+
+```powershell
+python --version
+```
+
+If still missing, reinstall from python.org and ensure **Add to PATH** is selected.
+
+### OpenSCAD not found
+Add the nightly installation folder to PATH or reopen PowerShell.
+
+### Setup script errors
+Re-run:
+
 .\scripts\setup.ps1
-```
-This script creates a virtual environment (if missing), installs Python
-dependencies from `requirements.txt` using the virtual environment's Python,
-and runs `npm install` in `frontend/`.
 
-2) Launch the app (starts frontend and backend)
-- Double-click `Launch GSM Server.py` in File Explorer (Windows), or
-- Run from the repo root:
-```powershell
-python "Launch GSM Server.py"
-```
-The launcher/dashboard starts both backend and frontend servers and shows
-their logs. Default server URLs are `http://localhost:5000` (backend) and
-`http://localhost:5173` (frontend), though the frontend dev server may select
-an alternate port if 5173 is occupied.
+---
 
-Important endpoints:
-- `POST /process-image` — accepts `image` file upload and optional form fields: `project`, `threshold`, `offset`, `token`, `resolution`.
-- `POST /save-project` — accepts project JSON to persist `.gsm` into the chosen project folder.
+# 👨‍💻 Developer Notes
 
-Basic developer flow (sanity checks)
-- Set a `Project Name` in the header — the server will create a per-project
-   folder at the repository root (`<repoRoot>/<ProjectName>`).
-- Trace tab → `Load Image` → upload a photo. Check `<repoRoot>/<ProjectName>/processing_output`
-   for `original.png`, `traced.png`, `offset.png`, and `meta.json`.
-- Canvas tab → `+ Import DXF`: you can multi-select DXF files; imported shapes
-   preserve DXF coordinates and rotate about their bounding-box centroid.
-- Select a shape and press `Delete` or `Backspace` on the 2D Canvas to remove it.
-- Header `Save` will attempt to save `.gsm` into the project folder via the
-   backend; if the backend is unreachable it falls back to a local file download.
+- **Frontend:** `frontend/` (React + TypeScript + Vite)  
+- **Backend:** `backend/` (Node + Express)  
+- **Image Processing:** `src/processing.py` (Python, OpenCV, Pillow)  
+- **SCAD Generation:** `src/scadgen/`  
+- Backend STL export uses **OpenSCAD Manifold Mode** (requires nightly build)
 
-Where files live
-- Per-project folder: `GridfinityShadowMaker/<ProjectName>/`
-- Processing outputs: `GridfinityShadowMaker/<ProjectName>/processing_output`
-- DXF files created by proc
+Contributions welcome!  
+See `LICENSE` for details.
 
-Contributing
-- Please follow the project code style. Frontend changes live under
-   `frontend/src` (TypeScript + React); backend is in `backend` (Node/Express);
-   image-processing logic is in `src/processing.py` (Python).
-
-AI-assisted contributions:
-- If you use an AI assistant to help with development, load `AI_README.md` into your tool of choice; it contains an agent-focused summary of the architecture, key files, runtime commands, and high-value tasks to speed onboarding and productive contributions.
-
-License
-- See `LICENSE` at the repository root.
+---
