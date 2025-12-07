@@ -66,7 +66,14 @@ The script will:
 - Install Node.js automatically (if missing)  
 - Install all frontend dependencies (`npm install` inside `frontend/`)  
 
-No additional steps are required.
+> If a black window opens and closes you may have an execution policy issue. Open a new powershell by right-clicking on PowerShell and select Run as Administrator.
+> Then run the following command:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope LocalMachine
+```
+
+> This changes the execution policy for all users on the machine, but be aware that it requires admin rights and could have wider implications.
 
 ---
 
