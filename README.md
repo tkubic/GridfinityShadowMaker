@@ -23,9 +23,10 @@ Created to support **industrial 5S/Standardize programs** and high-reliability t
 GSM is designed so **non-technical users can install it easily**.
 
 ### ✔ You only need to install:
-1. **Python 3.13+** (official python.org installer recommended; choose 64‑bit and select *Add to PATH*)  
-2. **OpenSCAD Nightly**  
-3. Then run the **setup.ps1** script in PowerShell
+1. **Python 3.13** (official python.org installer recommended; choose 64‑bit and select *Add to PATH*)
+    - version 3.14 has been giving issues and not currently recommended  
+3. **OpenSCAD Nightly**  
+4. Then run the **setup.ps1** script in PowerShell
 
 ---
 
