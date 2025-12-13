@@ -190,6 +190,27 @@ export default function Inspector({
                 }
               />
             </div>
+            <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="chamferEnabled"
+                checked={board.chamferEnabled ?? true}
+                onChange={(e) => updateBoard({ chamferEnabled: e.target.checked })}
+              />
+              <label htmlFor="chamferEnabled" style={{ marginBottom: 0 }}>Add Chamfer</label>
+            </div>
+            {(board.chamferEnabled ?? true) && (
+              <div className="field">
+                <label>Chamfer Height (mm)</label>
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  value={board.chamferHeight ?? 2}
+                  onChange={(e) => updateBoard({ chamferHeight: Math.max(0, parseFloat(e.target.value) || 0) })}
+                />
+              </div>
+            )}
             <small>1 unit = {board.cellSizeMM} mm</small>
           </div>
         </>
@@ -425,6 +446,129 @@ export default function Inspector({
                   style={{ width: "100%" }}
                 />
               </div>
+
+              {/* Split to Sections - for Text Cut type shapes */}
+              {(selectedShape.cutType ?? "Cut") === "Cut" && (
+                <>
+                  <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      id="splitToSectionsText"
+                      checked={selectedShape.splitToSections ?? false}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        if (enabled) {
+                          const depth = selectedShape.depthMM ?? 15;
+                          updateShape(selectedShape.id, {
+                            splitToSections: true,
+                            sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
+                            sectionWidths: [40, 20],
+                            sectionRotation: 0,
+                          });
+                        } else {
+                          updateShape(selectedShape.id, { splitToSections: false });
+                        }
+                      }}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <label htmlFor="splitToSectionsText" style={{ marginBottom: 0 }}>Split to Sections</label>
+                  </div>
+
+                  {selectedShape.splitToSections && (
+                    <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+                      <div className="field">
+                        <label>Section Depths (mm)</label>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[0] ?? 20}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 1 (innermost)"
+                          />
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[1] ?? 15}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 2 (middle)"
+                          />
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[2] ?? 10}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 3 (outermost)"
+                          />
+                        </div>
+                        <small style={{ color: '#888', fontSize: '0.75rem' }}>Inner → Outer</small>
+                      </div>
+
+                      <div className="field">
+                        <label>Center Island / Offset (mm)</label>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={selectedShape.sectionWidths?.[0] ?? 40}
+                            onChange={(e) => {
+                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionWidths: widths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Center island width (mm)"
+                          />
+                          <input
+                            type="number"
+                            step="1"
+                            min="-9999"
+                            value={selectedShape.sectionWidths?.[1] ?? 20}
+                            onChange={(e) => {
+                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              widths[1] = parseFloat(e.target.value) || 0;
+                              updateShape(selectedShape.id, { sectionWidths: widths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Offset of center island from center (mm). Positive shifts right."
+                          />
+                        </div>
+                        <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>
+                      </div>
+
+                      <div className="field">
+                        <label>Section Rotation (deg)</label>
+                        <input
+                          type="number"
+                          step="1"
+                          value={selectedShape.sectionRotation ?? 0}
+                          onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
 
@@ -496,6 +640,129 @@ export default function Inspector({
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
                 />
               </div>
+
+              {/* Split to Sections - for DXF Cut type shapes */}
+              {(selectedShape.cutType ?? "Cut") === "Cut" && (
+                <>
+                  <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      id="splitToSectionsDxf"
+                      checked={selectedShape.splitToSections ?? false}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        if (enabled) {
+                          const depth = selectedShape.depthMM ?? 15;
+                          updateShape(selectedShape.id, {
+                            splitToSections: true,
+                            sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
+                            sectionWidths: [40, 20],
+                            sectionRotation: 0,
+                          });
+                        } else {
+                          updateShape(selectedShape.id, { splitToSections: false });
+                        }
+                      }}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <label htmlFor="splitToSectionsDxf" style={{ marginBottom: 0 }}>Split to Sections</label>
+                  </div>
+
+                  {selectedShape.splitToSections && (
+                    <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+                      <div className="field">
+                        <label>Section Depths (mm)</label>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[0] ?? 20}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 1 (innermost)"
+                          />
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[1] ?? 15}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 2 (middle)"
+                          />
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            value={selectedShape.sectionDepths?.[2] ?? 10}
+                            onChange={(e) => {
+                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                              depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionDepths: depths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Depth 3 (outermost)"
+                          />
+                        </div>
+                        <small style={{ color: '#888', fontSize: '0.75rem' }}>Inner → Outer</small>
+                      </div>
+
+                      <div className="field">
+                        <label>Center Island / Offset (mm)</label>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={selectedShape.sectionWidths?.[0] ?? 40}
+                            onChange={(e) => {
+                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                              updateShape(selectedShape.id, { sectionWidths: widths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Center island width (mm)"
+                          />
+                          <input
+                            type="number"
+                            step="1"
+                            min="-9999"
+                            value={selectedShape.sectionWidths?.[1] ?? 20}
+                            onChange={(e) => {
+                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              widths[1] = parseFloat(e.target.value) || 0;
+                              updateShape(selectedShape.id, { sectionWidths: widths });
+                            }}
+                            style={{ width: '100%' }}
+                            title="Offset of center island from center (mm). Positive shifts right."
+                          />
+                        </div>
+                        <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>
+                      </div>
+
+                      <div className="field">
+                        <label>Section Rotation (deg)</label>
+                        <input
+                          type="number"
+                          step="1"
+                          value={selectedShape.sectionRotation ?? 0}
+                          onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </>
           ) : selectedShape.type === "text" ? null : (
             <>
@@ -571,6 +838,132 @@ export default function Inspector({
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
                 />
               </div>
+
+              {/* Split to Sections - only for Cut type shapes */}
+              {(selectedShape.cutType ?? "Cut") === "Cut" && (
+                <>
+                  <div className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      id="splitToSections"
+                      checked={selectedShape.splitToSections ?? false}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        // Initialize default section values when enabling
+                        if (enabled) {
+                          const depth = selectedShape.depthMM ?? 15;
+                          updateShape(selectedShape.id, {
+                            splitToSections: true,
+                            sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
+                            sectionWidths: [40, 20],
+                            sectionRotation: 0,
+                          });
+                        } else {
+                          updateShape(selectedShape.id, { splitToSections: false });
+                        }
+                      }}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    <label htmlFor="splitToSections" style={{ marginBottom: 0 }}>Split to Sections</label>
+                  </div>
+
+                  {selectedShape.splitToSections && (
+                    <>
+                      <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
+                        <div className="field">
+                          <label>Section Depths (mm)</label>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={selectedShape.sectionDepths?.[0] ?? 20}
+                              onChange={(e) => {
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              }}
+                              style={{ width: '100%' }}
+                              title="Depth 1 (innermost)"
+                            />
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={selectedShape.sectionDepths?.[1] ?? 15}
+                              onChange={(e) => {
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              }}
+                              style={{ width: '100%' }}
+                              title="Depth 2 (middle)"
+                            />
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={selectedShape.sectionDepths?.[2] ?? 10}
+                              onChange={(e) => {
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              }}
+                              style={{ width: '100%' }}
+                              title="Depth 3 (outermost)"
+                            />
+                          </div>
+                          <small style={{ color: '#888', fontSize: '0.75rem' }}>Inner → Outer</small>
+                        </div>
+
+                        <div className="field">
+                          <label>Center Island / Offset (mm)</label>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              value={selectedShape.sectionWidths?.[0] ?? 40}
+                              onChange={(e) => {
+                                const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                                widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              }}
+                              style={{ width: '100%' }}
+                              title="Center island width (mm)"
+                            />
+                            <input
+                              type="number"
+                              step="1"
+                              min="-9999"
+                              value={selectedShape.sectionWidths?.[1] ?? 20}
+                              onChange={(e) => {
+                                const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                                widths[1] = parseFloat(e.target.value) || 0;
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              }}
+                              style={{ width: '100%' }}
+                              title="Offset of center island from center (mm). Positive shifts right."
+                            />
+                          </div>
+                          <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>
+                        </div>
+
+                        <div className="field">
+                          <label>Section Rotation (deg)</label>
+                          <input
+                            type="number"
+                            step="1"
+                            value={selectedShape.sectionRotation ?? 0}
+                            onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </>
           )}
 

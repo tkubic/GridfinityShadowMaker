@@ -471,6 +471,58 @@ export default function Canvas({
           const xPx = cx - wPx / 2;
           const yPx = cy - hPx / 2;
           const rotDeg = shape.rotateDeg ?? 0;
+
+          // Section visualization: render 3 vertical strip zones when splitToSections is enabled
+          // This matches OpenSCAD's three_section_shape which divides into left/center/right strips
+          if (shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") {
+            const sectionWidths = shape.sectionWidths ?? [40, 20];
+            const sectionRotation = shape.sectionRotation ?? 0;
+            const totalRotation = rotDeg + sectionRotation;
+
+            // Section colors: left, center, right
+            const sectionColors = ['#ff6666', '#cc0000', '#ff3333'];
+
+            // Interpret sectionWidths[0] = center island width; sectionWidths[1] = offset from center
+            const centerWidthMM = sectionWidths[0] ?? 40;
+            const offsetMM = sectionWidths[1] ?? 20;
+            const centerWidthPx = Math.min(centerWidthMM * scaleX, wPx);
+            const offsetPx = offsetMM * scaleX;
+
+            // Determine the left coordinate for the center island, clamped to stay inside the rect
+            let centerLeft = cx - centerWidthPx / 2 + offsetPx;
+            const minCenterLeft = xPx;
+            const maxCenterLeft = xPx + wPx - centerWidthPx;
+            if (centerLeft < minCenterLeft) centerLeft = minCenterLeft;
+            if (centerLeft > maxCenterLeft) centerLeft = maxCenterLeft;
+
+            const leftPxWidth = Math.max(0, centerLeft - xPx);
+            const rightPxWidth = Math.max(0, xPx + wPx - (centerLeft + centerWidthPx));
+
+            return (
+              <g key={shape.id} onMouseDown={startDragFor} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}>
+                {leftPxWidth > 0 && (
+                  <rect x={xPx} y={yPx} width={leftPxWidth} height={hPx} fill={sectionColors[0]} />
+                )}
+                <rect x={centerLeft} y={yPx} width={centerWidthPx} height={hPx} fill={sectionColors[1]} />
+                {rightPxWidth > 0 && (
+                  <rect x={centerLeft + centerWidthPx} y={yPx} width={rightPxWidth} height={hPx} fill={sectionColors[2]} />
+                )}
+                {/* Selection outline */}
+                {isSelected && (
+                  <rect
+                    x={xPx}
+                    y={yPx}
+                    width={wPx}
+                    height={hPx}
+                    fill="none"
+                    stroke="#ffff66"
+                    strokeWidth={3}
+                  />
+                )}
+              </g>
+            );
+          }
+
           return (
             <rect
               key={shape.id}
@@ -496,6 +548,72 @@ export default function Canvas({
           const baseH = shape.heightMM ?? 20;
           const rx = (baseW * scaleX) / 2;
           const ry = (baseH * scaleY) / 2;
+
+          // Section visualization for ovals - use clip paths with vertical strips
+          if (shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") {
+            const sectionWidths = shape.sectionWidths ?? [40, 20];
+            const sectionRotation = shape.sectionRotation ?? 0;
+            const totalRotation = rotDeg + sectionRotation;
+
+            // Section colors: left, center, right
+            const sectionColors = ['#ff6666', '#cc0000', '#ff3333'];
+
+            // total width in pixels
+            const totalW = baseW * scaleX;
+
+            // Interpret sectionWidths[0] = center island width; sectionWidths[1] = offset from center
+            const centerWidthMM = sectionWidths[0] ?? 40;
+            const offsetMM = sectionWidths[1] ?? 20;
+            const centerWidthPx = Math.min(centerWidthMM * scaleX, totalW);
+            const offsetPx = offsetMM * scaleX;
+
+            const leftEdge = cx - rx;
+            // centerLeft = centered + offset, clamped
+            let centerLeft = leftEdge + (totalW - centerWidthPx) / 2 + offsetPx;
+            const minCenterLeft = leftEdge;
+            const maxCenterLeft = leftEdge + totalW - centerWidthPx;
+            if (centerLeft < minCenterLeft) centerLeft = minCenterLeft;
+            if (centerLeft > maxCenterLeft) centerLeft = maxCenterLeft;
+
+            const leftPx = Math.max(0, centerLeft - leftEdge);
+            const midPx = centerWidthPx;
+            const rightPx = Math.max(0, totalW - leftPx - midPx);
+
+            const clipId = `oval-clip-${shape.id}`;
+
+            return (
+              <g key={shape.id} onMouseDown={startDragFor}>
+                <defs>
+                  <clipPath id={clipId}>
+                    <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined} />
+                  </clipPath>
+                </defs>
+                <g clipPath={`url(#${clipId})`} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}>
+                  {leftPx > 0 && (
+                    <rect x={leftEdge} y={cy - ry} width={leftPx} height={ry * 2} fill={sectionColors[0]} />
+                  )}
+                  {midPx > 0 && (
+                    <rect x={centerLeft} y={cy - ry} width={midPx} height={ry * 2} fill={sectionColors[1]} />
+                  )}
+                  {rightPx > 0 && (
+                    <rect x={centerLeft + midPx} y={cy - ry} width={rightPx} height={ry * 2} fill={sectionColors[2]} />
+                  )}
+                </g>
+                {/* Selection outline */}
+                <ellipse
+                  cx={cx}
+                  cy={cy}
+                  rx={rx}
+                  ry={ry}
+                  transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}
+                  fill="none"
+                  stroke={isSelected ? "#ffff66" : "none"}
+                  strokeWidth={isSelected ? 3 : 0}
+                />
+              </g>
+            );
+          }
+
           return (
             <ellipse
               key={shape.id}
@@ -553,24 +671,84 @@ export default function Canvas({
                   return paths.map((path, idx) => {
                     if (!path || !path.length) return null;
                     const isHole = !!holeFlags[idx];
-                    const fill = isHole ? 'none' : fillColorFor(shape);
-                    const d = path.map((p, i) => {
+
+                    // Build absolute pixel coordinates for the polygon
+                    const pts = path.map((p) => {
                       const px = centerXpx + p.x * s * scaleX;
                       const py = centerYpx - p.y * s * scaleY;
-                      return `${i === 0 ? "M" : "L"} ${px} ${py}`;
-                    }).join(" ") + " Z";
+                      return { px, py };
+                    });
+                    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.px} ${p.py}`).join(" ") + " Z";
+
+                    // If this is a hole, render as a normal path outline (no section fills)
+                    const strokeColor = isSelected ? "#ffff66" : (shape.splitToSections ? "#ffcc00" : "#ffaaaa");
+                    const strokeW = isSelected ? 3 : (shape.splitToSections ? 2 : 1);
+                    if (isHole || !(shape.splitToSections && (shape.cutType ?? "Cut") === "Cut")) {
+                      return (
+                        <path
+                          key={idx}
+                          d={d}
+                          fill={isHole ? 'none' : fillColorFor(shape)}
+                          stroke={strokeColor}
+                          strokeWidth={strokeW}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                        />
+                      );
+                    }
+
+                    // For sectioned DXF shapes: draw three left-to-right strips clipped to the polygon
+                    const xs = pts.map((p) => p.px);
+                    const ys = pts.map((p) => p.py);
+                    const minX = Math.min(...xs);
+                    const maxX = Math.max(...xs);
+                    const minY = Math.min(...ys);
+                    const maxY = Math.max(...ys);
+                    const totalW = Math.max(0, maxX - minX);
+                    const totalH = Math.max(0, maxY - minY);
+
+                    // sectionWidths[0] = center island width, sectionWidths[1] = offset from center
+                    const centerWmm = (shape.sectionWidths && shape.sectionWidths.length > 0) ? shape.sectionWidths[0] : 40;
+                    const offsetMm = (shape.sectionWidths && shape.sectionWidths.length > 1) ? shape.sectionWidths[1] : 20;
+                    const centerPx = Math.min(centerWmm * s * scaleX, totalW);
+                    const offsetPx = offsetMm * s * scaleX;
+
+                    let centerLeft = minX + (totalW - centerPx) / 2 + offsetPx;
+                    const minCenterLeft = minX;
+                    const maxCenterLeft = minX + totalW - centerPx;
+                    if (centerLeft < minCenterLeft) centerLeft = minCenterLeft;
+                    if (centerLeft > maxCenterLeft) centerLeft = maxCenterLeft;
+
+                    const leftPxW = Math.max(0, centerLeft - minX);
+                    const rightPxW = Math.max(0, minX + totalW - (centerLeft + centerPx));
+
+                    const clipId = `dxf-clip-${shape.id}-${idx}`;
+                    const sectionColors = ['#ff6666', '#cc0000', '#ff3333'];
 
                     return (
-                      <path
-                        key={idx}
-                        d={d}
-                        fill={fill}
-                        fillOpacity={shape.cutType === "Raised" ? 1 : 1}
-                        stroke={isSelected ? "#ffff66" : "#ffaaaa"}
-                        strokeWidth={isSelected ? 3 : 1}
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                      />
+                      <g key={idx}>
+                        <defs>
+                          <clipPath id={clipId}>
+                            <path d={d} />
+                          </clipPath>
+                        </defs>
+                        {leftPxW > 0 && (
+                          <rect x={minX} y={minY} width={leftPxW} height={totalH} fill={sectionColors[0]} clipPath={`url(#${clipId})`} />
+                        )}
+                        <rect x={centerLeft} y={minY} width={centerPx} height={totalH} fill={sectionColors[1]} clipPath={`url(#${clipId})`} />
+                        {rightPxW > 0 && (
+                          <rect x={centerLeft + centerPx} y={minY} width={rightPxW} height={totalH} fill={sectionColors[2]} clipPath={`url(#${clipId})`} />
+                        )}
+                        {/* Outline on top */}
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke={strokeColor}
+                          strokeWidth={strokeW}
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                        />
+                      </g>
                     );
                   });
                 })()
@@ -671,7 +849,11 @@ export default function Canvas({
                   return paths.map((path, idx) => {
                     if (!path || !path.length) return null;
                     const isHole = !!holeFlags[idx];
-                    const fill = isHole ? 'rgba(0, 0, 0, 1)' : fillColorFor(shape);
+                    // When splitToSections is enabled, use a darker fill to indicate sections
+                    let fill = isHole ? 'rgba(0, 0, 0, 1)' : fillColorFor(shape);
+                    if (!isHole && shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") {
+                      fill = '#cc0000'; // Darker red to indicate sectioned
+                    }
                     const d = path.map((p: { x: number; y: number }, i: number) => {
                       // rotate the local point (p.x/p.y are relative to centroid)
                       // Use negated angle to match SVG/group rotation direction
@@ -686,16 +868,22 @@ export default function Canvas({
                       return `${i === 0 ? "M" : "L"} ${px} ${py}`;
                     }).join(" ") + " Z";
 
+                    // Add dashed stroke to indicate sections are enabled
+                    const strokeStyle = shape.splitToSections && (shape.cutType ?? "Cut") === "Cut" 
+                      ? { strokeDasharray: "4 2" } 
+                      : {};
+
                     return (
                       <path
                         key={idx}
                         d={d}
                         fill={fill}
                         fillOpacity={shape.cutType === "Raised" ? 1 : 1}
-                        stroke={isSelected ? "#ffff66" : "#ffaaaa"}
-                        strokeWidth={isSelected ? 3 : 1}
+                        stroke={isSelected ? "#ffff66" : (shape.splitToSections ? "#ffcc00" : "#ffaaaa")}
+                        strokeWidth={isSelected ? 3 : (shape.splitToSections ? 2 : 1)}
                         strokeLinejoin="round"
                         strokeLinecap="round"
+                        {...strokeStyle}
                       />
                     );
                   });

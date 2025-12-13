@@ -35,6 +35,8 @@ function App() {
       gridY: 3,
       cellSizeMM: 42,
       height7Units: 6,
+      chamferEnabled: true,
+      chamferHeight: 2,
     },
     shapes: [],
   });

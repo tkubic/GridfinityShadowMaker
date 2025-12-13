@@ -30,6 +30,12 @@ dxf_file_path = "examples/example.dxf";
 // [x position, y position, rotation degrees]
 position = [[0, 0, 0]]; // .1
 
+// DXF section paths (shapes with 3-depth section cuts)
+// NOTE: Populated by src/processing.py for shapes with splitToSections enabled
+dxf_sections = [];
+section_cut_depth = [];
+section_parameters = [];
+
 
 /* [Finger Slot Options] */
 use_finger_slots = false; // true or false
@@ -162,7 +168,7 @@ module extrude_dxf_section(dxf_file_path, cut_depth) {
     }
 }
 
-module three_section_shape(width, depth, section_cut_depth, section_parameters) {
+module three_section_shape(width, depth, section_cut_depth, section_parameters,section_pos) {
     section_width = section_parameters[0];
     section_position = section_parameters[1];
     section_angle = section_parameters[2];
@@ -175,7 +181,7 @@ module three_section_shape(width, depth, section_cut_depth, section_parameters) 
     right_w = max(0, total_width - (center_x + center_w));
 
     // Rotate about the center of the bounding box
-    translate([0, 0, 0]) {
+    translate([section_pos[0], section_pos[1], 0]) {
         rotate([0, 0, section_angle]) {
             translate([-total_width/2, min(-total_depth/2,-total_width/2), 0]) {
                 // Left section
@@ -196,9 +202,9 @@ module three_section_shape(width, depth, section_cut_depth, section_parameters) 
     }
 }
 
-module dxf_three_section_shape(width, depth, section_cut_depth, section_parameters, dxf_file_path) {
+module dxf_three_section_shape(width, depth, section_cut_depth, section_parameters, dxf_file_path,section_pos) {
     intersection() {
-        three_section_shape(width, depth, section_cut_depth, section_parameters);
+        three_section_shape(width, depth, section_cut_depth, section_parameters,section_pos);
         extrude_dxf_section(dxf_file_path, max(section_cut_depth));
     }
 }
@@ -253,19 +259,22 @@ difference() {
                     baseTextDepth = text_depth)
             );
 
-            // Position, rotate, and extrude the DXF shape to perform the cut
+            // Position, rotate, and extrude the DXF shape to perform the cut (regular shapes)
             for (i = [0 : len(dxf_file_paths) - 1]) {
-                translate([position[i][0], position[i][1], height[0]*7 - (use_section_cut ? max(section_cut_depth[i]) : dxf_cut_depths[i]) - (include_cutout ? cutout_height : 0)]) {
+                translate([position[i][0], position[i][1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
                     rotate([0, 0, position[i][2]]) {
-                        if (use_section_cut) {
-                            dxf_three_section_shape(
-                                width, depth, section_cut_depth[i], section_parameters[i],
-                                dxf_file_paths[i]
-                            );
-                        } else {
-                            extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + (include_cutout ? cutout_height : 0));
-                        }
+                        extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + (include_cutout ? cutout_height : 0));
                     }
+                }
+            }
+            
+            // Position, rotate, and extrude section-cut DXF shapes (3-depth sections)
+            for (i = [0 : len(dxf_sections) - 1]) {
+                translate([0, 0, height[0]*7 - max(section_cut_depth[i]) - (include_cutout ? cutout_height : 0)]) {
+                    dxf_three_section_shape(
+                        width, depth, section_cut_depth[i], section_parameters[i],
+                        dxf_sections[i],section_positions[i]
+                    );
                 }
             }
             // Add the finger slots

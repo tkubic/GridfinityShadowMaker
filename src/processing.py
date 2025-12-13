@@ -382,6 +382,11 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                             raised_paths = []
                             raised_heights = []
                             blocker_paths = []
+                            # Track section cuts separately from regular cuts
+                            section_paths = []
+                            section_depths_list = []  # List of [d1, d2, d3] arrays
+                            section_params_list = []  # List of [w1, w2, rotation] arrays
+                            section_positions_list = []  # List of [x, y] positions (mm) for sectioned shapes
                             # Build a name->type/depth map to prefer robust name-based mapping
                             import re as _re
                             def _norm(s: str) -> str:
@@ -493,16 +498,77 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                     # Blockers are recorded separately; their height is computed in SCAD
                                     blocker_paths.append(pth)
                                 else:
-                                    # default to cut: record path and its depth
-                                    cut_paths.append(pth)
-                                    cut_depths.append(d_int)
+                                    # Check if this cut has splitToSections enabled
+                                    split_enabled = False
+                                    if isinstance(it, dict):
+                                        split_enabled = it.get('splitToSections', False)
+                                    
+                                    if split_enabled:
+                                        # Add to section cuts array
+                                        section_paths.append(pth)
+                                        # Capture section position (x,y) if available on the item
+                                        pos_x = 0.0
+                                        pos_y = 0.0
+                                        if isinstance(it, dict):
+                                            # common keys: 'x', 'y' or 'position' array
+                                            try:
+                                                if it.get('x') is not None:
+                                                    pos_x = float(it.get('x'))
+                                                elif it.get('pos_x') is not None:
+                                                    pos_x = float(it.get('pos_x'))
+                                                elif it.get('position') and isinstance(it.get('position'), (list, tuple)) and len(it.get('position')) >= 1:
+                                                    pos_x = float(it.get('position')[0])
+                                            except Exception:
+                                                pos_x = 0.0
+                                            try:
+                                                if it.get('y') is not None:
+                                                    pos_y = float(it.get('y'))
+                                                elif it.get('pos_y') is not None:
+                                                    pos_y = float(it.get('pos_y'))
+                                                elif it.get('position') and isinstance(it.get('position'), (list, tuple)) and len(it.get('position')) >= 2:
+                                                    pos_y = float(it.get('position')[1])
+                                            except Exception:
+                                                pos_y = 0.0
+                                        # append position in mm
+                                        try:
+                                            section_positions_list.append([pos_x, pos_y])
+                                        except Exception:
+                                            section_positions_list.append([0.0, 0.0])
+                                        # Get section depths
+                                        sd = it.get('sectionDepths')
+                                        if sd and isinstance(sd, (list, tuple)) and len(sd) >= 3:
+                                            try:
+                                                section_depths_list.append([float(sd[0]), float(sd[1]), float(sd[2])])
+                                            except Exception:
+                                                section_depths_list.append([d, d * 0.67, d * 0.33])
+                                        else:
+                                            section_depths_list.append([d, d * 0.67, d * 0.33])
+                                        # Get section params (widths + rotation)
+                                        sw = it.get('sectionWidths')
+                                        sr = it.get('sectionRotation', 0)
+                                        w1, w2 = 40, 20
+                                        if sw and isinstance(sw, (list, tuple)) and len(sw) >= 2:
+                                            try:
+                                                w1, w2 = float(sw[0]), float(sw[1])
+                                            except Exception:
+                                                pass
+                                        try:
+                                            sr = float(sr)
+                                        except Exception:
+                                            sr = 0
+                                        section_params_list.append([w1, w2, sr])
+                                    else:
+                                        # default to cut: record path and its depth
+                                        cut_paths.append(pth)
+                                        cut_depths.append(d_int)
 
-                            # override dxf_file_paths to only include cuts for downstream blocks
+                            # override dxf_file_paths to only include regular cuts for downstream blocks
                             dxf_file_paths = cut_paths
                             # Debugging: log classification so we can verify mapping
                             try:
                                 print('import_to_openscad: classification (index-aligned items):')
                                 print('  cut_paths:', cut_paths)
+                                print('  section_paths:', section_paths)
                                 print('  raised_paths:', raised_paths)
                                 print('  blocker_paths:', blocker_paths)
                                 print('  cut_depths:', cut_depths)
@@ -732,25 +798,46 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                     dxf_cut_depths_scad += f'{name} = [{", ".join(arr)}];\n'
                 concat_line = f'dxf_cut_depths = concat({", ".join(array_names)});\n'
 
-            # Generate section_cut_depth_N and section_parameters_N arrays, then concatenate
-            section_cut_depth_names = []
-            section_param_names = []
-            section_blocks = []
-            for idx in range(len(dxf_file_paths)):
-                cut_name = f'section_cut_depth_{idx+1}'
-                param_name = f'section_parameters_{idx+1}'
-                section_cut_depth_names.append(cut_name)
-                section_param_names.append(param_name)
-                section_blocks.append(f'{cut_name} = [20, 15, 10];\n{param_name} = [40, 0, 0];')
-            section_cut_depth_concat = f'section_cut_depth = [{', '.join(section_cut_depth_names)}];\n'
-            section_parameters_concat = f'section_parameters = [{', '.join(section_param_names)}];\n'
             # Prepare SCAD strings for any raised/blocker DXFs found earlier
             dxf_file_paths_raised = raised_paths if 'raised_paths' in locals() else []
             dxf_raised_heights = raised_heights if 'raised_heights' in locals() else []
             dxf_file_paths_blocker = blocker_paths if 'blocker_paths' in locals() else []
+            # Prepare SCAD strings for section cut DXFs
+            dxf_sections = section_paths if 'section_paths' in locals() else []
+            section_depths_data = section_depths_list if 'section_depths_list' in locals() else []
+            section_params_data = section_params_list if 'section_params_list' in locals() else []
+            
             dxf_raised_paths_scad = 'dxf_file_paths_raised = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths_raised]) + '\n];\n'
             dxf_raised_heights_scad = 'dxf_raised_heights = [' + ', '.join([_fmt_num(h) for h in dxf_raised_heights]) + '];\n'
             dxf_blocker_paths_scad = 'dxf_file_paths_blocker = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths_blocker]) + '\n];\n'
+            # Generate dxf_sections array and its associated depths/params
+            dxf_sections_scad = 'dxf_sections = [\n' + ',\n'.join([f'"{p}"' for p in dxf_sections]) + '\n];\n'
+            # Generate section_cut_depth and section_parameters arrays for section paths
+            section_cut_depth_scad = ''
+            section_params_scad = ''
+            if section_depths_data:
+                depth_arrays = []
+                param_arrays = []
+                for idx, (depths, params) in enumerate(zip(section_depths_data, section_params_data)):
+                    depth_str = ', '.join([_fmt_num(d) for d in depths])
+                    param_str = ', '.join([_fmt_num(p) for p in params])
+                    depth_arrays.append(f'[{depth_str}]')
+                    param_arrays.append(f'[{param_str}]')
+                section_cut_depth_scad = 'section_cut_depth = [\n' + ',\n'.join(depth_arrays) + '\n];\n'
+                section_params_scad = 'section_parameters = [\n' + ',\n'.join(param_arrays) + '\n];\n'
+                # section_positions (x,y) for each section path
+                pos_arrays = []
+                for pos in section_positions_list:
+                    try:
+                        pos_arrays.append(f'[{_fmt_num(pos[0])}, {_fmt_num(pos[1])}]')
+                    except Exception:
+                        pos_arrays.append('[0, 0]')
+                section_positions_scad = 'section_positions = [\n' + ',\n'.join(pos_arrays) + '\n];\n'
+            else:
+                section_cut_depth_scad = 'section_cut_depth = [];\n'
+                section_params_scad = 'section_parameters = [];\n'
+                section_positions_scad = 'section_positions = [];\n'
+            
             # Generate position_1, position_2, ... and position array using pos_xy from temp file
             pos_xy = None
             try:
@@ -796,24 +883,30 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 flags=re.DOTALL
             )
 
-            # Recompute dxf_paths_scad to reflect any split (cuts-only) done above
+            # Recompute dxf_paths_scad to reflect any split (cuts-only, non-sectioned) done above
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
-            # Insert all blocks inside /* [Section Adjustments] */ in the requested order
+            # Insert all blocks including dxf_sections
             scad_block = dxf_paths_scad + dxf_raised_paths_scad + dxf_raised_heights_scad + dxf_blocker_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
             updated_scad_content = updated_scad_content.replace(
                 'dxf_file_path = "examples/example.dxf";',
                 scad_block
             )
 
-            section_marker = '/* [Section Adjustments] */'
-            if section_marker in updated_scad_content:
-                parts = updated_scad_content.split(section_marker, 1)
-                after_marker = parts[1]
-                new_block = '\nuse_section_cut = false; // true or false\n'
-                for block in section_blocks:
-                    new_block += block + '\n'
-                new_block += section_cut_depth_concat + section_parameters_concat
-                updated_scad_content = parts[0] + section_marker + new_block + after_marker
+            # Replace the dxf_sections placeholder block. Support both the
+            # older template (3-line placeholder) and the newer (4-line
+            # placeholder including section_positions). Try the 4-line
+            # replacement first, then fall back to replacing the 3-line
+            # placeholder so older templates are still supported.
+            updated_scad_content = updated_scad_content.replace(
+                'dxf_sections = [];\nsection_cut_depth = [];\nsection_parameters = [];\nsection_positions = [];',
+                dxf_sections_scad + section_cut_depth_scad + section_params_scad + section_positions_scad
+            )
+            # Fallback for templates that don't include section_positions
+            updated_scad_content = updated_scad_content.replace(
+                'dxf_sections = [];\nsection_cut_depth = [];\nsection_parameters = [];',
+                dxf_sections_scad + section_cut_depth_scad + section_params_scad + section_positions_scad
+            )
+
             # Ensure `size` is replaced with GSM board values (gridX, gridY, height).
             try:
                 gx = int(gridx_size) if gridx_size is not None else 5
@@ -828,6 +921,36 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             except Exception:
                 gz = 6
             updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gx}, {gy}, {gz}];')
+
+            # Determine chamfer settings from GSM `board` if available. Default: enabled, 2mm
+            chamfer_enabled = True
+            chamfer_height_val = 2
+            try:
+                if 'gsm_obj' in locals() and isinstance(gsm_obj, dict):
+                    bp = gsm_obj.get('board')
+                    if bp and isinstance(bp, dict):
+                        # support keys 'chamferEnabled' (bool) and 'chamferHeight' (number)
+                        if 'chamferEnabled' in bp:
+                            chamfer_enabled = bool(bp.get('chamferEnabled'))
+                        if 'chamferHeight' in bp:
+                            try:
+                                chamfer_height_val = float(bp.get('chamferHeight'))
+                            except Exception:
+                                chamfer_height_val = chamfer_height_val
+            except Exception:
+                pass
+
+            # Replace use_chamfered_extrude and chamfer_height lines in template
+            try:
+                updated_scad_content = updated_scad_content.replace('use_chamfered_extrude = true;', f'use_chamfered_extrude = {str(bool(chamfer_enabled)).lower()};')
+            except Exception:
+                pass
+            try:
+                # Template contains a comment; replace the canonical line if present
+                updated_scad_content = updated_scad_content.replace('chamfer_height = 2;      // mm, height of chamfer', f'chamfer_height = {chamfer_height_val};      // mm, height of chamfer')
+                updated_scad_content = updated_scad_content.replace('chamfer_height = 2;', f'chamfer_height = {chamfer_height_val};')
+            except Exception:
+                pass
         else:
             # Make single DXF path relative to project folder when possible
             try:

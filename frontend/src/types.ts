@@ -5,6 +5,9 @@ export type BoardConfig = {
   gridY: number;
   cellSizeMM: number;
   height7Units?: number;
+  // Chamfer controls for DXF chamfered extrusion
+  chamferEnabled?: boolean;
+  chamferHeight?: number;
 };
 
 export type ShapeType = "rect" | "oval" | "dxf" | "text";
@@ -47,6 +50,14 @@ export type ToolShape = {
   dxfName?: string;
   dxfPaths?: Array<Array<{ x: number; y: number }>>; // points in mm, relative to shape center
   rotateDeg?: number;
+  // Split to Sections: enables 3-depth section cutting for this shape
+  splitToSections?: boolean;
+  // Depths for each of the 3 sections (innermost to outermost), in mm
+  sectionDepths?: [number, number, number];
+  // Widths for sections 1 and 2 (section 3 extends to edge), in mm
+  sectionWidths?: [number, number];
+  // Rotation angle for section cut orientation, in degrees
+  sectionRotation?: number;
 };
 
 export type Project = {
