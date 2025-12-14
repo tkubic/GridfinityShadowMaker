@@ -890,12 +890,24 @@ export default function Canvas({
                 if ((e as React.MouseEvent).detail > 1) return;
                 startDragFor(e as React.MouseEvent<SVGGraphicsElement, MouseEvent>);
               }}
-              onDoubleClick={(e) => {
+                onDoubleClick={(e) => {
                 e.stopPropagation();
                 selectItem(shape.id);
                 setDraggingId(null);
                 setDragOffset(null);
-                setTimeout(() => textInputRef.current?.focus(), 0);
+                // Focus the text input and select all text so typing or
+                // backspace/ delete will replace the entire value.
+                setTimeout(() => {
+                  const el = textInputRef.current as HTMLInputElement | null;
+                  if (el) {
+                    el.focus();
+                    try {
+                      el.select();
+                    } catch {
+                      // ignore selection errors in older browsers
+                    }
+                  }
+                }, 0);
               }}
             >
               {hasPaths ? (

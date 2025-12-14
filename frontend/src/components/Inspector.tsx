@@ -75,6 +75,53 @@ export default function Inspector({
     // the buffered `editFields` when a shape is selected. Only register
     // the @font-face so the inspector select can render correctly.
   }, [selectedShape, setEditFields]);
+  // Keep track of which inspector field (if any) the user is actively editing.
+  const [focusedField, setFocusedField] = React.useState<string | null>(null);
+
+  // When the selected shape's key properties change externally (for example
+  // when the user drags or rotates the shape), and the inspector field is
+  // not currently being edited, clear the edit buffer so the inspector shows
+  // the live values. If a field is focused we don't clear so the user's
+  // in-progress edit isn't disrupted.
+  React.useEffect(() => {
+    if (!selectedShape) {
+      setEditFields({});
+      return;
+    }
+    if (focusedField) return;
+    // Snapshot a subset of properties that we care about for live display.
+    const snapshot = JSON.stringify({
+      x: selectedShape.x,
+      y: selectedShape.y,
+      rotateDeg: selectedShape.rotateDeg,
+      scale: selectedShape.scale,
+      depthMM: selectedShape.depthMM,
+      widthMM: selectedShape.widthMM,
+      heightMM: selectedShape.heightMM,
+      fontSize: selectedShape.fontSize,
+      cutType: selectedShape.cutType,
+      splitToSections: selectedShape.splitToSections,
+      sectionDepths: selectedShape.sectionDepths,
+      sectionWidths: selectedShape.sectionWidths,
+    });
+    // Clearing the editFields causes inputs to render the live values again.
+    setEditFields({});
+    // Depend on the snapshot so this effect runs when those values change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedField, selectedShape ? JSON.stringify({
+    x: selectedShape.x,
+    y: selectedShape.y,
+    rotateDeg: selectedShape.rotateDeg,
+    scale: selectedShape.scale,
+    depthMM: selectedShape.depthMM,
+    widthMM: selectedShape.widthMM,
+    heightMM: selectedShape.heightMM,
+    fontSize: selectedShape.fontSize,
+    cutType: selectedShape.cutType,
+    splitToSections: selectedShape.splitToSections,
+    sectionDepths: selectedShape.sectionDepths,
+    sectionWidths: selectedShape.sectionWidths,
+  }) : null]);
   // If we're in trace tab, show trace-specific controls in the inspector
   if (activeTab === "trace") {
     // trace inputs are lifted into App state via props
@@ -414,10 +461,14 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.fontSize ?? ((selectedShape.fontSizeMM ?? 15)).toFixed(1)}
+                  value={editFields.fontSize !== undefined ? editFields.fontSize : ((selectedShape.fontSizeMM ?? 15)).toFixed(1)}
+                  onFocus={() => {
+                    setFocusedField('fontSize');
+                    if (editFields.fontSize === undefined) setEditFields({ ...editFields, fontSize: ((selectedShape.fontSizeMM ?? 15)).toFixed(1) });
+                  }}
                   onChange={(e) => setEditFields({ ...editFields, fontSize: e.target.value })}
-                  onBlur={() => commitEditField("fontSize")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("fontSize"); }}
+                  onBlur={() => { setFocusedField(null); commitEditField("fontSize"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("fontSize"); (e.target as HTMLInputElement).blur(); } }}
                 />
               </div>
 
@@ -426,10 +477,14 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  value={editFields.depth !== undefined ? editFields.depth : ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                  onFocus={() => {
+                    setFocusedField('depth');
+                    if (editFields.depth === undefined) setEditFields({ ...editFields, depth: ((selectedShape.depthMM ?? 0.6)).toFixed(1) });
+                  }}
                   onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                  onBlur={() => commitEditField("depth")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
                 />
@@ -439,7 +494,10 @@ export default function Inspector({
                 <input
                   type="number"
                   step="1"
-                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                  value={editFields.rotate !== undefined ? editFields.rotate : ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                  onFocus={() => {
+                    if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
+                  }}
                   onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
                   onBlur={() => commitEditField("rotate")}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
@@ -580,9 +638,13 @@ export default function Inspector({
                 step="0.1"
                 value={editFields.x ?? (selectedShape.x ?? 0).toFixed(1)}
                 onChange={(e) => setEditFields({ ...editFields, x: e.target.value })}
+                onFocus={() => {
+                  setFocusedField('x');
+                  if (editFields.x === undefined) setEditFields({ ...editFields, x: (selectedShape.x ?? 0).toFixed(1) });
+                }}
                 style={{ width: "100%" }}
-                onBlur={() => commitEditField("x")}
-                onKeyDown={(e) => { if (e.key === "Enter") commitEditField("x"); }}
+                onBlur={() => { setFocusedField(null); commitEditField("x"); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("x"); (e.target as HTMLInputElement).blur(); } }}
               />
             </div>
 
@@ -593,9 +655,13 @@ export default function Inspector({
                 step="0.1"
                 value={editFields.y ?? (selectedShape.y ?? 0).toFixed(1)}
                 onChange={(e) => setEditFields({ ...editFields, y: e.target.value })}
+                onFocus={() => {
+                  setFocusedField('y');
+                  if (editFields.y === undefined) setEditFields({ ...editFields, y: (selectedShape.y ?? 0).toFixed(1) });
+                }}
                 style={{ width: "100%" }}
-                onBlur={() => commitEditField("y")}
-                onKeyDown={(e) => { if (e.key === "Enter") commitEditField("y"); }}
+                onBlur={() => { setFocusedField(null); commitEditField("y"); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("y"); (e.target as HTMLInputElement).blur(); } }}
               />
             </div>
           </div>
@@ -607,11 +673,15 @@ export default function Inspector({
                 <input
                   type="number"
                   step="1"
-                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
-                  onBlur={() => commitEditField("rotate")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
-                  style={{ width: "100%" }}
+                      value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
+                      onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                      onFocus={() => {
+                        setFocusedField('rotate');
+                        if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: (selectedShape.rotateDeg ?? 0).toFixed(1) });
+                      }}
+                      onBlur={() => { setFocusedField(null); commitEditField("rotate"); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("rotate"); (e.target as HTMLInputElement).blur(); } }}
+                      style={{ width: "100%" }}
                 />
               </div>
               <div className="field">
@@ -620,11 +690,15 @@ export default function Inspector({
                   type="number"
                   step="0.1"
                   min={0.1}
-                  value={editFields.scale ?? ((selectedShape.scale ?? 1)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, scale: e.target.value })}
-                  onBlur={() => commitEditField("scale")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("scale"); }}
-                  style={{ width: "100%" }}
+                      value={editFields.scale ?? ((selectedShape.scale ?? 1)).toFixed(1)}
+                      onChange={(e) => setEditFields({ ...editFields, scale: e.target.value })}
+                      onFocus={() => {
+                        setFocusedField('scale');
+                        if (editFields.scale === undefined) setEditFields({ ...editFields, scale: (selectedShape.scale ?? 1).toFixed(1) });
+                      }}
+                      onBlur={() => { setFocusedField(null); commitEditField("scale"); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("scale"); (e.target as HTMLInputElement).blur(); } }}
+                      style={{ width: "100%" }}
                 />
               </div>
               <div className="field">
@@ -632,11 +706,15 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                  onBlur={() => commitEditField("depth")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
-                  style={{ width: "100%" }}
+                      value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
+                      onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                      onFocus={() => {
+                        setFocusedField('depth');
+                        if (editFields.depth === undefined) setEditFields({ ...editFields, depth: (selectedShape.depthMM ?? 0.6).toFixed(1) });
+                      }}
+                      onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
+                      style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
                 />
               </div>
@@ -775,8 +853,12 @@ export default function Inspector({
                         type="number"
                         value={editFields.width ?? (selectedShape.widthMM ?? 0).toString()}
                         onChange={(e) => setEditFields({ ...editFields, width: e.target.value })}
-                        onBlur={() => commitEditField("width")}
-                        onKeyDown={(e) => { if (e.key === "Enter") commitEditField("width"); }}
+                        onFocus={() => {
+                          setFocusedField('width');
+                          if (editFields.width === undefined) setEditFields({ ...editFields, width: (selectedShape.widthMM ?? 0).toString() });
+                        }}
+                        onBlur={() => { setFocusedField(null); commitEditField("width"); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("width"); (e.target as HTMLInputElement).blur(); } }}
                       />
                     </div>
 
@@ -786,8 +868,12 @@ export default function Inspector({
                         type="number"
                         value={editFields.height ?? (selectedShape.heightMM ?? 0).toString()}
                         onChange={(e) => setEditFields({ ...editFields, height: e.target.value })}
-                        onBlur={() => commitEditField("height")}
-                        onKeyDown={(e) => { if (e.key === "Enter") commitEditField("height"); }}
+                        onFocus={() => {
+                          setFocusedField('height');
+                          if (editFields.height === undefined) setEditFields({ ...editFields, height: (selectedShape.heightMM ?? 0).toString() });
+                        }}
+                        onBlur={() => { setFocusedField(null); commitEditField("height"); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("height"); (e.target as HTMLInputElement).blur(); } }}
                       />
                     </div>
                   </div>
@@ -820,8 +906,12 @@ export default function Inspector({
                   step="1"
                   value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
                   onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
-                  onBlur={() => commitEditField("rotate")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
+                  onFocus={() => {
+                    setFocusedField('rotate');
+                    if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
+                  }}
+                  onBlur={() => { setFocusedField(null); commitEditField("rotate"); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("rotate"); (e.target as HTMLInputElement).blur(); } }}
                   style={{ width: "100%" }}
                 />
               </div>
@@ -974,6 +1064,88 @@ export default function Inspector({
               marginTop: 12,
             }}
           >
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <button
+                className="action-text-button"
+                onClick={() => {
+                  if (!selectedShape) return;
+                  // If the shape has vectorized paths, reflect them across the
+                  // shape-local bounding-box center so the visual geometry is
+                  // actually mirrored (not just translated). Otherwise fall
+                  // back to mirroring by moving the shape center across board X.
+                  const sp: any = selectedShape as any;
+                  if (sp.dxfPaths && Array.isArray(sp.dxfPaths) && sp.dxfPaths.length) {
+                    // Collect all points to compute local bbox
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    for (const path of sp.dxfPaths) {
+                      if (!path) continue;
+                      for (const p of path) {
+                        const px = Number(p.x || 0);
+                        const py = Number(p.y || 0);
+                        if (px < minX) minX = px;
+                        if (px > maxX) maxX = px;
+                        if (py < minY) minY = py;
+                        if (py > maxY) maxY = py;
+                      }
+                    }
+                    if (!isFinite(minX)) return;
+                    const cx = (minX + maxX) / 2;
+                    // Reflect each point across cx
+                    const newPaths = sp.dxfPaths.map((path: any[]) => {
+                      if (!path) return path;
+                      return path.map((p: any) => ({ x: Math.round((2 * cx - Number(p.x || 0)) * 10) / 10, y: Math.round(Number(p.y || 0) * 10) / 10 }));
+                    });
+                    updateShape(selectedShape.id, { dxfPaths: newPaths });
+                    return;
+                  }
+
+                  // Fallback: mirror by moving the shape center across board center X
+                  const centerX = (board.gridX * (board.cellSizeMM ?? 42)) / 2;
+                  const newX = Math.round((2 * centerX - (selectedShape.x ?? 0)) * 10) / 10;
+                  updateShape(selectedShape.id, { x: newX });
+                }}
+                title="Mirror selected shape across the board vertical (X) axis"
+              >
+                Mirror X
+              </button>
+              <button
+                className="action-text-button"
+                onClick={() => {
+                  if (!selectedShape) return;
+                  const sp: any = selectedShape as any;
+                  if (sp.dxfPaths && Array.isArray(sp.dxfPaths) && sp.dxfPaths.length) {
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    for (const path of sp.dxfPaths) {
+                      if (!path) continue;
+                      for (const p of path) {
+                        const px = Number(p.x || 0);
+                        const py = Number(p.y || 0);
+                        if (px < minX) minX = px;
+                        if (px > maxX) maxX = px;
+                        if (py < minY) minY = py;
+                        if (py > maxY) maxY = py;
+                      }
+                    }
+                    if (!isFinite(minY)) return;
+                    const cy = (minY + maxY) / 2;
+                    const newPaths = sp.dxfPaths.map((path: any[]) => {
+                      if (!path) return path;
+                      return path.map((p: any) => ({ x: Math.round(Number(p.x || 0) * 10) / 10, y: Math.round((2 * cy - Number(p.y || 0)) * 10) / 10 }));
+                    });
+                    updateShape(selectedShape.id, { dxfPaths: newPaths });
+                    return;
+                  }
+
+                  // Fallback: mirror by moving the shape center across board center Y
+                  const centerY = (board.gridY * (board.cellSizeMM ?? 42)) / 2;
+                  const newY = Math.round((2 * centerY - (selectedShape.y ?? 0)) * 10) / 10;
+                  updateShape(selectedShape.id, { y: newY });
+                }}
+                title="Mirror selected shape across the board horizontal (Y) axis"
+              >
+                Mirror Y
+              </button>
+            </div>
             <button
               className="delete-shape-button"
               onClick={() => selectedShape && deleteShape(selectedShape.id)}
