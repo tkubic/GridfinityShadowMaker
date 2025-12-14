@@ -49,6 +49,26 @@ function App() {
   // local edit fields for inspector inputs (allow typing before commit)
   const [editFields, setEditFields] = useState<Record<string, string>>({});
 
+  // Active tab (trace / canvas / render)
+  const [activeTab, setActiveTab] = useState<"trace" | "canvas" | "render">("canvas");
+
+  // Undo/redo stacks for canvas actions
+  const UNDO_LIMIT = 100;
+  const [undoStack, setUndoStack] = useState<Project[]>([]);
+  const [redoStack, setRedoStack] = useState<Project[]>([]);
+  const undoStackRef = useRef<Project[]>([]);
+  const redoStackRef = useRef<Project[]>([]);
+  const historyOpInFlightRef = useRef(false);
+  const lastHistoryHashRef = useRef<string | null>(null);
+  const lastUndoTsRef = useRef(0);
+  const lastRedoTsRef = useRef(0);
+  const isApplyingHistoryRef = useRef(false);
+  const activeTabRef = useRef<"trace" | "canvas" | "render">("canvas");
+
+  React.useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  React.useEffect(() => { undoStackRef.current = undoStack; }, [undoStack]);
+  React.useEffect(() => { redoStackRef.current = redoStack; }, [redoStack]);
+
   const { board, shapes } = project;
 
   // Refs and state for measuring and adjusting SVG text size so mm->px mapping is accurate
@@ -59,6 +79,119 @@ function App() {
   // potentially-stale closures captured at render time.
   const projectRef = useRef(project);
   React.useEffect(() => { projectRef.current = project; }, [project]);
+
+  // Utility: deep-clone the current project for undo/redo snapshots
+  const snapshotProject = React.useCallback((): Project => {
+    return JSON.parse(JSON.stringify(projectRef.current)) as Project;
+  }, []);
+
+  // Push the current project onto the undo stack (canvas tab only)
+  const pushHistoryCheckpoint = React.useCallback((label?: string) => {
+    if (isApplyingHistoryRef.current) return;
+    if (activeTabRef.current !== "canvas") return;
+    const snap = snapshotProject();
+    try {
+      const hash = JSON.stringify(snap);
+      if (hash === lastHistoryHashRef.current) {
+        return;
+      }
+      lastHistoryHashRef.current = hash;
+    } catch {
+      // if hashing fails, continue to push
+    }
+    setUndoStack((prev) => {
+      const next = [...prev, snap];
+      const trimmed = next.length > UNDO_LIMIT ? next.slice(next.length - UNDO_LIMIT) : next;
+      console.info('history:push', { label: label ?? 'checkpoint', undoSizeBefore: prev.length, undoSizeAfter: trimmed.length, redoSizeBefore: redoStackRef.current.length, activeTab: activeTabRef.current });
+      return trimmed;
+    });
+    setRedoStack((prev) => {
+      if (prev.length) console.info('history:clearRedo', { label: label ?? 'checkpoint', cleared: prev.length });
+      return [];
+    });
+  }, [snapshotProject]);
+
+  const undo = React.useCallback(() => {
+    if (activeTabRef.current !== "canvas") return;
+    const now = Date.now();
+    if (now - lastUndoTsRef.current < 50) {
+      console.info('history:undo:skip-throttle');
+      return;
+    }
+    lastUndoTsRef.current = now;
+    if (historyOpInFlightRef.current) {
+      console.info('history:undo:skip-inflight');
+      return;
+    }
+    if (!undoStackRef.current.length) return;
+    historyOpInFlightRef.current = true;
+
+    const prevProject = undoStackRef.current[undoStackRef.current.length - 1];
+    const currSnapshot = snapshotProject();
+    // mutate refs first
+    undoStackRef.current = undoStackRef.current.slice(0, -1);
+    const nextRedo = [...redoStackRef.current, currSnapshot];
+    redoStackRef.current = nextRedo.length > UNDO_LIMIT ? nextRedo.slice(nextRedo.length - UNDO_LIMIT) : nextRedo;
+
+    // apply state once
+    setUndoStack(undoStackRef.current);
+    setRedoStack(redoStackRef.current);
+    isApplyingHistoryRef.current = true;
+    setProject(prevProject);
+    try { lastHistoryHashRef.current = JSON.stringify(prevProject); } catch {}
+    setSelectedItem("board");
+    setSelectedItems([]);
+    setEditFields({});
+    setDraggingId(null);
+    setDragOffset(null);
+    setTimeout(() => { isApplyingHistoryRef.current = false; }, 0);
+    console.info('history:undo', {
+      undoSizeBefore: undoStackRef.current.length + 1,
+      undoSizeAfter: undoStackRef.current.length,
+      redoSizeAfter: redoStackRef.current.length,
+    });
+    historyOpInFlightRef.current = false;
+  }, [snapshotProject]);
+
+  const redo = React.useCallback(() => {
+    if (activeTabRef.current !== "canvas") return;
+    const now = Date.now();
+    if (now - lastRedoTsRef.current < 50) {
+      console.info('history:redo:skip-throttle');
+      return;
+    }
+    lastRedoTsRef.current = now;
+    if (historyOpInFlightRef.current) {
+      console.info('history:redo:skip-inflight');
+      return;
+    }
+    if (!redoStackRef.current.length) return;
+    historyOpInFlightRef.current = true;
+
+    const nextProject = redoStackRef.current[redoStackRef.current.length - 1];
+    const currSnapshot = snapshotProject();
+    redoStackRef.current = redoStackRef.current.slice(0, -1);
+    const nextUndo = [...undoStackRef.current, currSnapshot];
+    undoStackRef.current = nextUndo.length > UNDO_LIMIT ? nextUndo.slice(nextUndo.length - UNDO_LIMIT) : nextUndo;
+
+    setUndoStack(undoStackRef.current);
+    setRedoStack(redoStackRef.current);
+    isApplyingHistoryRef.current = true;
+    setProject(nextProject);
+    try { lastHistoryHashRef.current = JSON.stringify(nextProject); } catch {}
+    setSelectedItem("board");
+    setSelectedItems([]);
+    setEditFields({});
+    setDraggingId(null);
+    setDragOffset(null);
+    setTimeout(() => { isApplyingHistoryRef.current = false; }, 0);
+    console.info('history:redo', {
+      redoSizeBefore: redoStackRef.current.length + 1,
+      redoSizeAfter: redoStackRef.current.length,
+      undoSizeAfter: undoStackRef.current.length,
+    });
+    historyOpInFlightRef.current = false;
+  }, [snapshotProject]);
 
   // Measure and correct text node sizes after paint to better match requested mm height.
   // (Effect will be placed after scaleX/scaleY are defined.)
@@ -105,7 +238,27 @@ function App() {
 
   // Text sizing uses direct mm->px conversion (px per mm) — no measurement loop.
 
-  function updateShape(id: string, partial: Partial<ToolShape>) {
+  function updateShape(id: string, partial: Partial<ToolShape>, opts?: { skipHistory?: boolean }) {
+    // Only record history when a meaningful change occurs
+    const current = projectRef.current.shapes.find((s) => s.id === id);
+    if (!current) return;
+    let hasDiff = false;
+    for (const [k, v] of Object.entries(partial)) {
+      const curVal = (current as any)[k];
+      const nextVal = v as any;
+      const isObject = typeof nextVal === 'object';
+      const equal = isObject ? JSON.stringify(curVal) === JSON.stringify(nextVal) : curVal === nextVal;
+      if (!equal) { hasDiff = true; break; }
+    }
+    if (!hasDiff) {
+      console.info('updateShape: no-op diff', { id, keys: Object.keys(partial), skipHistory: !!opts?.skipHistory });
+      return;
+    }
+
+    console.info('updateShape: apply', { id, keys: Object.keys(partial), skipHistory: !!opts?.skipHistory });
+
+    if (!opts?.skipHistory) pushHistoryCheckpoint('updateShape');
+
     // Apply the partial update and, if the update touches text/font properties,
     // attempt to re-vectorize the text into `dxfPaths` so the canvas contains
     // exact vector geometry immediately.
@@ -256,10 +409,28 @@ function App() {
   }
 
   function updateBoard(partial: Partial<BoardConfig>) {
-    setProject((prev) => ({
-      ...prev,
-      board: { ...prev.board, ...partial },
-    }));
+    // Skip history if the board would remain identical
+    const current = projectRef.current.board;
+    let hasDiff = false;
+    for (const [k, v] of Object.entries(partial)) {
+      const curVal = (current as any)[k];
+      const nextVal = v as any;
+      const isObject = typeof nextVal === 'object';
+      const equal = isObject ? JSON.stringify(curVal) === JSON.stringify(nextVal) : curVal === nextVal;
+      if (!equal) { hasDiff = true; break; }
+    }
+    if (!hasDiff) {
+      console.info('updateBoard: no-op diff', { keys: Object.keys(partial) });
+      return;
+    }
+
+    console.info('updateBoard: apply', { keys: Object.keys(partial) });
+
+    pushHistoryCheckpoint('updateBoard');
+    setProject((prev) => {
+      const next = { ...prev, board: { ...prev.board, ...partial } } as typeof project;
+      return next;
+    });
   }
 
   // commit buffered edit field into selected shape
@@ -331,6 +502,7 @@ function App() {
     const next = shapeCounter + 1;
     const id = `shape-${next}`;
     setShapeCounter(next);
+
     const newShape: ToolShape = {
       id,
       type: "oval",
@@ -342,6 +514,7 @@ function App() {
       depthMM: 15,
       cutType: "Cut",
     };
+    pushHistoryCheckpoint('addDefaultShape');
     setProject((prev) => ({ ...prev, shapes: [...prev.shapes, newShape] }));
     selectItem(id);
   }
@@ -477,6 +650,7 @@ function App() {
 
   function deleteShape(idOrIds: string | string[]) {
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    pushHistoryCheckpoint('deleteShape');
     setProject((prev) => ({
       ...prev,
       shapes: prev.shapes.filter((s) => !ids.includes(s.id)),
@@ -494,7 +668,6 @@ function App() {
   // image input for Trace tab
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"trace" | "canvas" | "render">("canvas");
   const [processedImages, setProcessedImages] = useState<{ original?: string | null; traced?: string | null; offset?: string | null; dxf?: { dxf_path?: string | null; gridx_size?: number; gridy_size?: number } | null; used_input?: string | null } | null>(null);
 
   // Pending polylines returned from the processing endpoint but not yet
@@ -575,6 +748,8 @@ function App() {
         }
         setShapeCounter(maxCounter);
         setProject(parsed);
+        setUndoStack([]);
+        setRedoStack([]);
         // reset selection and edit fields
         selectItem("board");
       } catch (err) {
@@ -669,6 +844,7 @@ function App() {
 
     if (created.length) {
       setShapeCounter(nextCounter);
+      pushHistoryCheckpoint('import-dxf');
       setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
       // select last imported shape
       selectItem(created[created.length - 1].id);
@@ -1127,6 +1303,7 @@ function App() {
         console.warn('Failed to center transferred shapes', e);
       }
 
+      pushHistoryCheckpoint('transfer-trace');
       setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
       setShapeCounter(nextCounter);
     }
@@ -1217,6 +1394,7 @@ function App() {
         created.push(clone as ToolShape);
       }
       if (created.length) {
+        pushHistoryCheckpoint('paste');
         setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
         setShapeCounter(next);
         // select pasted shapes
@@ -1253,6 +1431,33 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [clipboardShapes, project, selectedItem, selectedItems, shapeCounter, board]);
+
+  // Keyboard shortcuts: Ctrl+Z / Ctrl+Y (or Cmd on mac) for undo/redo on Canvas tab
+  React.useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target && target.tagName ? target.tagName.toUpperCase() : '';
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable);
+      if (isInput) return;
+      if (activeTabRef.current !== 'canvas') return;
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = (e.key || '').toLowerCase();
+        if (k === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            redo();
+          } else {
+            undo();
+          }
+        } else if (k === 'y') {
+          e.preventDefault();
+          redo();
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undo, redo]);
 
   const selectedShape =
     selectedItem === "board"
@@ -1336,6 +1541,10 @@ function App() {
         onLoadClick={() => gsmInputRef.current?.click()}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
       />
       <input ref={gsmInputRef} type="file" accept=".gsm,application/json" style={{ display: 'none' }} onChange={handleGsmFile} />
 
@@ -1376,6 +1585,7 @@ function App() {
               FONT_SIZE_CORRECTION={FONT_SIZE_CORRECTION}
               textInputRef={textInputRef}
               deleteShape={deleteShape}
+              pushHistoryCheckpoint={pushHistoryCheckpoint}
             />
           ) : activeTab === "trace" ? (
             <TraceCanvas images={processedImages ?? undefined} />

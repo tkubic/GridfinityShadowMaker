@@ -361,7 +361,7 @@ export async function convertTextShapeToPolygons(
 
   if (minX === Infinity) {
     try {
-      scope.clear();
+      (scope as any).clear?.();
     } catch (e) {
       /* ignore */
     }
@@ -396,7 +396,7 @@ export async function convertTextShapeToPolygons(
 
   // cleanup paper scope
   try {
-    scope.clear();
+    (scope as any).clear?.();
   } catch (e) {
     /* ignore */
   }

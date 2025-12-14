@@ -9,9 +9,13 @@ type Props = {
   onLoadClick: () => void;
   activeTab: TabKey;
   setActiveTab: (t: TabKey) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 };
 
-export default function Header({ projectName, onRename, onSave, onLoadClick, activeTab, setActiveTab }: Props) {
+export default function Header({ projectName, onRename, onSave, onLoadClick, activeTab, setActiveTab, onUndo, onRedo, canUndo, canRedo }: Props) {
   const [draft, setDraft] = useState(projectName);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -50,6 +54,24 @@ export default function Header({ projectName, onRename, onSave, onLoadClick, act
             }}
             style={{ width: "auto", maxWidth: "60vw", minWidth: 200, padding: "6px 8px", border: "1px solid #000", borderRadius: 4, whiteSpace: "nowrap", boxSizing: "border-box" }}
           />
+          <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
+            <button
+              onClick={onUndo}
+              disabled={activeTab !== "canvas" || !canUndo}
+              title="Undo (Ctrl+Z)"
+              style={{ padding: "6px 8px" }}
+            >
+              Undo
+            </button>
+            <button
+              onClick={onRedo}
+              disabled={activeTab !== "canvas" || !canRedo}
+              title="Redo (Ctrl+Y)"
+              style={{ padding: "6px 8px" }}
+            >
+              Redo
+            </button>
+          </div>
         </div>
       </div>
 

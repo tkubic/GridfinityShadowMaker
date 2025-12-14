@@ -15,7 +15,7 @@ interface InspectorProps {
   editFields: Record<string, string>;
   setEditFields: (f: Record<string, string>) => void;
   commitEditField: (key: string) => void;
-  updateShape: (id: string, partial: Partial<ToolShape>) => void;
+  updateShape: (id: string, partial: Partial<ToolShape>, opts?: { skipHistory?: boolean }) => void;
   updateBoard: (partial: Partial<BoardConfig>) => void;
   deleteShape: (id: string) => void;
   textInputRef: React.RefObject<HTMLInputElement | null>;
@@ -89,21 +89,6 @@ export default function Inspector({
       return;
     }
     if (focusedField) return;
-    // Snapshot a subset of properties that we care about for live display.
-    const snapshot = JSON.stringify({
-      x: selectedShape.x,
-      y: selectedShape.y,
-      rotateDeg: selectedShape.rotateDeg,
-      scale: selectedShape.scale,
-      depthMM: selectedShape.depthMM,
-      widthMM: selectedShape.widthMM,
-      heightMM: selectedShape.heightMM,
-      fontSize: selectedShape.fontSize,
-      cutType: selectedShape.cutType,
-      splitToSections: selectedShape.splitToSections,
-      sectionDepths: selectedShape.sectionDepths,
-      sectionWidths: selectedShape.sectionWidths,
-    });
     // Clearing the editFields causes inputs to render the live values again.
     setEditFields({});
     // Depend on the snapshot so this effect runs when those values change.
@@ -116,7 +101,7 @@ export default function Inspector({
     depthMM: selectedShape.depthMM,
     widthMM: selectedShape.widthMM,
     heightMM: selectedShape.heightMM,
-    fontSize: selectedShape.fontSize,
+    fontSizeMM: selectedShape.fontSizeMM,
     cutType: selectedShape.cutType,
     splitToSections: selectedShape.splitToSections,
     sectionDepths: selectedShape.sectionDepths,
@@ -353,7 +338,6 @@ export default function Inspector({
                   onBlur={() => updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      updateShape(selectedShape.id, { text: editFields.text ?? selectedShape.text ?? selectedShape.name });
                       (e.target as HTMLInputElement).blur();
                     }
                   }}

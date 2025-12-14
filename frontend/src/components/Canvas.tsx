@@ -14,7 +14,7 @@ type Props = {
   selectedItem: "board" | string;
   selectedItems: string[];
   selectItem: (id: "board" | string, append?: boolean) => void;
-  updateShape: (id: string, partial: Partial<ToolShape>) => void;
+  updateShape: (id: string, partial: Partial<ToolShape>, opts?: { skipHistory?: boolean }) => void;
   draggingId: string | null;
   dragOffset: { x: number; y: number } | null;
   setDraggingId: (id: string | null) => void;
@@ -22,6 +22,7 @@ type Props = {
   FONT_SIZE_CORRECTION: number;
   textInputRef: React.RefObject<HTMLInputElement | null>;
   deleteShape: (id: string | string[]) => void;
+  pushHistoryCheckpoint: (label?: string) => void;
 };
 
 export default function Canvas({
@@ -41,6 +42,7 @@ export default function Canvas({
   FONT_SIZE_CORRECTION,
   textInputRef,
   deleteShape,
+  pushHistoryCheckpoint,
 }: Props) {
   // cache loaded opentype fonts by filename/url
   const fontCacheRef = React.useRef<Record<string, opentype.Font | null>>({});
@@ -74,6 +76,8 @@ export default function Canvas({
   }, [drawShapes]);
   // refs to manage group dragging
   const groupOffsetsRef = React.useRef<Record<string, { x: number; y: number }>>({});
+  // Track whether the current pointer gesture already pushed a history checkpoint
+  const gestureHistoryPushedRef = React.useRef(false);
 
   // convert mouse event to board mm coords (origin bottom-left)
   function getSvgPoint(evt: React.MouseEvent<SVGSVGElement, MouseEvent>) {
@@ -117,10 +121,21 @@ export default function Canvas({
   // Keyboard handler: delete, arrow moves (shift fine), ctrl+arrow rotate
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      let checkpointed = false;
+      const ensureCheckpoint = () => {
+        if (!checkpointed) {
+          pushHistoryCheckpoint('key-move');
+          checkpointed = true;
+        }
+      };
       if (e.key === "Delete") {
-        if (selectedItems && selectedItems.length) {
+        const hasMulti = selectedItems && selectedItems.length;
+        const hasSingle = selectedItem && selectedItem !== "board";
+        if (!hasMulti && !hasSingle) return;
+        ensureCheckpoint();
+        if (hasMulti) {
           deleteShape(selectedItems);
-        } else if (selectedItem && selectedItem !== "board") {
+        } else if (hasSingle) {
           deleteShape(selectedItem);
         }
         return;
@@ -136,15 +151,17 @@ export default function Canvas({
 
       // rotation when ctrl/meta is held and Left/Right
       if (e.ctrlKey || e.metaKey) {
-        // rotate whole selection around bounding-box center (more intuitive)
         const delta = (e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0);
+        if (delta === 0) return;
+        ensureCheckpoint();
+        // rotate whole selection around bounding-box center (more intuitive)
         if (targets.length === 1) {
           // single item -> rotate in place
           const id = targets[0];
           const s = drawShapes.find((d) => d.id === id);
           if (!s) return;
           const next = Math.round((s.rotateDeg ?? 0) + delta);
-          updateShape(id, { rotateDeg: next });
+          updateShape(id, { rotateDeg: next }, { skipHistory: true });
           return;
         }
 
@@ -181,12 +198,13 @@ export default function Canvas({
           const newX = Math.round((centerX + rx) * 10) / 10;
           const newY = Math.round((centerY + ry) * 10) / 10;
           const nextRot = Math.round((s.rotateDeg ?? 0) + delta);
-          updateShape(id, { x: newX, y: newY, rotateDeg: nextRot });
+          updateShape(id, { x: newX, y: newY, rotateDeg: nextRot }, { skipHistory: true });
         }
         return;
       }
 
       // translation
+      ensureCheckpoint();
       for (const id of targets) {
         const s = drawShapes.find((d) => d.id === id);
         if (!s) continue;
@@ -197,23 +215,27 @@ export default function Canvas({
         if (e.key === "ArrowDown") dy = -step;
         const newX = Math.round(((s.x ?? 0) + dx) * 10) / 10;
         const newY = Math.round(((s.y ?? 0) + dy) * 10) / 10;
-        updateShape(id, { x: newX, y: newY });
+        updateShape(id, { x: newX, y: newY }, { skipHistory: true });
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedItem, selectedItems, drawShapes, updateShape, deleteShape]);
+  }, [selectedItem, selectedItems, drawShapes, updateShape, deleteShape, pushHistoryCheckpoint]);
 
   // SVG-level mouse move handles group dragging when set
   function onMouseMove(e: React.MouseEvent<SVGSVGElement, MouseEvent>) {
     if (!draggingId || !groupOffsetsRef.current) return;
+    if (!gestureHistoryPushedRef.current) {
+      pushHistoryCheckpoint('group-drag');
+      gestureHistoryPushedRef.current = true;
+    }
     const pt = getSvgPoint(e);
     // compute new position for each id in groupOffsets
     for (const id of Object.keys(groupOffsetsRef.current)) {
       const off = groupOffsetsRef.current[id];
       const newXmm = Math.round((pt.x - off.x) * 10) / 10;
       const newYmm = Math.round((pt.y - off.y) * 10) / 10;
-      updateShape(id, { x: newXmm, y: newYmm });
+      updateShape(id, { x: newXmm, y: newYmm }, { skipHistory: true });
     }
   }
 
@@ -227,6 +249,10 @@ export default function Canvas({
   // handle mouse move for resizing (separate from group drag)
   function onMouseMoveResize(e: React.MouseEvent<SVGSVGElement, MouseEvent>) {
     if (!resizingRef.current || !resizingRef.current.id) return;
+    if (!gestureHistoryPushedRef.current) {
+      pushHistoryCheckpoint('resize-gesture');
+      gestureHistoryPushedRef.current = true;
+    }
     const id = resizingRef.current.id;
     const handle = resizingRef.current.handle!;
     const sLocal = drawShapes.find((d) => d.id === id);
@@ -313,7 +339,7 @@ export default function Canvas({
     const newCenterWorldX = Math.round(((s.x ?? 0) + (centerLocal.x * cosr - centerLocal.y * sinr)) * 10) / 10;
     const newCenterWorldY = Math.round(((s.y ?? 0) + (centerLocal.x * sinr + centerLocal.y * cosr)) * 10) / 10;
 
-    updateShape(id, { x: newCenterWorldX, y: newCenterWorldY, widthMM: newWidthMM, heightMM: newHeightMM });
+    updateShape(id, { x: newCenterWorldX, y: newCenterWorldY, widthMM: newWidthMM, heightMM: newHeightMM }, { skipHistory: true });
   }
 
   function onMouseUp() {
@@ -321,6 +347,7 @@ export default function Canvas({
     setDragOffset(null);
     groupOffsetsRef.current = {};
     resizingRef.current = { id: null, handle: null };
+    gestureHistoryPushedRef.current = false;
   }
 
   // combined mouse move (resize takes precedence)
@@ -407,6 +434,7 @@ export default function Canvas({
           const refShape = drawShapes.find((d) => d.id === refId);
           setDragOffset({ x: pt.x - (refShape?.x ?? 0), y: pt.y - (refShape?.y ?? 0) });
           setDraggingId(refId);
+          gestureHistoryPushedRef.current = false;
           return;
         }
 
@@ -476,6 +504,7 @@ export default function Canvas({
           // set dragging state referencing the shape that was clicked
           setDragOffset({ x: mmX - (shape.x ?? 0), y: mmY - (shape.y ?? 0) });
           setDraggingId(shape.id);
+          gestureHistoryPushedRef.current = false;
         };
 
         if (shape.type === "rect") {
@@ -1060,6 +1089,7 @@ export default function Canvas({
                     // prevent interfering with drag
                     setDraggingId(null);
                     setDragOffset(null);
+                    gestureHistoryPushedRef.current = false;
                   }}
                 />
               );

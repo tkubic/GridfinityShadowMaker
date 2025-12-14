@@ -1,5 +1,3 @@
-import React from "react";
-
 type Images = {
   original?: string | null;
   traced?: string | null;
