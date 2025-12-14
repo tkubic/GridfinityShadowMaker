@@ -95,6 +95,21 @@ export default function Canvas({
     return "#ff3333";
   }
 
+  // compute a chamfer-outline stroke width in SVG pixels based on board settings
+  function chamferStrokePxFor(): number {
+    try {
+      const enabled = !!board.chamferEnabled;
+      const h = typeof board.chamferHeight === 'number' ? board.chamferHeight : Number(board.chamferHeight || 0);
+      if (!enabled || !h) return 0;
+      const avgScale = (scaleX + scaleY) / 2;
+      // stroke width in px approximates chamfer height in mm scaled to px
+      // Multiply by 2 to make the preview outline more visible (user requested ~2x thickness)
+      return Math.max(0.5, Math.round(h * avgScale * 2));
+    } catch {
+      return 0;
+    }
+  }
+
   
 
   // geometry helpers imported from ../lib/geometry
@@ -498,6 +513,8 @@ export default function Canvas({
             const leftPxWidth = Math.max(0, centerLeft - xPx);
             const rightPxWidth = Math.max(0, xPx + wPx - (centerLeft + centerWidthPx));
 
+            const chamferPx = chamferStrokePxFor();
+            const showChamferOutline = chamferPx > 0 && ((shape.cutType ?? "Cut") === "Cut");
             return (
               <g key={shape.id} onMouseDown={startDragFor} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}>
                 {leftPxWidth > 0 && (
@@ -506,6 +523,20 @@ export default function Canvas({
                 <rect x={centerLeft} y={yPx} width={centerWidthPx} height={hPx} fill={sectionColors[1]} />
                 {rightPxWidth > 0 && (
                   <rect x={centerLeft + centerWidthPx} y={yPx} width={rightPxWidth} height={hPx} fill={sectionColors[2]} />
+                )}
+                {/* Chamfer preview outline (approx) */}
+                {showChamferOutline && (
+                  <rect
+                    x={xPx}
+                    y={yPx}
+                    width={wPx}
+                    height={hPx}
+                    fill="none"
+                    stroke="#990000"
+                    strokeOpacity={0.6}
+                    strokeWidth={chamferPx}
+                    pointerEvents="none"
+                  />
                 )}
                 {/* Selection outline */}
                 {isSelected && (
@@ -524,19 +555,29 @@ export default function Canvas({
           }
 
           return (
-            <rect
-              key={shape.id}
-              x={xPx}
-              y={yPx}
-              width={wPx}
-              height={hPx}
-              transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
-              fill={fillColorFor(shape)}
-              stroke={isSelected ? "#ffff66" : "none"}
-              strokeWidth={isSelected ? 3 : 0}
-              className={"shape-rect" + (isSelected ? " shape-selected" : "")}
-              onMouseDown={startDragFor}
-            />
+            (() => {
+              const chamferPx = chamferStrokePxFor();
+              const isCut = (shape.cutType ?? "Cut") === "Cut";
+              const chamferStroke = isCut && chamferPx > 0 ? chamferPx : 0;
+              const baseStroke = isSelected ? 3 : 0;
+              const totalStroke = baseStroke + chamferStroke;
+              const strokeColor = isSelected ? "#ffff66" : (chamferStroke > 0 ? "#990000" : "none");
+              return (
+                <rect
+                  key={shape.id}
+                  x={xPx}
+                  y={yPx}
+                  width={wPx}
+                  height={hPx}
+                  transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
+                  fill={fillColorFor(shape)}
+                  stroke={strokeColor}
+                  strokeWidth={totalStroke}
+                  className={"shape-rect" + (isSelected ? " shape-selected" : "")}
+                  onMouseDown={startDragFor}
+                />
+              );
+            })()
           );
         }
 
@@ -599,6 +640,21 @@ export default function Canvas({
                     <rect x={centerLeft + midPx} y={cy - ry} width={rightPx} height={ry * 2} fill={sectionColors[2]} />
                   )}
                 </g>
+                {/* Chamfer preview outline (approx) */}
+                { (board.chamferEnabled && ((shape.cutType ?? "Cut") === "Cut")) && (
+                  <ellipse
+                    cx={cx}
+                    cy={cy}
+                    rx={rx}
+                    ry={ry}
+                    transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}
+                    fill="none"
+                    stroke="#990000"
+                    strokeOpacity={0.6}
+                    strokeWidth={chamferStrokePxFor()}
+                    pointerEvents="none"
+                  />
+                )}
                 {/* Selection outline */}
                 <ellipse
                   cx={cx}
@@ -615,19 +671,29 @@ export default function Canvas({
           }
 
           return (
-            <ellipse
-              key={shape.id}
-              cx={cx}
-              cy={cy}
-              rx={rx}
-              ry={ry}
-              transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
-              fill={fillColorFor(shape)}
-              stroke={isSelected ? "#ffff66" : "none"}
-              strokeWidth={isSelected ? 3 : 0}
-              className={"shape-oval" + (isSelected ? " shape-selected" : "")}
-              onMouseDown={startDragFor}
-            />
+            (() => {
+              const chamferPx = chamferStrokePxFor();
+              const isCut = (shape.cutType ?? "Cut") === "Cut";
+              const chamferStroke = isCut && chamferPx > 0 ? chamferPx : 0;
+              const baseStroke = isSelected ? 3 : 0;
+              const totalStroke = baseStroke + chamferStroke;
+              const strokeColor = isSelected ? "#ffff66" : (chamferStroke > 0 ? "#990000" : "none");
+              return (
+                <ellipse
+                  key={shape.id}
+                  cx={cx}
+                  cy={cy}
+                  rx={rx}
+                  ry={ry}
+                  transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
+                  fill={fillColorFor(shape)}
+                  stroke={strokeColor}
+                  strokeWidth={totalStroke}
+                  className={"shape-oval" + (isSelected ? " shape-selected" : "")}
+                  onMouseDown={startDragFor}
+                />
+              );
+            })()
           );
         }
 
@@ -681,9 +747,13 @@ export default function Canvas({
                     const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.px} ${p.py}`).join(" ") + " Z";
 
                     // If this is a hole, render as a normal path outline (no section fills)
-                    const strokeColor = isSelected ? "#ffff66" : (shape.splitToSections ? "#ffcc00" : "#ffaaaa");
-                    const strokeW = isSelected ? 3 : (shape.splitToSections ? 2 : 1);
-                    if (isHole || !(shape.splitToSections && (shape.cutType ?? "Cut") === "Cut")) {
+                    const baseStrokeColor = isSelected ? "#ffff66" : (shape.splitToSections ? "#ffcc00" : "#ffaaaa");
+                    const baseStrokeW = isSelected ? 3 : (shape.splitToSections ? 2 : 1);
+                    const chamferPx = chamferStrokePxFor();
+                    const isCutShape = (shape.cutType ?? "Cut") === "Cut";
+                    const strokeColor = isSelected ? "#ffff66" : (isCutShape && chamferPx > 0 ? "#990000" : baseStrokeColor);
+                    const strokeW = baseStrokeW + (isCutShape ? chamferPx : 0);
+                    if (isHole || !(shape.splitToSections && isCutShape)) {
                       return (
                         <path
                           key={idx}
@@ -762,7 +832,17 @@ export default function Canvas({
                   const yPx = centerYpx - hPx / 2;
                   return (
                     <>
-                      <rect x={xPx} y={yPx} width={wPx} height={hPx} fill="#ffaaaa33" stroke={isSelected ? "#ff6666" : "#ffaaaa"} strokeWidth={isSelected ? 2 : 1} />
+                      {(() => {
+                        const chamferPx = chamferStrokePxFor();
+                        const isCut = (shape.cutType ?? "Cut") === "Cut";
+                        const chamferStroke = isCut && chamferPx > 0 ? chamferPx : 0;
+                        const baseStroke = isSelected ? 2 : 1;
+                        const totalStroke = baseStroke + chamferStroke;
+                        const strokeColor = isSelected ? "#ff6666" : (chamferStroke > 0 ? "#990000" : "#ffaaaa");
+                        return (
+                          <rect x={xPx} y={yPx} width={wPx} height={hPx} fill="#ffaaaa33" stroke={strokeColor} strokeWidth={totalStroke} />
+                        );
+                      })()}
                       <line x1={xPx} y1={yPx} x2={xPx + wPx} y2={yPx + hPx} stroke="#ff6666" strokeWidth={1} />
                       <line x1={xPx + wPx} y1={yPx} x2={xPx} y2={yPx + hPx} stroke="#ff6666" strokeWidth={1} />
                     </>

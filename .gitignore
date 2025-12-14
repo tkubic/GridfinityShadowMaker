@@ -45,4 +45,5 @@ pip-install.log
 frontend-npm.log
 backend-npm.log
 assets/offset_pos_xy.pkl
-assets/offset_pos_xy.pkl
+/processing_output
+/tools

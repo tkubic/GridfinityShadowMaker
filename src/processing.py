@@ -145,14 +145,14 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
         max_p2d_contour, max_p2d_ratio = find_max_p2d_ratio_contour(contours)
         if max_p2d_contour is None:
             console_text.setText("No valid contours found.")
-            return None, None, None, []
+            return None, None, None, [], []
 
         filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_p2d_contour)]
         # Filter out small contours (area < 1000)
         filtered_contours = [contour for contour in filtered_contours if cv2.contourArea(contour) >= 1000]
         if not filtered_contours:
             console_text.setText("No valid contours found after filtering.")
-            return None, None, None, []
+            return None, None, None, [], []
         pos_xy = []
         for contour in filtered_contours:
             all_points = np.vstack(contour.reshape(-1, 2))
@@ -177,19 +177,16 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             center_x = round(((min_y + max_y) / 2 - abs_center_y) * scale_factor * 25.4,1)
             offset_pos_xy.append([center_x, center_y])
         # Save offset_pos_xy to a temp file for use in import_to_openscad
-        try:
-            import pickle
-            temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'offset_pos_xy.pkl')
-            with open(temp_centers_path, 'wb') as f:
-                pickle.dump(offset_pos_xy, f)
-        except Exception as e:
-            print(f"Warning: Could not save offset_pos_xy for OpenSCAD import: {e}")
+        # Historically this function wrote a pickle file used by import_to_openscad.
+        # That stateful approach is fragile for server deployments. Instead,
+        # return `offset_pos_xy` to the caller so it can be included in the
+        # per-run `meta.json`. Keep a silent fallback rather than writing a file.
         # If caller requested not to write DXF files, skip writing and
         # just return grid sizes and filtered contours for in-memory use.
         if not write_dxfs:
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             console_text.setText(f"Prepared {len(filtered_contours)} filtered contours (DXF write disabled)")
-            return None, gridx_size, gridy_size, filtered_contours
+            return None, gridx_size, gridy_size, filtered_contours, offset_pos_xy
 
         if splitDXF:
             # Build pairs of (contour, pos) where pos corresponds to the
@@ -222,7 +219,7 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
 
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             console_text.setText(f"Saved {len(output_paths)} DXF files: {output_paths}")
-            return output_paths, gridx_size, gridy_size, filtered_contours
+            return output_paths, gridx_size, gridy_size, filtered_contours, offset_pos_xy
         else:
             doc = ezdxf.new()
             msp = doc.modelspace()
@@ -239,11 +236,11 @@ def save_contours_as_dxf(contours, file_name, scale_factor, console_text, folder
             gridx_size, gridy_size = calculate_grid_size(filtered_contours, scale_factor)
             pyperclip.copy(output_path)
             console_text.setText(f"File saved successfully: {output_path}\nFile path '{output_path}' copied to clipboard.\nGrid X Size: {gridx_size}, Grid Y Size: {gridy_size}")
-            return output_path, gridx_size, gridy_size, filtered_contours
+            return output_path, gridx_size, gridy_size, filtered_contours, offset_pos_xy
     except Exception as e:
         console_text.setText(f"Error saving DXF: {str(e)}")
         print(traceback.format_exc())
-        return None, None, None, []
+        return None, None, None, [], []
 
 def calculate_grid_size(contours, scale_factor):
     all_points = np.vstack([contour.reshape(-1, 2) for contour in contours])
@@ -251,8 +248,10 @@ def calculate_grid_size(contours, scale_factor):
     max_x, max_y = np.max(all_points, axis=0)
     x_size = max_x - min_x
     y_size = max_y - min_y
-    gridy_size = math.ceil(x_size / 42 * scale_factor)
-    gridx_size = math.ceil(y_size / 42 * scale_factor)
+    # x_size corresponds to image width (columns) -> gridX (width)
+    # y_size corresponds to image height (rows)   -> gridY (depth)
+    gridx_size = math.ceil(x_size / 42 * scale_factor)
+    gridy_size = math.ceil(y_size / 42 * scale_factor)
     return gridx_size, gridy_size
 
 def select_image(console_text, default_dir=None):
@@ -838,24 +837,38 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 section_params_scad = 'section_parameters = [];\n'
                 section_positions_scad = 'section_positions = [];\n'
             
-            # Generate position_1, position_2, ... and position array using pos_xy from temp file
+            # Generate position_1, position_2, ... and position array using per-contour
+            # offsets. Prefer offsets embedded in a per-project `meta.json` (stateless
+            # and per-run). For backwards compatibility try the legacy pickle as a
+            # fallback; if neither is available use zeros.
             pos_xy = None
             try:
-                import pickle
-                temp_centers_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'offset_pos_xy.pkl')
-                if os.path.exists(temp_centers_path):
-                    with open(temp_centers_path, 'rb') as f:
-                        pos_xy = pickle.load(f)
+                import json
+                meta_path = os.path.join(design_files_directory, 'meta.json')
+                if os.path.exists(meta_path):
+                    try:
+                        with open(meta_path, 'r', encoding='utf8') as mf:
+                            meta_obj = json.load(mf)
+                        if isinstance(meta_obj, dict) and 'offset_pos_xy' in meta_obj:
+                            pos_xy = meta_obj.get('offset_pos_xy')
+                    except Exception:
+                        pos_xy = None
             except Exception:
-                pass
+                pos_xy = None
+            # Validate/normalize to expected length
             if not pos_xy or len(pos_xy) != len(dxf_file_paths):
-                # fallback: zeros
+                # No legacy fallback: default to zeros when offsets aren't provided
                 pos_xy = [[0,0] for _ in range(len(dxf_file_paths))]
             # Force all positions to origin (0,0,0) to ensure OpenSCAD places
             # shapes at the project origin. The user requested hardcoded zeros.
             position_lines = []
             for idx in range(len(dxf_file_paths)):
-                position_lines.append(f'position_{idx+1} = [0.000000, 0.000000, 0]; // .1')
+                try:
+                    x_val = pos_xy[idx][0]
+                    y_val = pos_xy[idx][1]
+                    position_lines.append(f'position_{idx+1} = [{_fmt_num(x_val)}, {_fmt_num(y_val)}, 0];')
+                except Exception:
+                    position_lines.append(f'position_{idx+1} = [0, 0, 0];')
             position_array = f'position = [{', '.join([f"position_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             # Replace the position = [[0, 0, 0]]; // .1 line
             updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
@@ -1220,13 +1233,14 @@ def cli_main(argv=None):
     split_flag = bool(args.split or (isinstance(contours, (list, tuple)) and len(contours) > 1))
     print(f"split_flag={split_flag}; contours_found={len(contours) if isinstance(contours, (list,tuple)) else 'unknown'}")
     try:
-        dxf_paths, gridx, gridy, filtered_contours = save_contours_as_dxf(contours, file_stem, scale_factor, console, folder_name, splitDXF=split_flag, write_dxfs=False)
+        dxf_paths, gridx, gridy, filtered_contours, offset_pos_xy = save_contours_as_dxf(contours, file_stem, scale_factor, console, folder_name, splitDXF=split_flag, write_dxfs=False)
     except Exception as e:
         print('save_contours_as_dxf failed:', e)
         dxf_paths = None
         gridx = None
         gridy = None
         filtered_contours = []
+        offset_pos_xy = []
 
     # Build polylines (mm coordinates) from the filtered contours so
     # callers (front-end) can choose to import traced geometry without
@@ -1236,19 +1250,53 @@ def cli_main(argv=None):
     try:
         source_contours = filtered_contours if 'filtered_contours' in locals() and filtered_contours else contours
         if source_contours:
-            for contour in source_contours:
-                try:
-                    pts = []
-                    for point in contour:
-                        # contour points are stored as [[row, col]] arrays
-                        # Use the same ordering as DXF writers: (x = col, y = row)
-                        x = float(point[0][1]) * scale_factor
-                        y = float(point[0][0]) * scale_factor
-                        pts.append({'x': x, 'y': y})
-                    if pts:
-                        polylines.append(pts)
-                except Exception:
-                    continue
+            # If possible, obtain the original image dimensions so we can
+            # rotate contour points about the image center to correct the
+            # observed -90deg orientation seen in the frontend. The image
+            # variable exists in the CLI path; when absent we fall back to
+            # the raw contour coordinates without rotation.
+            try:
+                img_h = None
+                img_w = None
+                if 'image' in locals() and image is not None:
+                    img_h, img_w = image.shape[0], image.shape[1]
+                pts_list = []
+                for contour in source_contours:
+                    try:
+                        pts = []
+                        for point in contour:
+                            # contour points are stored as [[row, col]] arrays
+                            row = float(point[0][0])
+                            col = float(point[0][1])
+                            if img_w is not None and img_h is not None:
+                                # Translate to image-center coordinates
+                                cx_img = img_w / 2.0
+                                cy_img = img_h / 2.0
+                                vx = col - cx_img
+                                vy = row - cy_img
+                                # Rotate +90 degrees (clockwise): (x,y) -> (y, -x)
+                                rx = vy
+                                ry = -vx
+                                # Translate back
+                                new_col = cx_img + rx
+                                new_row = cy_img + ry
+                                x_mm = new_col * scale_factor
+                                y_mm = new_row * scale_factor
+                            else:
+                                # Fallback: no image dims available; keep original ordering
+                                x_mm = col * scale_factor
+                                y_mm = row * scale_factor
+                            # Round to 0.1 mm for consistency with frontend
+                            x_mm = round(x_mm, 1)
+                            y_mm = round(y_mm, 1)
+                            pts.append({'x': x_mm, 'y': y_mm})
+                        if pts:
+                            pts_list.append(pts)
+                    except Exception:
+                        continue
+                polylines = pts_list
+            except Exception:
+                polylines = []
     except Exception:
         polylines = []
 
@@ -1278,7 +1326,12 @@ def cli_main(argv=None):
 
     # Write meta.json including optional `polylines` so callers may import
     # traced geometry directly from the processing response.
-    meta = {'dxf_paths': dxf_paths, 'gridx_size': gridx, 'gridy_size': gridy, 'polylines': polylines, 'names': names}
+    # Include per-contour offsets if available so downstream import_to_openscad
+    # can consume them without relying on a stateful pickle file.
+    try:
+        meta = {'dxf_paths': dxf_paths, 'gridx_size': gridx, 'gridy_size': gridy, 'polylines': polylines, 'names': names, 'offset_pos_xy': offset_pos_xy}
+    except Exception:
+        meta = {'dxf_paths': dxf_paths, 'gridx_size': gridx, 'gridy_size': gridy, 'polylines': polylines, 'names': names}
     try:
         with open(os.path.join(out, 'meta.json'), 'w', encoding='utf8') as mf:
             json.dump(meta, mf, indent=2)

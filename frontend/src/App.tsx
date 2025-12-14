@@ -1050,6 +1050,8 @@ function App() {
 
   function transferPendingPolylines() {
     if (!pendingPolylines || !pendingPolylines.length) return;
+    // Count shapes that existed on the canvas prior to this transfer
+    const priorShapeCount = project.shapes.length;
     let nextCounter = shapeCounter;
     const created: any[] = [];
     for (let i = 0; i < pendingPolylines.length; i++) {
@@ -1083,6 +1085,48 @@ function App() {
       created.push(newShape);
     }
     if (created.length) {
+      // Center the just-created group of shapes onto the canvas.
+      try {
+        // Compute axis-aligned bounding box of the new shapes (world mm coords)
+        let minXAll = Infinity, minYAll = Infinity, maxXAll = -Infinity, maxYAll = -Infinity;
+        for (const s of created) {
+          const halfW = (s.widthMM ?? 0) / 2;
+          const halfH = (s.heightMM ?? 0) / 2;
+          const lx = (s.x ?? 0) - halfW;
+          const rx = (s.x ?? 0) + halfW;
+          const by = (s.y ?? 0) - halfH;
+          const ty = (s.y ?? 0) + halfH;
+          if (lx < minXAll) minXAll = lx;
+          if (by < minYAll) minYAll = by;
+          if (rx > maxXAll) maxXAll = rx;
+          if (ty > maxYAll) maxYAll = ty;
+        }
+        if (isFinite(minXAll)) {
+          const groupCenterX = (minXAll + maxXAll) / 2;
+          const groupCenterY = (minYAll + maxYAll) / 2;
+          // Determine effective board grid after transfer: if processing returned
+          // grid sizes, they will be applied to the board. Use those values
+          // now so centering uses the post-update canvas dimensions.
+          const effGridX = (pendingGrid && typeof pendingGrid.gridx === 'number') ? pendingGrid.gridx : board.gridX;
+          const effGridY = (pendingGrid && typeof pendingGrid.gridy === 'number') ? pendingGrid.gridy : board.gridY;
+          const cellSize = board.cellSizeMM || 42;
+          const worldWidth = effGridX * cellSize;
+          const worldHeight = effGridY * cellSize;
+          const canvasCenterX = worldWidth / 2;
+          const canvasCenterY = worldHeight / 2;
+          const dx = Math.round((canvasCenterX - groupCenterX) * 10) / 10;
+          const dy = Math.round((canvasCenterY - groupCenterY) * 10) / 10;
+          if (dx !== 0 || dy !== 0) {
+            for (const s of created) {
+              s.x = Math.round(((s.x ?? 0) + dx) * 10) / 10;
+              s.y = Math.round(((s.y ?? 0) + dy) * 10) / 10;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to center transferred shapes', e);
+      }
+
       setProject((prev) => ({ ...prev, shapes: [...prev.shapes, ...created] }));
       setShapeCounter(nextCounter);
     }
@@ -1091,7 +1135,20 @@ function App() {
       const gx = typeof pendingGrid.gridx === 'number' ? pendingGrid.gridx : undefined;
       const gy = typeof pendingGrid.gridy === 'number' ? pendingGrid.gridy : undefined;
       if (typeof gx === 'number' || typeof gy === 'number') {
-        updateBoard({ ...(gx !== undefined ? { gridX: gx } : {}), ...(gy !== undefined ? { gridY: gy } : {}) });
+        // If there were existing shapes on the canvas BEFORE this transfer,
+        // avoid shrinking the canvas — take the max per-dimension between
+        // the current board size and the requested size. Otherwise accept
+        // the requested size directly.
+        const newGridX = (gx !== undefined)
+          ? (priorShapeCount > 0 ? Math.max(board.gridX, gx) : gx)
+          : undefined;
+        const newGridY = (gy !== undefined)
+          ? (priorShapeCount > 0 ? Math.max(board.gridY, gy) : gy)
+          : undefined;
+        const toSet: any = {};
+        if (newGridX !== undefined) toSet.gridX = newGridX;
+        if (newGridY !== undefined) toSet.gridY = newGridY;
+        if (Object.keys(toSet).length) updateBoard(toSet);
       }
     }
     setPendingPolylines(null);
@@ -1362,9 +1419,18 @@ function App() {
                 setProcessedImages({ original: j.original, traced: j.traced, offset: j.offset, dxf: j.dxf, used_input: j.used_input });
                 try {
                   const pls = j.dxf && j.dxf.polylines ? j.dxf.polylines : null;
-                  setPendingPolylines(pls && Array.isArray(pls) ? pls : null);
+                    setPendingPolylines(pls && Array.isArray(pls) ? pls : null);
+                    // capture optional grid sizes provided by the processing meta (same behavior as Load Image)
+                    const gx = j.dxf && (j.dxf.gridx_size ?? j.dxf.gridx);
+                    const gy = j.dxf && (j.dxf.gridy_size ?? j.dxf.gridy);
+                    if (typeof gx === 'number' || typeof gy === 'number') {
+                      setPendingGrid({ gridx: typeof gx === 'number' ? gx : undefined, gridy: typeof gy === 'number' ? gy : undefined });
+                    } else {
+                      setPendingGrid(null);
+                    }
                 } catch (e) {
-                  setPendingPolylines(null);
+                    setPendingPolylines(null);
+                    setPendingGrid(null);
                 }
               })
               .catch((err) => {
