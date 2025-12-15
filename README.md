@@ -100,6 +100,12 @@ Click **Launch App** to open GSM in your browser.
 
 Example photos are included in `/examples`.
 
+### Web capture + edit (Trace tab)
+- In the Trace tab, use **Capture photo** to stream your webcam. If `raw photos/calibration_files/calibration_data.pkl` or `.json` is present, the preview auto-undistorts using that calibration.  
+- Type a name and click **Capture & Save**; files land in the `projects/` folder with a leading `_` (raw) just like the desktop flow.  
+- Click **Edit** next to a photo to open the in-app editor (crop or black brush masking) and save back to the project folder (underscore removed on first edit).  
+- Use **Load Image** to send the edited photo through tracing; processed images still appear in the preview pane and can be transferred to the canvas.
+
 ---
 
 ## Step 2 — Trace the Object

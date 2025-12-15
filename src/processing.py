@@ -11,7 +11,18 @@ import time
 import concurrent.futures
 from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
-from src.ui import Ui_MainWindow  # type: ignore # Import Ui_MainWindow
+# Prefer package-style import, but allow running this module as a script
+# by adjusting sys.path when the package root isn't on sys.path.
+try:
+    from src.ui import Ui_MainWindow  # type: ignore # Import Ui_MainWindow
+except Exception:
+    import sys
+    import pathlib
+    # Insert repo root (parent of this file's directory) so `src` package is importable
+    repo_root = str(pathlib.Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from src.ui import Ui_MainWindow  # type: ignore # try again
 
 scad_file_path = None  # Declare scad_file_path as a global variable
 
@@ -279,11 +290,20 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         scad_template_path = os.path.join(os.path.dirname(__file__), "..", "template.scad")
         with open(scad_template_path, 'r') as file:
             scad_content = file.read()
+        # Work on a mutable copy so all replacements consistently update
+        # the same variable regardless of the control flow below.
+        updated_scad_content = scad_content
         
         # Determine project folder (design_files_directory) early so the GSM
         # lookup and other file operations can reference it.
         script_directory = os.path.dirname(os.path.abspath(__file__))
         design_files_directory = os.path.join(script_directory, "..", folder_name)
+
+        # Normalize into a list so the replacement logic runs for single DXFs too
+        # (callers historically passed a single string with splitDXF=False).
+        if not (splitDXF and isinstance(dxf_path, list)):
+            splitDXF = True
+            dxf_path = [dxf_path]
 
         # Use forward slashes for the file path(s)
         if splitDXF and isinstance(dxf_path, list):
@@ -871,7 +891,7 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                     position_lines.append(f'position_{idx+1} = [0, 0, 0];')
             position_array = f'position = [{', '.join([f"position_{i+1}" for i in range(len(dxf_file_paths))])}];\n'
             # Replace the position = [[0, 0, 0]]; // .1 line
-            updated_scad_content = scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
+            updated_scad_content = updated_scad_content.replace('position = [[0, 0, 0]]; // .1', '\n'.join(position_lines) + '\n' + position_array)
 
             # --- FINGER SLOT OPTIONS ---
             # Generate per-slot variables and arrays for finger slots
@@ -898,12 +918,19 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
 
             # Recompute dxf_paths_scad to reflect any split (cuts-only, non-sectioned) done above
             dxf_paths_scad = 'dxf_file_paths = [\n' + ',\n'.join([f'"{p}"' for p in dxf_file_paths]) + '\n];\n'
-            # Insert all blocks including dxf_sections
+            # Insert all blocks including dxf_sections. The template may
+            # contain either the old single-file placeholder or the newer
+            # array placeholder; replace the first assignment to
+            # dxf_file_path(s) unconditionally so the example path never
+            # survives (covers one or many DXFs).
             scad_block = dxf_paths_scad + dxf_raised_paths_scad + dxf_raised_heights_scad + dxf_blocker_paths_scad + dxf_cut_depths_scad + concat_line + '// dxf_file_path replaced by dxf_file_paths'
-            updated_scad_content = updated_scad_content.replace(
-                'dxf_file_path = "examples/example.dxf";',
-                scad_block
-            )
+            import re
+            assign_pattern = re.compile(r'dxf_file_paths?\s*=\s*\[[^\]]*?\];', re.IGNORECASE)
+            updated_scad_content, sub_count = assign_pattern.subn(scad_block, updated_scad_content, count=1)
+            if not sub_count:
+                # Fallback for templates using the single-path variable name (allow flexible spacing)
+                single_pattern = re.compile(r'dxf_file_path\s*=\s*"[^"]*"\s*;', re.IGNORECASE)
+                updated_scad_content, _ = single_pattern.subn(scad_block, updated_scad_content, count=1)
 
             # Replace the dxf_sections placeholder block. Support both the
             # older template (3-line placeholder) and the newer (4-line
@@ -933,7 +960,9 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 gz = int(gridz_size) if gridz_size is not None else 6
             except Exception:
                 gz = 6
-            updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gx}, {gy}, {gz}];')
+            # Replace size assignment even if the template includes trailing comments or spacing
+            size_pattern = re.compile(r'size\s*=\s*\[[^\]]*\];[^\n]*')
+            updated_scad_content, _ = size_pattern.subn(f'size = [{gx}, {gy}, {gz}]; // grid sizes', updated_scad_content, count=1)
 
             # Determine chamfer settings from GSM `board` if available. Default: enabled, 2mm
             chamfer_enabled = True
@@ -964,18 +993,25 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                 updated_scad_content = updated_scad_content.replace('chamfer_height = 2;', f'chamfer_height = {chamfer_height_val};')
             except Exception:
                 pass
-        else:
             # Make single DXF path relative to project folder when possible
-            try:
-                dp = os.path.normpath(dxf_path)
-                if os.path.isabs(dp) and dp.startswith(os.path.normpath(design_files_directory)):
-                    rel = os.path.relpath(dp, design_files_directory).replace('\\', '/')
-                    dxf_path_scad = rel
-                else:
-                    dxf_path_scad = dp.replace('\\', '/')
-            except Exception:
-                dxf_path_scad = dxf_path.replace('\\', '/')
-            updated_scad_content = scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_path = "{dxf_path_scad}";')
+            # If we're not in split mode, compute a single relative DXF path
+            # and emit it as a one-element `dxf_file_paths` array. When
+            # `splitDXF` is True the earlier branch already inserted the
+            # multiple-path `scad_block`, so skip this single-path logic.
+            if not (splitDXF and isinstance(dxf_path, list)):
+                try:
+                    dp = os.path.normpath(dxf_path)
+                    if os.path.isabs(dp) and dp.startswith(os.path.normpath(design_files_directory)):
+                        rel = os.path.relpath(dp, design_files_directory).replace('\\', '/')
+                        dxf_path_scad = rel
+                    else:
+                        dxf_path_scad = dp.replace('\\', '/')
+                except Exception:
+                    # Ensure we always have a string fallback
+                    dxf_path_scad = str(dxf_path).replace('\\', '/')
+                # Always emit an array `dxf_file_paths` even for a single entry so
+                # the template can uniformly consume an array variable.
+                updated_scad_content = updated_scad_content.replace('dxf_file_path = "examples/example.dxf";', f'dxf_file_paths = ["{dxf_path_scad}"];')
         
             # Determine slot rotation and width based on gridx_size and gridy_size
         #slot_rotation = 0 if gridx_size > gridy_size else 90
@@ -988,7 +1024,10 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             updated_scad_content = updated_scad_content.replace('size = [5, 2, 6];', f'size = [{gridx_size}, {gridy_size}, {zval}];')
         #updated_scad_content = updated_scad_content.replace('slot_rotation = 90;', f'slot_rotation = {slot_rotation};')
         #updated_scad_content = updated_scad_content.replace('slot_width = 40;', f'slot_width = {slot_width};')
-        updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(splitDXF).lower()};')
+        # `multiple_dxf` should reflect whether more than one DXF is present, not
+        # the internal normalization flag used above.
+        multi_flag = len(dxf_file_paths) > 1
+        updated_scad_content = updated_scad_content.replace('multiple_dxf = false;', f'multiple_dxf = {str(multi_flag).lower()};')
 
         # Save the SCAD file in the folder specified by folder_name
         script_directory = os.path.dirname(os.path.abspath(__file__))

@@ -315,6 +315,169 @@ button:active {
   text-overflow: ellipsis;
 }
 
+.trace-workspace {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.capture-column,
+.editor-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.capture-card {
+  background: #fff;
+  border: 1px solid #e2e2e2;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+
+.capture-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.capture-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #111;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.capture-video,
+.capture-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #111;
+}
+
+.photo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.photo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.photo-name {
+  font-weight: 600;
+}
+
+.photo-meta {
+  font-size: 12px;
+  color: #666;
+}
+
+.editor-container {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 320px;
+}
+
+.editor-stage {
+  position: relative;
+  width: 100%;
+}
+
+.editor-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.editor-canvas {
+  width: 100%;
+  height: auto;
+  max-height: 75vh;
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  width: 38px;
+  height: 32px;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  border-color: #000;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.08);
+}
+
+.brush-dot {
+  display: inline-block;
+  border-radius: 50%;
+  background: #000;
+  min-width: 6px;
+  min-height: 6px;
+  margin-left: 6px;
+}
+
+.crop-overlay {
+  position: absolute;
+  border: 2px dashed #555;
+  background: rgba(0,0,0,0.05);
+  pointer-events: none;
+}
+
+.editor-placeholder {
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  padding: 16px;
+  color: #555;
+  background: #fafafa;
+}
+
+.error-text {
+  color: #c00;
+  font-size: 12px;
+}
+
 .panel-left hr {
   border: none;
   border-top: 1px solid #ddd;

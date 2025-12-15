@@ -19,8 +19,10 @@ chamfer_height = 2;      // mm, height of chamfer
 lip_style = "none";  // [ normal, reduced, reduced_double, minimum, none:not stackable ]
 
 /* [DXF Options] */
-// DXF file path 
-dxf_file_path = "examples/example.dxf";
+// DXF file paths (list) 
+// Historically this template used a single `dxf_file_path`; modern processing
+// writes `dxf_file_paths` (an array). Default to one example entry here.
+dxf_file_paths = ["examples/example.dxf"];
 
 // DXF file paths for raised sections
 // NOTE: This block is populated by `src/processing.py` when generating
@@ -260,28 +262,37 @@ difference() {
             );
 
             // Position, rotate, and extrude the DXF shape to perform the cut (regular shapes)
-            for (i = [0 : len(dxf_file_paths) - 1]) {
-                translate([position[i][0], position[i][1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
-                    rotate([0, 0, position[i][2]]) {
-                        extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + (include_cutout ? cutout_height : 0));
+            dxf_count = len(dxf_file_paths);
+            if (dxf_count > 0) {
+                for (i = [0 : dxf_count - 1]) {
+                    translate([position[i][0], position[i][1], height[0]*7 - dxf_cut_depths[i] - (include_cutout ? cutout_height : 0)]) {
+                        rotate([0, 0, position[i][2]]) {
+                            extrude_dxf_section(dxf_file_paths[i], dxf_cut_depths[i] + (include_cutout ? cutout_height : 0));
+                        }
                     }
                 }
             }
             
             // Position, rotate, and extrude section-cut DXF shapes (3-depth sections)
-            for (i = [0 : len(dxf_sections) - 1]) {
-                translate([0, 0, height[0]*7 - max(section_cut_depth[i]) - (include_cutout ? cutout_height : 0)]) {
-                    dxf_three_section_shape(
-                        width, depth, section_cut_depth[i], section_parameters[i],
-                        dxf_sections[i],section_positions[i]
-                    );
+            section_count = len(dxf_sections);
+            if (section_count > 0) {
+                for (i = [0 : section_count - 1]) {
+                    translate([0, 0, height[0]*7 - max(section_cut_depth[i]) - (include_cutout ? cutout_height : 0)]) {
+                        dxf_three_section_shape(
+                            width, depth, section_cut_depth[i], section_parameters[i],
+                            dxf_sections[i],section_positions[i]
+                        );
+                    }
                 }
             }
             // Add the finger slots
             if (use_finger_slots) {
-                for (i = [0 : len(slot_shape) - 1]) {
-                    if (slot_shape[i] != "none") {
-                        finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
+                slot_count = len(slot_shape);
+                if (slot_count > 0) {
+                    for (i = [0 : slot_count - 1]) {
+                        if (slot_shape[i] != "none") {
+                            finger_slot(height[0], slot_shape[i], slot_params[i], slot_pos[i]);
+                        }
                     }
                 }
             }

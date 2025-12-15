@@ -5,7 +5,7 @@ import Header from "./components/Header";
 import LeftPanel from "./components/LeftPanel";
 import Canvas from "./components/Canvas";
 import Inspector from "./components/Inspector";
-import TraceCanvas from "./components/TraceCanvas";
+import TraceCapture from "./components/TraceCapture";
 import RenderCanvas from "./components/RenderCanvas";
 import { parseDxf } from "./utils/dxf";
 import { showToast } from './utils/toast';
@@ -667,8 +667,12 @@ function App() {
   const gsmInputRef = useRef<HTMLInputElement | null>(null);
   // image input for Trace tab
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const calibrationInputRef = useRef<HTMLInputElement | null>(null);
+  const capturePanelRef = useRef<HTMLDivElement | null>(null);
 
   const [processedImages, setProcessedImages] = useState<{ original?: string | null; traced?: string | null; offset?: string | null; dxf?: { dxf_path?: string | null; gridx_size?: number; gridy_size?: number } | null; used_input?: string | null } | null>(null);
+  const [editorActive, setEditorActive] = useState<boolean>(false);
+  const [editorControls, setEditorControls] = useState<any | null>(null);
 
   // Pending polylines returned from the processing endpoint but not yet
   // transferred into the canvas. Each polyline is an array of points {x,y}
@@ -1221,7 +1225,12 @@ function App() {
   }
 
   function captureImage() {
-    alert("Capture Image not implemented in this UI mockup.");
+    setActiveTab('trace');
+    try {
+      capturePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+      /* ignore */
+    }
   }
 
   function transferPendingPolylines() {
@@ -1549,20 +1558,22 @@ function App() {
       <input ref={gsmInputRef} type="file" accept=".gsm,application/json" style={{ display: 'none' }} onChange={handleGsmFile} />
 
       <div className="app-main">
-        {/* Left Panel (extracted) */}
-        <LeftPanel
-          activeTab={activeTab}
-          shapes={shapes}
-          selectedItem={selectedItem}
-          selectItem={selectItem}
-          addDefaultShape={addDefaultShape}
-          addTextShape={addTextShape}
-          dxfInputRef={dxfInputRef}
-          handleDxfFile={handleDxfFile}
-          imageInputRef={imageInputRef}
-          handleImageFile={handleImageFile}
-          onCaptureImage={captureImage}
-        />
+        {/* Left Panel only on Canvas/Render tabs */}
+        {activeTab !== "trace" && (
+          <LeftPanel
+            activeTab={activeTab}
+            shapes={shapes}
+            selectedItem={selectedItem}
+            selectItem={selectItem}
+            addDefaultShape={addDefaultShape}
+            addTextShape={addTextShape}
+            dxfInputRef={dxfInputRef}
+            handleDxfFile={handleDxfFile}
+            imageInputRef={imageInputRef}
+            handleImageFile={handleImageFile}
+            onCaptureImage={captureImage}
+          />
+        )}
 
         {/* Canvas (extracted) */}
         <main className="canvas-container">
@@ -1588,7 +1599,16 @@ function App() {
               pushHistoryCheckpoint={pushHistoryCheckpoint}
             />
           ) : activeTab === "trace" ? (
-            <TraceCanvas images={processedImages ?? undefined} />
+              <TraceCapture
+                projectName={project.name}
+                processedImages={processedImages}
+                panelRef={capturePanelRef}
+                imageInputRef={imageInputRef}
+                onImageFile={handleImageFile}
+                calibrationInputRef={calibrationInputRef}
+                onEditorActiveChange={setEditorActive}
+                onEditorRegister={setEditorControls}
+              />
           ) : (
             <RenderCanvas projectName={project.name} />
           )}
@@ -1607,6 +1627,8 @@ function App() {
           deleteShape={deleteShape}
           textInputRef={textInputRef}
           activeTab={activeTab}
+          editingActive={editorActive}
+          editorControls={editorControls}
           exportDxfs={exportDxfs}
           generateScad={generateScad}
           processImageAgain={(params) => {

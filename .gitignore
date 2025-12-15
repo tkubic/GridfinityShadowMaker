@@ -47,3 +47,16 @@ backend-npm.log
 assets/offset_pos_xy.pkl
 /processing_output
 /tools
+raw photos/calibration_files/WIN_20251214_15_42_02_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_10_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_16_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_22_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_26_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_32_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_33_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_36_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_47_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_53_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_55_Pro.jpg
+raw photos/calibration_files/WIN_20251214_15_42_58_Pro.jpg
+/tests

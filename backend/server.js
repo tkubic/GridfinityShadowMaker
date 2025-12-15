@@ -6,6 +6,107 @@ const { spawn, execSync, spawnSync } = require('child_process');
 
 const app = express();
 const REPO_ROOT = path.join(__dirname, '..');
+const CALIB_PKL_PATH = path.join(__dirname, '..', 'raw photos', 'calibration_files', 'calibration_data.pkl');
+const CALIB_JSON_PATH = path.join(__dirname, '..', 'raw photos', 'calibration_files', 'calibration_data.json');
+const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif', '.webp'];
+
+function sanitizeProjectName(raw) {
+  if (!raw) return 'project';
+  const cleaned = String(raw).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+  return cleaned || 'project';
+}
+
+function sanitizeFilenameBase(raw) {
+  if (!raw) return '';
+  return String(raw).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, '_').trim();
+}
+
+function ensureProjectFolder(projectName) {
+  const folder = resolveProjectFolder(projectName);
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+function parseDataUrlToBuffer(dataUrl, explicitMime) {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
+  const trimmed = dataUrl.trim();
+  let mime = explicitMime || null;
+  let payload = trimmed;
+  const m = /^data:([^;,]+)?;base64,(.+)$/i.exec(trimmed);
+  if (m) {
+    mime = m[1] || mime;
+    payload = m[2];
+  }
+  if (!payload) return null;
+  try {
+    const buf = Buffer.from(payload.replace(/\s+/g, ''), 'base64');
+    const ext = (mime || '').toLowerCase().includes('png') ? '.png'
+      : (mime || '').toLowerCase().includes('jpeg') ? '.jpg'
+      : (mime || '').toLowerCase().includes('jpg') ? '.jpg'
+      : (mime || '').toLowerCase().includes('bmp') ? '.bmp'
+      : (mime || '').toLowerCase().includes('webp') ? '.webp'
+      : (mime || '').toLowerCase().includes('gif') ? '.gif'
+      : (mime || '').toLowerCase().includes('tif') ? '.tif'
+      : '.png';
+    return { buffer: buf, mime: mime || 'image/png', ext };
+  } catch (e) {
+    console.error('Failed to parse data URL payload', e);
+    return null;
+  }
+}
+
+let cachedCalibration = { mtime: 0, data: null };
+function loadCalibrationData() {
+  try {
+    const candidates = [];
+    if (fs.existsSync(CALIB_JSON_PATH)) candidates.push({ path: CALIB_JSON_PATH, type: 'json' });
+    if (fs.existsSync(CALIB_PKL_PATH)) candidates.push({ path: CALIB_PKL_PATH, type: 'pkl' });
+    if (!candidates.length) return null;
+    const chosen = candidates[0];
+    const stat = fs.statSync(chosen.path);
+    const mtime = stat.mtimeMs || stat.ctimeMs || Date.now();
+    if (cachedCalibration.data && cachedCalibration.mtime === mtime) return cachedCalibration.data;
+
+    let data = null;
+    if (chosen.type === 'json') {
+      const raw = fs.readFileSync(chosen.path, 'utf8');
+      data = JSON.parse(raw);
+    } else {
+      const python = findPythonCmd(REPO_ROOT);
+      if (!python) return null;
+      const script = [
+        'import pickle, json, numpy as np',
+        'from pathlib import Path',
+        'p = Path(' + JSON.stringify(CALIB_PKL_PATH.replace(/\\/g, '\\\\')) + ')',
+        'data = pickle.load(open(p, "rb"))',
+        'def normalize(x):',
+        '    if isinstance(x, np.ndarray):',
+        '        return normalize(x.tolist())',
+        '    if isinstance(x, dict):',
+        '        return {k: normalize(v) for k, v in x.items()}',
+        '    if isinstance(x, (list, tuple)):',
+        '        return [normalize(v) for v in x]',
+        '    try:',
+        '        return normalize(x.tolist())',
+        '    except Exception:',
+        '        return x',
+        'out = {k: normalize(v) for k, v in data.items()}',
+        'print(json.dumps(out, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))',
+      ].join('\n');
+      const sp = spawnSync(python.cmd, (python.args || []).concat(['-c', script]), { encoding: 'utf8', timeout: 5000 });
+      if (sp.status !== 0) {
+        console.error('Failed to convert calibration pkl to json', sp.stderr || sp.stdout);
+        return null;
+      }
+      data = JSON.parse(sp.stdout || '{}');
+    }
+    cachedCalibration = { mtime, data };
+    return data;
+  } catch (e) {
+    console.error('loadCalibrationData failed', e);
+    return null;
+  }
+}
 
 // Helper: resolve project folder. For auto-generated GSM project names
 // (starting with 'GSM-') the user prefers a single `projects` folder
@@ -154,6 +255,187 @@ app.get('/diagnostics/python', (req, res) => {
 
 app.use(express.json({ limit: '50mb' }));
 
+// Photo capture + calibration helpers for the Trace tab
+app.get('/api/photos/calibration', (req, res) => {
+  const data = loadCalibrationData();
+  if (!data) return res.status(404).json({ error: 'calibration_not_found' });
+  const cameraMatrix = data.camera_matrix || data.cameraMatrix || data.mtx || null;
+  const distortion = data.distortion_coefficients || data.distortion_coeffs || data.distortion || data.dist || null;
+  if (!cameraMatrix || !distortion) return res.status(500).json({ error: 'calibration_missing_fields' });
+  return res.json({ camera_matrix: cameraMatrix, distortion_coefficients: distortion });
+});
+
+app.get('/api/photos/list', (req, res) => {
+  try {
+    const rawProject = (req.query && req.query.project) || 'project';
+    const projectName = sanitizeProjectName(Array.isArray(rawProject) ? rawProject[0] : rawProject);
+    const projectFolder = ensureProjectFolder(projectName);
+    const files = fs.readdirSync(projectFolder);
+    const items = [];
+    for (const f of files) {
+      const ext = path.extname(f).toLowerCase();
+      if (!IMAGE_EXTS.includes(ext)) continue;
+      const full = path.join(projectFolder, f);
+      let st = null;
+      try { st = fs.statSync(full); } catch { st = null; }
+      items.push({
+        name: f,
+        edited: !f.startsWith('_'),
+        mtimeMs: st ? st.mtimeMs || st.ctimeMs || 0 : 0,
+        size: st ? st.size || 0 : 0,
+        url: `/api/photos/raw?project=${encodeURIComponent(projectName)}&file=${encodeURIComponent(f)}`,
+      });
+    }
+    items.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return res.json({ project: projectName, projectFolder, items });
+  } catch (e) {
+    console.error('photo list failed', e);
+    return res.status(500).json({ error: 'photo_list_failed', detail: String(e) });
+  }
+});
+
+app.get('/api/photos/raw', (req, res) => {
+  try {
+    const rawProject = (req.query && req.query.project) || 'project';
+    const projectName = sanitizeProjectName(Array.isArray(rawProject) ? rawProject[0] : rawProject);
+    const rawFile = req.query && req.query.file;
+    if (!rawFile || (Array.isArray(rawFile) && !rawFile.length)) return res.status(400).json({ error: 'missing_file' });
+    const file = path.basename(Array.isArray(rawFile) ? rawFile[0] : rawFile);
+    const ext = path.extname(file).toLowerCase();
+    if (!IMAGE_EXTS.includes(ext)) return res.status(400).json({ error: 'invalid_extension' });
+    const projectFolder = ensureProjectFolder(projectName);
+    const target = path.join(projectFolder, file);
+    if (!fs.existsSync(target)) return res.status(404).json({ error: 'not_found' });
+    return res.sendFile(target);
+  } catch (e) {
+    console.error('photo raw failed', e);
+    return res.status(500).json({ error: 'photo_raw_failed', detail: String(e) });
+  }
+});
+
+app.post('/api/photos/capture', (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectName = sanitizeProjectName(body.project || 'project');
+    const projectFolder = ensureProjectFolder(projectName);
+    const dataUrl = body.dataUrl || body.data || null;
+    const parsed = parseDataUrlToBuffer(dataUrl, body.mimeType || body.mimetype || null);
+    if (!parsed) return res.status(400).json({ error: 'invalid_image_payload' });
+    const rawName = body.name || body.filename || '';
+    const parsedName = path.parse(rawName || '');
+    const base = sanitizeFilenameBase(parsedName.name || rawName || `capture_${Date.now()}`) || `capture_${Date.now()}`;
+    const ext = (parsedName.ext && IMAGE_EXTS.includes(parsedName.ext.toLowerCase())) ? parsedName.ext : parsed.ext;
+    const finalName = `_${base}${ext}`;
+    const target = path.join(projectFolder, finalName);
+    fs.writeFileSync(target, parsed.buffer);
+    return res.json({ ok: true, filename: finalName, project: projectName });
+  } catch (e) {
+    console.error('photo capture failed', e);
+    return res.status(500).json({ error: 'photo_capture_failed', detail: String(e) });
+  }
+});
+
+app.post('/api/photos/mark-edited', (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectName = sanitizeProjectName(body.project || 'project');
+    const projectFolder = ensureProjectFolder(projectName);
+    const rawFile = body.filename || body.name;
+    if (!rawFile) return res.status(400).json({ error: 'missing_filename' });
+    const file = path.basename(String(rawFile));
+    if (!file.startsWith('_')) return res.status(400).json({ error: 'not_prefixed' });
+    const src = path.join(projectFolder, file);
+    if (!fs.existsSync(src)) return res.status(404).json({ error: 'not_found' });
+    const baseName = file.replace(/^_+/, '') || file;
+    const parsed = path.parse(baseName);
+    let destName = baseName;
+    let dest = path.join(projectFolder, destName);
+
+    // First try to remove an existing target so we overwrite cleanly
+    try {
+      if (fs.existsSync(dest)) {
+        fs.unlinkSync(dest);
+      }
+    } catch (e) {
+      console.warn('Failed to remove existing target during mark-edited', dest, e);
+    }
+
+    // If the destination still exists (locked, permissions, etc.), fall back to a unique suffixed name
+    if (fs.existsSync(dest)) {
+      let idx = 1;
+      while (fs.existsSync(path.join(projectFolder, `${parsed.name}-${idx}${parsed.ext}`))) {
+        idx += 1;
+      }
+      destName = `${parsed.name}-${idx}${parsed.ext}`;
+      dest = path.join(projectFolder, destName);
+    }
+
+    try {
+      fs.renameSync(src, dest);
+    } catch (e) {
+      console.error('photo mark-edited failed (rename)', e);
+      return res.status(500).json({ error: 'photo_mark_failed', detail: String(e) });
+    }
+    return res.json({ ok: true, filename: destName, project: projectName });
+  } catch (e) {
+    console.error('photo mark-edited failed', e);
+    return res.status(500).json({ error: 'photo_mark_failed', detail: String(e) });
+  }
+});
+
+// Allow uploading a calibration file (pkl or json) into the calibration_files folder
+// Handle multer errors explicitly so clients always receive JSON (avoids HTML error pages)
+app.post('/api/photos/calibration-upload', (req, res) => {
+  upload.single('calibration')(req, res, (err) => {
+    if (err) {
+      console.error('calibration upload failed (multer)', err);
+      return res.status(400).json({ error: 'calibration_upload_failed', detail: String(err) });
+    }
+    try {
+      if (!req.file) return res.status(400).json({ error: 'missing_file' });
+      const ext = (path.extname(req.file.originalname || '') || '').toLowerCase();
+      if (!['.pkl', '.json'].includes(ext)) return res.status(400).json({ error: 'unsupported_extension' });
+      const targetDir = path.join(__dirname, '..', 'raw photos', 'calibration_files');
+      fs.mkdirSync(targetDir, { recursive: true });
+      const pklPath = path.join(targetDir, 'calibration_data.pkl');
+      const jsonPath = path.join(targetDir, 'calibration_data.json');
+      if (ext === '.pkl') {
+        fs.copyFileSync(req.file.path, pklPath);
+        // attempt to refresh cache
+        cachedCalibration = { mtime: 0, data: null };
+      } else if (ext === '.json') {
+        fs.copyFileSync(req.file.path, jsonPath);
+        cachedCalibration = { mtime: 0, data: null };
+      }
+      return res.json({ ok: true, stored: ext === '.pkl' ? pklPath : jsonPath });
+    } catch (e) {
+      console.error('calibration upload failed', e);
+      return res.status(500).json({ error: 'calibration_upload_failed', detail: String(e) });
+    }
+  });
+});
+
+app.post('/api/photos/save', (req, res) => {
+  try {
+    const body = req.body || {};
+    const projectName = sanitizeProjectName(body.project || 'project');
+    const projectFolder = ensureProjectFolder(projectName);
+    const rawFile = body.filename || body.name;
+    if (!rawFile) return res.status(400).json({ error: 'missing_filename' });
+    const file = path.basename(String(rawFile));
+    const ext = path.extname(file).toLowerCase();
+    if (!IMAGE_EXTS.includes(ext)) return res.status(400).json({ error: 'invalid_extension' });
+    const parsed = parseDataUrlToBuffer(body.dataUrl || body.data || null, body.mimeType || body.mimetype || null);
+    if (!parsed) return res.status(400).json({ error: 'invalid_image_payload' });
+    const target = path.join(projectFolder, file);
+    fs.writeFileSync(target, parsed.buffer);
+    return res.json({ ok: true, filename: file, project: projectName });
+  } catch (e) {
+    console.error('photo save failed', e);
+    return res.status(500).json({ error: 'photo_save_failed', detail: String(e) });
+  }
+});
+
 // Helper: merge and write GSM snapshot for a project
 function writeGsmSnapshot(projectFolder, projectName, incomingProjectOrItems, incomingBoard) {
   try {
@@ -184,6 +466,17 @@ function writeGsmSnapshot(projectFolder, projectName, incomingProjectOrItems, in
     if (Array.isArray(incomingProjectOrItems) && incomingProjectOrItems.length) {
       gsmObj.items = incomingProjectOrItems;
     }
+
+    // Ensure commonly-referenced DXF arrays exist so template.scad
+    // does not warn about unknown variables when OpenSCAD loads the GSM.
+    const ensureArray = (k) => { if (!Object.prototype.hasOwnProperty.call(gsmObj, k) || !Array.isArray(gsmObj[k])) gsmObj[k] = []; };
+    ensureArray('dxf_file_paths');
+    ensureArray('dxf_cut_depths');
+    ensureArray('dxf_sections');
+    ensureArray('section_positions');
+    ensureArray('dxf_file_paths_raised');
+    ensureArray('dxf_raised_heights');
+    ensureArray('dxf_file_paths_blocker');
 
     // Merge explicit board info into existing board (preserve existing keys)
     if (incomingBoard && typeof incomingBoard === 'object') {
@@ -713,6 +1006,18 @@ app.post('/export-dxfs', async (req, res) => {
     const out = path.join(projectFolder, 'processing_output');
     if (!fs.existsSync(out)) fs.mkdirSync(out, { recursive: true });
 
+    // Clean stale .poly.json files so export reflects only current canvas shapes
+    try {
+      const existing = fs.readdirSync(out);
+      for (const f of existing) {
+        if (f.toLowerCase().endsWith('.poly.json')) {
+          try { fs.unlinkSync(path.join(out, f)); } catch (e) { console.warn('Failed to remove old poly.json', f, e); }
+        }
+      }
+    } catch (e) {
+      console.warn('Unable to clean existing .poly.json files before export', e);
+    }
+
     const results = [];
     const manifest = [];
     // Save a snapshot of the project as a .gsm so downstream tools can
@@ -756,57 +1061,62 @@ app.post('/export-dxfs', async (req, res) => {
     try {
       const outFilesNow = fs.existsSync(out) ? fs.readdirSync(out) : [];
       const hasPolyJson = outFilesNow.some(f => f.toLowerCase().endsWith('.poly.json'));
-      if (!hasPolyJson) {
-        // Try to read GSM for embedded polylines
-        const gsmPath = path.join(projectFolder, `${projectName}.gsm`);
-        let created = 0;
-        if (fs.existsSync(gsmPath)) {
-          try {
-            const raw = fs.readFileSync(gsmPath, 'utf8');
-            const gsmObj = JSON.parse(raw);
-            // Look for polylines under processing or meta
-            let proc = null;
-            if (gsmObj && typeof gsmObj === 'object') {
-              proc = gsmObj.processing || gsmObj.processing_meta || (gsmObj.project && gsmObj.project.processing) || null;
-            }
-            if (proc && Array.isArray(proc.polylines) && proc.polylines.length) {
-              for (let i = 0; i < proc.polylines.length; i++) {
-                const poly = proc.polylines[i];
-                const name = (proc.names && proc.names[i]) ? proc.names[i] : `shape_${i+1}`;
-                const polyObj = { name: name, polylines: [poly] };
-                const polyPath = path.join(out, `${name}.poly.json`);
-                try {
-                  fs.writeFileSync(polyPath, JSON.stringify(polyObj, null, 2), 'utf8');
-                  created += 1;
-                } catch (e) { console.warn('failed to write synthesized poly.json', polyPath, e); }
-              }
-            }
-          } catch (e) { /* ignore parse errors */ }
-        }
-
-        // Fall back to reading processing_output/meta.json directly
-        if (created === 0) {
-          const metaPath = path.join(projectFolder, 'processing_output', 'meta.json');
-          if (fs.existsSync(metaPath)) {
+      if (items && items.length) {
+        // Client provided explicit items; do not synthesize processing polylines
+        console.log('export-dxfs: items provided by client; skipping GSM/meta synthesis of .poly.json');
+      } else {
+        if (!hasPolyJson) {
+          // Try to read GSM for embedded polylines
+          const gsmPath = path.join(projectFolder, `${projectName}.gsm`);
+          let created = 0;
+          if (fs.existsSync(gsmPath)) {
             try {
-              const raw = fs.readFileSync(metaPath, 'utf8');
-              const metaObj = JSON.parse(raw);
-              if (metaObj && Array.isArray(metaObj.polylines) && metaObj.polylines.length) {
-                for (let i = 0; i < metaObj.polylines.length; i++) {
-                  const poly = metaObj.polylines[i];
-                  const name = metaObj.names && metaObj.names[i] ? metaObj.names[i] : `shape_${i+1}`;
+              const raw = fs.readFileSync(gsmPath, 'utf8');
+              const gsmObj = JSON.parse(raw);
+              // Look for polylines under processing or meta
+              let proc = null;
+              if (gsmObj && typeof gsmObj === 'object') {
+                proc = gsmObj.processing || gsmObj.processing_meta || (gsmObj.project && gsmObj.project.processing) || null;
+              }
+              if (proc && Array.isArray(proc.polylines) && proc.polylines.length) {
+                for (let i = 0; i < proc.polylines.length; i++) {
+                  const poly = proc.polylines[i];
+                  const name = (proc.names && proc.names[i]) ? proc.names[i] : `shape_${i+1}`;
                   const polyObj = { name: name, polylines: [poly] };
                   const polyPath = path.join(out, `${name}.poly.json`);
                   try {
                     fs.writeFileSync(polyPath, JSON.stringify(polyObj, null, 2), 'utf8');
                     created += 1;
-                  } catch (e) { console.warn('failed to write synthesized poly.json from meta', polyPath, e); }
+                  } catch (e) { console.warn('failed to write synthesized poly.json', polyPath, e); }
                 }
               }
             } catch (e) { /* ignore parse errors */ }
           }
+
+          // Fall back to reading processing_output/meta.json directly
+          if (created === 0) {
+            const metaPath = path.join(projectFolder, 'processing_output', 'meta.json');
+            if (fs.existsSync(metaPath)) {
+              try {
+                const raw = fs.readFileSync(metaPath, 'utf8');
+                const metaObj = JSON.parse(raw);
+                if (metaObj && Array.isArray(metaObj.polylines) && metaObj.polylines.length) {
+                  for (let i = 0; i < metaObj.polylines.length; i++) {
+                    const poly = metaObj.polylines[i];
+                    const name = metaObj.names && metaObj.names[i] ? metaObj.names[i] : `shape_${i+1}`;
+                    const polyObj = { name: name, polylines: [poly] };
+                    const polyPath = path.join(out, `${name}.poly.json`);
+                    try {
+                      fs.writeFileSync(polyPath, JSON.stringify(polyObj, null, 2), 'utf8');
+                      created += 1;
+                    } catch (e) { console.warn('failed to write synthesized poly.json from meta', polyPath, e); }
+                  }
+                }
+              } catch (e) { /* ignore parse errors */ }
+            }
+          }
+          if (created) console.log(`Synthesized ${created} .poly.json files in ${out} from GSM/meta polylines`);
         }
-        if (created) console.log(`Synthesized ${created} .poly.json files in ${out} from GSM/meta polylines`);
       }
     } catch (e) {
       console.warn('Failed to synthesize poly.json files for export-dxfs', e);

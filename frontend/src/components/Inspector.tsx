@@ -25,9 +25,11 @@ interface InspectorProps {
   setTraceParams?: (p: { threshold: number; offset: number; token: number; resolution: number }) => void;
   transferPolylines?: () => void;
   hasPendingPolylines?: boolean;
+  editingActive?: boolean;
   // Actions handed down from App
   exportDxfs?: () => void;
   generateScad?: () => void;
+  editorControls?: any;
 }
 
 export default function Inspector({
@@ -47,6 +49,8 @@ export default function Inspector({
   setTraceParams,
   transferPolylines,
   hasPendingPolylines = false,
+  editingActive = false,
+  editorControls = null,
   exportDxfs,
   generateScad,
 }: InspectorProps) {
@@ -109,6 +113,58 @@ export default function Inspector({
   }) : null]);
   // If we're in trace tab, show trace-specific controls in the inspector
   if (activeTab === "trace") {
+    if (editingActive) {
+      // Show editor controls in the inspector when a photo is being edited
+      // `editorControls` will be provided by App (registered from TraceCapture)
+      // editorControls passed from App (registered by TraceCapture)
+      const editor = (editorControls && editorControls.getState) ? editorControls : (window as any).__editorControls || null;
+      const brushSize = editor?.getState?.().brushSize ?? 28;
+      const currentColor = editor?.getState?.().color ?? '#000000';
+      return (
+        <aside className="panel panel-right">
+          <h2>Photo Editor</h2>
+          <div className="field">
+            <label>Brush Size</label>
+            <input type="range" min={4} max={200} value={brushSize} onChange={(e) => editor?.setBrushSize?.(Number(e.target.value))} />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
+              <div onClick={() => { editor?.setColor?.('#000000'); editor?.setMode?.('brush'); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+                <div style={{ width: Math.max(10, Math.round(brushSize * 0.4)), height: Math.max(10, Math.round(brushSize * 0.4)), background: '#000', borderRadius: '50%', border: currentColor === '#000000' ? '2px solid #0074D9' : undefined }} />
+                <small>Black</small>
+              </div>
+              <div onClick={() => { editor?.setColor?.('#ffffff'); editor?.setMode?.('brush'); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+                <div style={{ width: Math.max(10, Math.round(brushSize * 0.4)), height: Math.max(10, Math.round(brushSize * 0.4)), background: '#fff', borderRadius: '50%', border: currentColor === '#ffffff' ? '2px solid #0074D9' : '1px solid #000' }} />
+                <small>White</small>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="action-text-button" onClick={() => editor?.setMode?.('select')} title="Select" aria-label="Select">
+              <div style={{ width: 20, height: 14, boxSizing: 'border-box', border: '2px dashed #000', display: 'inline-block' }} />
+            </button>
+            <button className="action-text-button" onClick={() => editor?.applyCrop?.()} title="Crop" aria-label="Crop">
+              <svg
+                aria-hidden="true"
+                width={24}
+                height={24}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M7 3v11a3 3 0 0 0 3 3h11" />
+                <path d="M17 21V10a3 3 0 0 0-3-3H3" />
+              </svg>
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="action-text-button" onClick={() => editor?.save?.()}>Save</button>
+            <button className="action-text-button" onClick={() => editor?.cancel?.()}>Cancel</button>
+          </div>
+        </aside>
+      );
+    }
     // trace inputs are lifted into App state via props
     const threshold = traceParams?.threshold ?? 145;
     const offset = traceParams?.offset ?? 0.1; // inches
