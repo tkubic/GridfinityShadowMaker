@@ -569,6 +569,21 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     } catch { /* ignore */ }
   }
 
+  // Request camera permission helper
+  async function requestCameraPermission() {
+    setStreamError(null);
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      s.getTracks().forEach((t) => t.stop());
+      // re-run device enumeration after permission
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      setDevices(devs.filter((d) => d.kind === 'videoinput'));
+      setStreamError(null);
+    } catch (e: any) {
+      setStreamError(e?.message || String(e));
+    }
+  }
+
   // Prepare calibration mats when cv is ready
   useEffect(() => {
     if (!cvReady || !window.cv || !calibrationRef.current) return;
@@ -594,22 +609,58 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     async function start() {
       try {
         setStreamError(null);
-        const devs = await navigator.mediaDevices.enumerateDevices();
-        setDevices(devs.filter((d) => d.kind === "videoinput"));
-        if (!selectedDeviceId) return; // do not auto-start; user must pick a camera
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          setStreamError('WebRTC APIs not available. Ensure the app is served over https or localhost and your browser supports navigator.mediaDevices.');
+          setDevices([]);
+          return;
+        }
+
+        // First try to enumerate devices
+        let devs = await navigator.mediaDevices.enumerateDevices();
+        console.debug('enumerateDevices initial:', devs);
+        let videoInputs = devs.filter((d) => d.kind === 'videoinput');
+
+        // Some browsers return no device list until getUserMedia permission is granted.
+        // If none found, attempt a lightweight permission request to reveal devices.
+        if (videoInputs.length === 0) {
+          try {
+            console.debug('No videoinput found; requesting temporary getUserMedia to prompt permission and reveal devices');
+            const probeStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            probeStream.getTracks().forEach((t) => t.stop());
+            devs = await navigator.mediaDevices.enumerateDevices();
+            console.debug('enumerateDevices after permission probe:', devs);
+            videoInputs = devs.filter((d) => d.kind === 'videoinput');
+          } catch (err: any) {
+            console.warn('Permission probe failed:', err);
+            // If permission was denied or failed, expose the message so the user can act
+            setStreamError(err?.message || 'Camera permission denied or not available');
+          }
+        }
+
+        setDevices(videoInputs);
+
+        // If user hasn't selected a device, do not auto-start streaming
+        if (!selectedDeviceId) return;
 
         const constraints: MediaStreamConstraints = {
           video: { deviceId: { exact: selectedDeviceId }, width: { ideal: 4000 }, height: { ideal: 3000 } },
           audio: false,
         };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        currentStream = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          currentStream = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play().catch(() => {});
+          }
+        } catch (e: any) {
+          console.error('getUserMedia for selected device failed', e);
+          setStreamError(e?.message || 'Unable to access camera for selected device');
         }
       } catch (e: any) {
-        setStreamError(e?.message || "Unable to access camera");
+        console.error('Error starting video stream:', e);
+        setStreamError(e?.message || 'Unable to access camera');
       }
     }
     start();
@@ -747,6 +798,41 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     }
   }
 
+  // Load an image from server and feed it into the same image pipeline as the file input
+  async function loadImageFromPhoto(item: PhotoItem) {
+    try {
+      const resp = await fetch(`${backendUrl}/api/photos/raw?project=${encodeURIComponent(projectName)}&file=${encodeURIComponent(item.name)}`);
+      if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
+      const blob = await resp.blob();
+      const file = new File([blob], item.name, { type: blob.type || 'image/png' });
+      // synthesize a ChangeEvent-like object expected by onImageFile
+      const fakeEvent = {
+        target: { files: [file] },
+        currentTarget: { files: [file] }
+      } as unknown as React.ChangeEvent<HTMLInputElement>;
+      try {
+        onImageFile(fakeEvent);
+      } catch (e) {
+        // fallback: trigger the file input and set files there if possible
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(file as any);
+          if (imageInputRef.current) {
+            (imageInputRef.current as HTMLInputElement).files = dt.files;
+            // dispatch change event
+            const ev = new Event('change', { bubbles: true });
+            imageInputRef.current.dispatchEvent(ev);
+          }
+        } catch (err) {
+          console.error('Load fallback failed', err);
+          alert('Could not load image into pipeline.');
+        }
+      }
+    } catch (e: any) {
+      alert(`Load failed: ${e?.message || e}`);
+    }
+  }
+
   async function handleSaveEdited(dataUrl: string, filename: string) {
     try {
       const resp = await fetch(`${backendUrl}/api/photos/save`, {
@@ -802,7 +888,6 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       <div className="capture-column">
         <div className="capture-card">
           <div style={{ marginBottom: 8 }}>
-            <button onClick={() => imageInputRef.current?.click()}>Load Image</button>
             <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onImageFile} />
             <input ref={calibrationInputRef} type="file" accept=".pkl,.json" style={{ display: "none" }} onChange={handleUploadCalibration} />
           </div>
@@ -823,6 +908,16 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
                 ))}
               </select>
             </label>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', fontSize: 11 }}>
+              <button
+                onClick={requestCameraPermission}
+                style={{ padding: '2px 6px', fontSize: 11, height: 24 }}
+                title="Temporarily request camera permission"
+              >
+                Request
+              </button>
+              <div style={{ color: '#666', fontSize: 11 }}>Click to request camera permission if cameras don't appear.</div>
+            </div>
             {streamError && <div className="error-text">{streamError}</div>}
             <div className="preview-wrap">
               <video ref={videoRef} className="capture-video" muted playsInline />
@@ -846,9 +941,12 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
             </button>
           </div>
         </div>
-        <div className="capture-card">
+          <div className="capture-card">
           <div className="section-header" style={{ marginBottom: 8 }}>Captured photos</div>
-          <button style={{ marginBottom: 8 }} onClick={refreshList} disabled={busyList}>Refresh</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <button onClick={refreshList} disabled={busyList}>Refresh</button>
+            <button onClick={() => imageInputRef.current?.click()}>Load Image</button>
+          </div>
           <div className="photo-list">
             {busyList && <div>Loading...</div>}
             {!busyList && !photoList.length && <div style={{ color: "#666" }}>No photos yet</div>}
@@ -860,6 +958,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => openForEdit(p)}>Edit</button>
+                  <button onClick={() => loadImageFromPhoto(p)}>Load</button>
                 </div>
               </div>
             ))}
