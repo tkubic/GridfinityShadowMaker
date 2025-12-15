@@ -1,19 +1,72 @@
-import cv2
-import numpy as np
-import math
-import ezdxf
-import pyperclip
-import os
-import tempfile
-import subprocess
-import traceback
-import time
 import concurrent.futures
+import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+
+import cv2
+import ezdxf
+import numpy as np
+import pyperclip
 from PIL import Image
 from PyQt5 import QtWidgets, QtGui  # Import QtGui
 from src.ui import Ui_MainWindow  # type: ignore # Import Ui_MainWindow
 
 scad_file_path = None  # Declare scad_file_path as a global variable
+
+
+def _candidate_openscad_paths():
+    """Return plausible OpenSCAD binary locations for the current platform."""
+    candidates = []
+
+    env_path = shutil.which("openscad")
+    if env_path:
+        candidates.append(env_path)
+
+    if sys.platform.startswith("win"):
+        program_files = os.environ.get("ProgramFiles", r"C:\\Program Files")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)")
+        candidates.extend([
+            os.path.join(program_files, "OpenSCAD", "openscad.exe"),
+            os.path.join(program_files, "OpenSCAD (Nightly)", "openscad.exe"),
+            os.path.join(program_files_x86, "OpenSCAD", "openscad.exe"),
+            os.path.join(program_files_x86, "OpenSCAD (Nightly)", "openscad.exe"),
+        ])
+    elif sys.platform == "darwin":
+        candidates.extend([
+            "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD",
+            "/Applications/OpenSCAD.app/Contents/MacOS/openscad",
+        ])
+    else:
+        candidates.extend([
+            "/usr/bin/openscad",
+            "/usr/local/bin/openscad",
+            "/snap/bin/openscad",
+            os.path.expanduser("~/.local/bin/openscad"),
+        ])
+
+    return candidates
+
+
+def _find_openscad_executable():
+    """Return the first existing OpenSCAD executable path, or None if missing."""
+    for path in _candidate_openscad_paths():
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _set_token_status(token_status, text, color_hex):
+    """Safely update the token status label."""
+    if token_status is None:
+        return
+    token_status.setText(text)
+    token_status.setStyleSheet(f"color: {color_hex}; font-weight: 600;")
+
 
 def get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry):
     global offset, token, resolution
@@ -45,12 +98,13 @@ def clear_canvas(canvas, keep_original=False):
         print(f"Error clearing canvas: {str(e)}")
         print(traceback.format_exc())
 
-def find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text):
+def find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text, token_status=None):
     try:
         diameter = None  # Initialize diameter
         threshold_input = get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry)
         image, thresh = preprocess_image(image, threshold_input)
         display_image_on_canvas(thresh, canvas, 2, "Traced")
+        _set_token_status(token_status, "Detecting token...", "#5f6368")
         
         contours = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
@@ -59,13 +113,24 @@ def find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, res
             diameter = calculate_diameter(max_p2d_contour)
             console_text.setText(f"Circle with Greatest Perimeter to Diameter Ratio - Diameter: {diameter}, Ratio: {max_p2d_ratio}")
             filtered_contours = [contour for contour in contours if not np.array_equal(contour, max_p2d_contour)]
-            display_contours(image, filtered_contours, canvas, 2, "Traced", (0, 255, 0))  # Green color for traced image
+
+            # Overlay token contour (pink) and other contours (green) for the user
+            overlay = image.copy()
+            thickness = max(1, min(image.shape[0], image.shape[1]) // 200)
+            if filtered_contours:
+                cv2.drawContours(overlay, filtered_contours, -1, (0, 255, 0), thickness)  # Green for other shapes
+            cv2.drawContours(overlay, [max_p2d_contour], -1, (255, 0, 255), thickness + 1)  # Bright pink for token
+            display_image_on_canvas(overlay, canvas, 2, "Traced")
+
+            _set_token_status(token_status, f"Token detected (diameter: {diameter:.2f})", "#ff00ff")
         else:
             console_text.setText("No circle with sufficient perimeter to diameter ratio found.")
+            _set_token_status(token_status, "Token not detected", "#b00020")
         return diameter, threshold_input
     except Exception as e:
         console_text.setText(f"Error finding diameter: {str(e)}")
         print(traceback.format_exc())
+        _set_token_status(token_status, "Token detection error", "#b00020")
         return None, None
 
 def preprocess_image(image, threshold_input):
@@ -229,10 +294,12 @@ def calculate_grid_size(contours, scale_factor):
 def select_image(console_text, default_dir=None):
     try:
         file_dialog = QtWidgets.QFileDialog()
-        # Use default_dir if provided, otherwise use ""
+        # Use default_dir if provided, otherwise use an empty string so Qt picks a sensible default.
         start_dir = default_dir if default_dir is not None else ""
+        # Qt expects space-separated patterns inside a single filter string; semicolons break matching on Linux.
+        file_filter = "Image files (*.jpg *.jpeg *.png *.bmp)"
         file_path, _ = file_dialog.getOpenFileName(
-            None, "Select Image", start_dir, "Image files (*.jpg;*.jpeg;*.png;*.bmp)"
+            None, "Select Image", start_dir, file_filter
         )
         if file_path:
             print(f"Selected file: {file_path}")
@@ -368,20 +435,16 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         scad_file_path = os.path.join(design_files_directory, f"{file_name}.scad")
         with open(scad_file_path, 'w') as scad_file:
             scad_file.write(updated_scad_content)
-        
-        # Paths to possible OpenSCAD executables
-        openscad_paths = [
-            "C:/Program Files/OpenSCAD/openscad.exe",
-            "C:/Program Files/OpenSCAD (Nightly)/openscad.exe"
-        ]
-        
-        # Find the first valid OpenSCAD executable
-        openscad_executable = next((path for path in openscad_paths if os.path.exists(path)), None)
+
+        openscad_executable = _find_openscad_executable()
         if not openscad_executable:
-            console_text.setText("Error: OpenSCAD executable not found in expected directories.")
+            console_text.setText(
+                "Error: OpenSCAD executable not found. Install OpenSCAD or ensure "
+                "its binary is available on your PATH."
+            )
             return
-        
-        # Open the SCAD file with OpenSCAD
+
+        console_text.setText(f"Opening OpenSCAD: {openscad_executable}")
         subprocess.Popen([openscad_executable, scad_file_path])
     except Exception as e:
         console_text.setText(f"Error importing to OpenSCAD: {str(e)}")
@@ -402,10 +465,17 @@ def create_main_window():
     
     canvas = ui.canvas
     canvas.setScene(QtWidgets.QGraphicsScene())
+
+    token_status = QtWidgets.QLabel(MainWindow)
+    token_status.setObjectName("token_status")
+    token_status.setText("Token: waiting for detection")
+    token_status.setStyleSheet("color: #5f6368; font-weight: 600;")
+    token_status.setMinimumWidth(180)
+    ui.gridLayout.addWidget(token_status, 2, 2, 1, 1)
     
     return (MainWindow, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
-            ui.resolution_entry, ui.console_text)
+            ui.resolution_entry, ui.console_text, token_status)
 
 def display_image_on_canvas(image, canvas, region, caption):
     try:

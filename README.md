@@ -79,11 +79,18 @@ Download and install either OrcaSlicer from [OrcaSlicer releases](https://github
 #### **Python**: 
 1. **Setup Python**:
    - Download and install the latest version of Python from [python.org](https://www.python.org/). Ensure to add Python to your system PATH.
-2. **Install Dependencies**:
-   - Use the following command from a terminal or command prompt to install the required dependencies:
+2. **Install Dependencies with `requirements.txt`**:
+   - (Recommended) Create and activate a virtual environment in the project root:
      ```sh
-     pip install PyQt5 opencv_python pillow colorama ezdxf fonttools iniconfig numpy opencv-python packaging pillow pip pluggy pyparsing pyperclip pytest typing_extensions
+     python -m venv .venv
+     source .venv/bin/activate    # On Windows: .venv\Scripts\activate
      ```
+   - Install everything in one step using the pinned list in `requirements.txt`:
+     ```sh
+     pip install --upgrade pip
+     pip install -r requirements.txt
+     ```
+   - If you prefer a system-wide install, run the same `pip install -r requirements.txt` without creating a virtual environment.
 
 
 ## Credits

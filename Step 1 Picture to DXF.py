@@ -17,6 +17,13 @@ def create_main_window():
     
     canvas = ui.canvas
     canvas.setScene(QtWidgets.QGraphicsScene())
+
+    token_status = QtWidgets.QLabel(MainWindow)
+    token_status.setObjectName("token_status")
+    token_status.setText("Token: waiting for detection")
+    token_status.setStyleSheet("color: #5f6368; font-weight: 600;")
+    token_status.setMinimumWidth(180)
+    ui.gridLayout.addWidget(token_status, 2, 2, 1, 1)
     
     ui.console_text.setText("Input Project Name then Load Image")  # Set default console text
 
@@ -44,7 +51,7 @@ def create_main_window():
     
     return (MainWindow, ui, canvas, ui.load_button, ui.process_button, ui.import_button, 
             ui.exit_button, ui.threshold_entry, ui.offset_entry, ui.token_entry, 
-            ui.resolution_entry, ui.console_text)
+            ui.resolution_entry, ui.console_text, token_status)
 
 def main():
     CALIBRATION_FILE = '/src/calibration_data.pkl'
@@ -56,7 +63,7 @@ def main():
     if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
         QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     app = QtWidgets.QApplication([])
-    window, ui, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text = create_main_window()
+    window, ui, canvas, load_button, process_button, import_button, exit_button, threshold_entry, offset_entry, token_entry, resolution_entry, console_text, token_status = create_main_window()
 
     def toggle_load_button():
         load_button.setEnabled(bool(ui.lineEdit.text()))  # Enable if lineEdit has text
@@ -125,7 +132,16 @@ def main():
             if not folder_name:
                 console_text.setText("Project name is empty. Please enter a valid name.")
                 return
-            diameter, threshold_input = find_diameter(image, canvas, threshold_entry, offset_entry, token_entry, resolution_entry, console_text)
+            diameter, threshold_input = find_diameter(
+                image,
+                canvas,
+                threshold_entry,
+                offset_entry,
+                token_entry,
+                resolution_entry,
+                console_text,
+                token_status,
+            )
             if diameter is None or threshold_input is None:
                 return  # Return to main loop if the user selects "no"
             contours, offset_image = find_contours(image, diameter, threshold_input, canvas, console_text)
