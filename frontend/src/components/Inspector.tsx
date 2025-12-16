@@ -117,7 +117,7 @@ export default function Inspector({
       // Show editor controls in the inspector when a photo is being edited
       // `editorControls` will be provided by App (registered from TraceCapture)
       // editorControls passed from App (registered by TraceCapture)
-      const editor = (editorControls && editorControls.getState) ? editorControls : (window as any).__editorControls || null;
+      const editor = (editorControls && editorControls.getState) ? editorControls : null;
       const brushSize = editor?.getState?.().brushSize ?? 28;
       const currentColor = editor?.getState?.().color ?? '#000000';
       const mode = editor?.getState?.().mode ?? 'select';
@@ -139,44 +139,56 @@ export default function Inspector({
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-            <button className="action-text-button" style={toolButtonStyle(mode === 'pointer')} onClick={() => editor?.setMode?.('pointer')} title="Pointer" aria-label="Pointer" aria-pressed={mode === 'pointer'}>
-              <svg aria-hidden="true" width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="m3 2 7 18 2-7 7-2Z" />
-              </svg>
-            </button>
-            <button className="action-text-button" style={toolButtonStyle(mode === 'marquee')} onClick={() => editor?.setMode?.('marquee')} title="Marquee" aria-label="Marquee" aria-pressed={mode === 'marquee'}>
-              <div style={{ width: 20, height: 14, boxSizing: 'border-box', border: '2px dashed #000', display: 'inline-block' }} />
-            </button>
-            <button className="action-text-button" style={toolButtonStyle(mode === 'crop')} onClick={() => editor?.cropSelection?.()} title="Crop" aria-label="Crop" aria-pressed={mode === 'crop'}>
-              <svg
-                aria-hidden="true"
-                width={24}
-                height={24}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M7 3v11a3 3 0 0 0 3 3h11" />
-                <path d="M17 21V10a3 3 0 0 0-3-3H3" />
-              </svg>
-            </button>
-            <button className="action-text-button" style={toolButtonStyle(mode === 'brush')} onClick={() => editor?.setMode?.('brush')} title="Brush" aria-label="Brush" aria-pressed={mode === 'brush'}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m12 19 7-7 3 3-7 7-3-3Z" />
-                <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5Z" />
-              </svg>
-            </button>
-            <button className="action-text-button" style={toolButtonStyle(mode === 'rectangle')} onClick={() => editor?.setMode?.('rectangle')} title="Rectangle" aria-label="Rectangle" aria-pressed={mode === 'rectangle'}>
-              <div style={{ width: 18, height: 14, border: '2px solid #333' }} />
-            </button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexDirection: 'column' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'pointer')} onClick={() => editor?.setMode?.('pointer')} title="Pointer" aria-label="Pointer" aria-pressed={mode === 'pointer'}>
+                <svg aria-hidden="true" width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m3 2 7 18 2-7 7-2Z" />
+                </svg>
+              </button>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'marquee')} onClick={() => editor?.setMode?.('marquee')} title="Marquee" aria-label="Marquee" aria-pressed={mode === 'marquee'}>
+                <div style={{ width: 20, height: 14, boxSizing: 'border-box', border: '2px dashed #000', display: 'inline-block' }} />
+              </button>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'crop')} onClick={() => editor?.cropSelection?.()} title="Crop" aria-label="Crop" aria-pressed={mode === 'crop'}>
+                <svg
+                  aria-hidden="true"
+                  width={24}
+                  height={24}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M7 3v11a3 3 0 0 0 3 3h11" />
+                  <path d="M17 21V10a3 3 0 0 0-3-3H3" />
+                </svg>
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'brush')} onClick={() => editor?.setMode?.('brush')} title="Brush" aria-label="Brush" aria-pressed={mode === 'brush'}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m12 19 7-7 3 3-7 7-3-3Z" />
+                  <path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5Z" />
+                </svg>
+              </button>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'rectangle')} onClick={() => editor?.setMode?.('rectangle')} title="Rectangle" aria-label="Rectangle" aria-pressed={mode === 'rectangle'}>
+                <div style={{ width: 18, height: 14, border: `2px solid ${currentColor}`, background: currentColor }} />
+              </button>
+              <button className="action-text-button" style={toolButtonStyle(mode === 'circle')} onClick={() => editor?.setMode?.('circle')} title="Circle" aria-label="Circle" aria-pressed={mode === 'circle'}>
+                <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${currentColor}`, background: currentColor }} />
+              </button>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button className="action-text-button" onClick={() => editor?.deleteSelection?.()}>Delete</button>
-            <button className="action-text-button" onClick={() => editor?.save?.()}>Save</button>
+            <button className="action-text-button" onClick={() => {
+              try {
+                const live = (window as any).__editorControls || editor;
+                live?.save?.();
+              } catch (e) { console.error('Inspector.save error', e); }
+            }}>Save</button>
             <button className="action-text-button" onClick={() => editor?.cancel?.()}>Cancel</button>
           </div>
         </aside>
