@@ -299,6 +299,12 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
         script_directory = os.path.dirname(os.path.abspath(__file__))
         design_files_directory = os.path.join(script_directory, "..", folder_name)
 
+        # Track board-provided grid sizes separately so they can be enforced
+        # later even if other logic mutates the working grid variables.
+        board_gx = gridx_size
+        board_gy = gridy_size
+        board_gz = gridz_size
+
         # Normalize into a list so the replacement logic runs for single DXFs too
         # (callers historically passed a single string with splitDXF=False).
         if not (splitDXF and isinstance(dxf_path, list)):
@@ -372,6 +378,56 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                     for fn in os.listdir(design_files_directory):
                         if fn.lower().endswith('.gsm'):
                             gsm_candidates.append(os.path.join(design_files_directory, fn))
+
+                # Apply board sizes up-front if any GSM is available, so a
+                # mis-sized gridx/gridy passed by the caller gets corrected
+                # even when there are no cut DXFs (only sectioned shapes).
+                try:
+                    for gp in gsm_candidates:
+                        if not gp or not os.path.exists(gp):
+                            continue
+                        with open(gp, 'r', encoding='utf8') as gf:
+                            _gsm_tmp = json.load(gf)
+                        if isinstance(_gsm_tmp, dict):
+                            bp = _gsm_tmp.get('board')
+                            if bp and isinstance(bp, dict):
+                                try:
+                                    if 'gridX' in bp:
+                                        gridx_size = int(bp.get('gridX'))
+                                        board_gx = gridx_size
+                                    elif 'width' in bp:
+                                        gridx_size = int(bp.get('width'))
+                                        board_gx = gridx_size
+                                except Exception:
+                                    pass
+                                try:
+                                    if 'gridY' in bp:
+                                        gridy_size = int(bp.get('gridY'))
+                                        board_gy = gridy_size
+                                    elif 'depth' in bp:
+                                        gridy_size = int(bp.get('depth'))
+                                        board_gy = gridy_size
+                                except Exception:
+                                    pass
+                                try:
+                                    if 'gridZ' in bp:
+                                        gridz_size = int(bp.get('gridZ'))
+                                        board_gz = gridz_size
+                                    elif 'height7Units' in bp:
+                                        gridz_size = int(bp.get('height7Units'))
+                                        board_gz = gridz_size
+                                    elif 'height' in bp:
+                                        gridz_size = int(bp.get('height'))
+                                        board_gz = gridz_size
+                                    elif 'heightMM' in bp:
+                                        gridz_size = int(bp.get('heightMM'))
+                                        board_gz = gridz_size
+                                except Exception:
+                                    pass
+                                # Once one GSM provides board sizes, stop
+                                break
+                except Exception:
+                    pass
 
                 for gp in gsm_candidates:
                     if not gp or not os.path.exists(gp):
@@ -744,33 +800,42 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                     try:
                                         if 'gridX' in bp:
                                             gridx_size = int(bp.get('gridX'))
-                                        elif 'width' in bp and (gridx_size is None or gridx_size == 5):
+                                            board_gx = gridx_size
+                                        elif 'width' in bp:
                                             gridx_size = int(bp.get('width'))
+                                            board_gx = gridx_size
                                     except Exception:
                                         pass
                                     try:
                                         if 'gridY' in bp:
                                             gridy_size = int(bp.get('gridY'))
-                                        elif 'depth' in bp and (gridy_size is None or gridy_size == 2):
+                                            board_gy = gridy_size
+                                        elif 'depth' in bp:
                                             gridy_size = int(bp.get('depth'))
+                                            board_gy = gridy_size
                                     except Exception:
                                         pass
                                     try:
                                         # handle gridZ or various height keys including height7Units
                                         if 'gridZ' in bp:
                                             gridz_size = int(bp.get('gridZ'))
+                                            board_gz = gridz_size
                                         elif 'height7Units' in bp:
                                             gridz_size = int(bp.get('height7Units'))
+                                            board_gz = gridz_size
                                         elif 'height' in bp:
                                             gridz_size = int(bp.get('height'))
+                                            board_gz = gridz_size
                                         elif 'heightMM' in bp:
                                             gridz_size = int(bp.get('heightMM'))
+                                            board_gz = gridz_size
                                         else:
                                             # fallback: scan for any key that contains 'height'
                                             for k, v in bp.items():
                                                 if isinstance(k, str) and 'height' in k.lower():
                                                     try:
                                                         gridz_size = int(v)
+                                                        board_gz = gridz_size
                                                         break
                                                     except Exception:
                                                         continue
@@ -783,6 +848,8 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                             break
                     except Exception:
                         continue
+                    # Only consider the first available GSM; avoid later files overriding board sizes
+                    break
 
                 if not cut_depths or len(cut_depths) != len(dxf_file_paths):
                     cut_depths = [10.0] * len(dxf_file_paths)
@@ -948,6 +1015,14 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             )
 
             # Ensure `size` is replaced with GSM board values (gridX, gridY, height).
+            # Favor the board-sourced grid sizes captured earlier even if other
+            # logic adjusted the working grid variables.
+            if board_gx is not None:
+                gridx_size = board_gx
+            if board_gy is not None:
+                gridy_size = board_gy
+            if board_gz is not None:
+                gridz_size = board_gz
             try:
                 gx = int(gridx_size) if gridx_size is not None else 5
             except Exception:

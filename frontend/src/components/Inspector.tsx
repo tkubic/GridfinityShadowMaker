@@ -560,7 +560,7 @@ export default function Inspector({
                           updateShape(selectedShape.id, {
                             splitToSections: true,
                             sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
-                            sectionWidths: [40, 20],
+                            sectionWidths: [20, 0],
                             sectionRotation: 0,
                           });
                         } else {
@@ -627,9 +627,9 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="0"
-                            value={selectedShape.sectionWidths?.[0] ?? 40}
+                            value={selectedShape.sectionWidths?.[0] ?? 20}
                             onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                               widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
                               updateShape(selectedShape.id, { sectionWidths: widths });
                             }}
@@ -640,9 +640,9 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="-9999"
-                            value={selectedShape.sectionWidths?.[1] ?? 20}
+                            value={selectedShape.sectionWidths?.[1] ?? 0}
                             onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                               widths[1] = parseFloat(e.target.value) || 0;
                               updateShape(selectedShape.id, { sectionWidths: widths });
                             }}
@@ -774,7 +774,7 @@ export default function Inspector({
                           updateShape(selectedShape.id, {
                             splitToSections: true,
                             sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
-                            sectionWidths: [40, 20],
+                            sectionWidths: [20, 0],
                             sectionRotation: 0,
                           });
                         } else {
@@ -841,9 +841,9 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="0"
-                            value={selectedShape.sectionWidths?.[0] ?? 40}
+                            value={selectedShape.sectionWidths?.[0] ?? 20}
                             onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                               widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
                               updateShape(selectedShape.id, { sectionWidths: widths });
                             }}
@@ -854,9 +854,9 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="-9999"
-                            value={selectedShape.sectionWidths?.[1] ?? 20}
+                            value={selectedShape.sectionWidths?.[1] ?? 0}
                             onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                               widths[1] = parseFloat(e.target.value) || 0;
                               updateShape(selectedShape.id, { sectionWidths: widths });
                             }}
@@ -985,7 +985,7 @@ export default function Inspector({
                           updateShape(selectedShape.id, {
                             splitToSections: true,
                             sectionDepths: [depth, Math.round(depth * 0.67), Math.round(depth * 0.33)],
-                            sectionWidths: [40, 20],
+                            sectionWidths: [20, 0],
                             sectionRotation: 0,
                           });
                         } else {
@@ -1053,9 +1053,9 @@ export default function Inspector({
                               type="number"
                               step="1"
                               min="0"
-                              value={selectedShape.sectionWidths?.[0] ?? 40}
+                              value={selectedShape.sectionWidths?.[0] ?? 20}
                               onChange={(e) => {
-                                const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                                 widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               }}
@@ -1066,9 +1066,9 @@ export default function Inspector({
                               type="number"
                               step="1"
                               min="-9999"
-                              value={selectedShape.sectionWidths?.[1] ?? 20}
+                              value={selectedShape.sectionWidths?.[1] ?? 0}
                               onChange={(e) => {
-                                const widths = [...(selectedShape.sectionWidths ?? [40, 20])] as [number, number];
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
                                 widths[1] = parseFloat(e.target.value) || 0;
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               }}

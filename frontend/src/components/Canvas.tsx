@@ -114,6 +114,46 @@ export default function Canvas({
     }
   }
 
+  // Build a rotated strip polygon (axis-aligned before rotation) and return SVG points string
+  function stripPolygonPoints(
+    cx: number,
+    cy: number,
+    x0: number,
+    x1: number,
+    halfH: number,
+    angleDeg: number
+  ): string {
+    const theta = (angleDeg * Math.PI) / 180;
+    const cosr = Math.cos(theta);
+    const sinr = Math.sin(theta);
+
+    const corners = [
+      { x: x0, y: -halfH },
+      { x: x1, y: -halfH },
+      { x: x1, y: halfH },
+      { x: x0, y: halfH },
+    ];
+
+    const pts = corners.map(({ x, y }) => {
+      const rx = x * cosr - y * sinr + cx;
+      const ry = x * sinr + y * cosr + cy;
+      return `${rx},${ry}`;
+    });
+
+    return pts.join(" ");
+  }
+
+  // Return a half-height large enough that a rotated strip fully covers the shape when clipped
+  function coverHalfHeight(widthPx: number, heightPx: number): number {
+    // Use max dimension * sqrt(2) to cover any rotation without leaving gaps
+    return Math.max(widthPx, heightPx) * Math.SQRT2;
+  }
+
+  // Extend strip length beyond the shape so rotated strips reach both ends
+  function stripExtra(widthPx: number, heightPx: number): number {
+    return coverHalfHeight(widthPx, heightPx);
+  }
+
   
 
   // geometry helpers imported from ../lib/geometry
@@ -519,16 +559,17 @@ export default function Canvas({
           // Section visualization: render 3 vertical strip zones when splitToSections is enabled
           // This matches OpenSCAD's three_section_shape which divides into left/center/right strips
           if (shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") {
-            const sectionWidths = shape.sectionWidths ?? [40, 20];
-            const sectionRotation = shape.sectionRotation ?? 0;
-            const totalRotation = rotDeg + sectionRotation;
+            const sectionWidths = shape.sectionWidths ?? [20, 0];
+            const sectionRotRaw = shape.sectionRotation ?? 0;
+            const fillAngle = -sectionRotRaw;
+            const clipId = `rect-clip-${shape.id}`;
 
             // Section colors: left, center, right
             const sectionColors = ['#ff6666', '#cc0000', '#ff3333'];
 
             // Interpret sectionWidths[0] = center island width; sectionWidths[1] = offset from center
-            const centerWidthMM = sectionWidths[0] ?? 40;
-            const offsetMM = sectionWidths[1] ?? 20;
+            const centerWidthMM = sectionWidths[0] ?? 20;
+            const offsetMM = sectionWidths[1] ?? 0;
             const centerWidthPx = Math.min(centerWidthMM * scaleX, wPx);
             const offsetPx = offsetMM * scaleX;
 
@@ -545,14 +586,57 @@ export default function Canvas({
             const chamferPx = chamferStrokePxFor();
             const showChamferOutline = chamferPx > 0 && ((shape.cutType ?? "Cut") === "Cut");
             return (
-              <g key={shape.id} onMouseDown={startDragFor} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}>
-                {leftPxWidth > 0 && (
-                  <rect x={xPx} y={yPx} width={leftPxWidth} height={hPx} fill={sectionColors[0]} />
-                )}
-                <rect x={centerLeft} y={yPx} width={centerWidthPx} height={hPx} fill={sectionColors[1]} />
-                {rightPxWidth > 0 && (
-                  <rect x={centerLeft + centerWidthPx} y={yPx} width={rightPxWidth} height={hPx} fill={sectionColors[2]} />
-                )}
+              <g key={shape.id} onMouseDown={startDragFor} transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}>
+                <defs>
+                  <clipPath id={clipId}>
+                    <rect
+                      x={xPx}
+                      y={yPx}
+                      width={wPx}
+                      height={hPx}
+                      transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
+                    />
+                  </clipPath>
+                </defs>
+                <g clipPath={`url(#${clipId})`} transform={rotDeg ? `rotate(${-rotDeg} ${cx} ${cy})` : undefined}>
+                  {leftPxWidth > 0 && (
+                    <polygon
+                      points={stripPolygonPoints(
+                        cx,
+                        cy,
+                        xPx - cx - stripExtra(wPx, hPx),
+                        xPx - cx + leftPxWidth,
+                        coverHalfHeight(wPx, hPx),
+                        fillAngle
+                      )}
+                      fill={sectionColors[0]}
+                    />
+                  )}
+                  <polygon
+                    points={stripPolygonPoints(
+                      cx,
+                      cy,
+                      centerLeft - cx,
+                      centerLeft - cx + centerWidthPx,
+                      coverHalfHeight(wPx, hPx),
+                      fillAngle
+                    )}
+                    fill={sectionColors[1]}
+                  />
+                  {rightPxWidth > 0 && (
+                    <polygon
+                      points={stripPolygonPoints(
+                        cx,
+                        cy,
+                        centerLeft + centerWidthPx - cx,
+                        centerLeft + centerWidthPx - cx + rightPxWidth + stripExtra(wPx, hPx),
+                        coverHalfHeight(wPx, hPx),
+                        fillAngle
+                      )}
+                      fill={sectionColors[2]}
+                    />
+                  )}
+                </g>
                 {/* Chamfer preview outline (approx) */}
                 {showChamferOutline && (
                   <rect
@@ -614,6 +698,8 @@ export default function Canvas({
           const cx = shape.x * scaleX;
           const cy = boardPxHeight - shape.y * scaleY;
           const rotDeg = shape.rotateDeg ?? 0;
+          const sectionRotRaw = shape.sectionRotation ?? 0;
+          const fillAngle = -sectionRotRaw;
           const baseW = shape.widthMM ?? 20;
           const baseH = shape.heightMM ?? 20;
           const rx = (baseW * scaleX) / 2;
@@ -621,9 +707,7 @@ export default function Canvas({
 
           // Section visualization for ovals - use clip paths with vertical strips
           if (shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") {
-            const sectionWidths = shape.sectionWidths ?? [40, 20];
-            const sectionRotation = shape.sectionRotation ?? 0;
-            const totalRotation = rotDeg + sectionRotation;
+            const sectionWidths = shape.sectionWidths ?? [20, 0];
 
             // Section colors: left, center, right
             const sectionColors = ['#ff6666', '#cc0000', '#ff3333'];
@@ -632,8 +716,8 @@ export default function Canvas({
             const totalW = baseW * scaleX;
 
             // Interpret sectionWidths[0] = center island width; sectionWidths[1] = offset from center
-            const centerWidthMM = sectionWidths[0] ?? 40;
-            const offsetMM = sectionWidths[1] ?? 20;
+            const centerWidthMM = sectionWidths[0] ?? 20;
+            const offsetMM = sectionWidths[1] ?? 0;
             const centerWidthPx = Math.min(centerWidthMM * scaleX, totalW);
             const offsetPx = offsetMM * scaleX;
 
@@ -652,21 +736,51 @@ export default function Canvas({
             const clipId = `oval-clip-${shape.id}`;
 
             return (
-              <g key={shape.id} onMouseDown={startDragFor}>
+              <g key={shape.id} onMouseDown={startDragFor} transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}>
                 <defs>
-                  <clipPath id={clipId}>
-                    <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined} />
+                  <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+                    <ellipse cx={cx} cy={cy} rx={rx} ry={ry} transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined} />
                   </clipPath>
                 </defs>
-                <g clipPath={`url(#${clipId})`} transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}>
+                <g clipPath={`url(#${clipId})`} transform={rotDeg ? `rotate(${-rotDeg} ${cx} ${cy})` : undefined}>
                   {leftPx > 0 && (
-                    <rect x={leftEdge} y={cy - ry} width={leftPx} height={ry * 2} fill={sectionColors[0]} />
+                    <polygon
+                      points={stripPolygonPoints(
+                        cx,
+                        cy,
+                        leftEdge - cx - stripExtra(rx * 2, ry * 2),
+                        leftEdge - cx + leftPx,
+                        coverHalfHeight(rx * 2, ry * 2),
+                        fillAngle
+                      )}
+                      fill={sectionColors[0]}
+                    />
                   )}
                   {midPx > 0 && (
-                    <rect x={centerLeft} y={cy - ry} width={midPx} height={ry * 2} fill={sectionColors[1]} />
+                    <polygon
+                      points={stripPolygonPoints(
+                        cx,
+                        cy,
+                        centerLeft - cx,
+                        centerLeft - cx + midPx,
+                        coverHalfHeight(rx * 2, ry * 2),
+                        fillAngle
+                      )}
+                      fill={sectionColors[1]}
+                    />
                   )}
                   {rightPx > 0 && (
-                    <rect x={centerLeft + midPx} y={cy - ry} width={rightPx} height={ry * 2} fill={sectionColors[2]} />
+                    <polygon
+                      points={stripPolygonPoints(
+                        cx,
+                        cy,
+                        centerLeft + midPx - cx,
+                        centerLeft + midPx - cx + rightPx + stripExtra(rx * 2, ry * 2),
+                        coverHalfHeight(rx * 2, ry * 2),
+                        fillAngle
+                      )}
+                      fill={sectionColors[2]}
+                    />
                   )}
                 </g>
                 {/* Chamfer preview outline (approx) */}
@@ -676,7 +790,7 @@ export default function Canvas({
                     cy={cy}
                     rx={rx}
                     ry={ry}
-                    transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}
+                    transform={undefined}
                     fill="none"
                     stroke="#990000"
                     strokeOpacity={0.6}
@@ -690,7 +804,7 @@ export default function Canvas({
                   cy={cy}
                   rx={rx}
                   ry={ry}
-                  transform={totalRotation ? `rotate(${totalRotation} ${cx} ${cy})` : undefined}
+                  transform={undefined}
                   fill="none"
                   stroke={isSelected ? "#ffff66" : "none"}
                   strokeWidth={isSelected ? 3 : 0}
@@ -731,11 +845,14 @@ export default function Canvas({
           const centerXpx = shape.x * scaleX;
           const centerYpx = boardPxHeight - shape.y * scaleY;
           const hasPaths = shape.dxfPaths && shape.dxfPaths.length > 0;
+          const baseRotation = shape.rotateDeg ?? 0;
+          const sectionRotRaw = (shape.splitToSections && (shape.cutType ?? "Cut") === "Cut") ? (shape.sectionRotation ?? 0) : 0;
+          const fillAngle = -sectionRotRaw;
           return (
             <g
               key={shape.id}
               className="shape-dxf"
-              transform={((shape.rotateDeg ?? 0) !== 0) ? `rotate(${shape.rotateDeg} ${centerXpx} ${centerYpx})` : undefined}
+              transform={baseRotation ? `rotate(${baseRotation} ${centerXpx} ${centerYpx})` : undefined}
               onMouseDown={startDragFor}
             >
               {hasPaths ? (
@@ -807,10 +924,11 @@ export default function Canvas({
                     const totalH = Math.max(0, maxY - minY);
 
                     // sectionWidths[0] = center island width, sectionWidths[1] = offset from center
-                    const centerWmm = (shape.sectionWidths && shape.sectionWidths.length > 0) ? shape.sectionWidths[0] : 40;
-                    const offsetMm = (shape.sectionWidths && shape.sectionWidths.length > 1) ? shape.sectionWidths[1] : 20;
-                    const centerPx = Math.min(centerWmm * s * scaleX, totalW);
-                    const offsetPx = offsetMm * s * scaleX;
+                    const centerWmm = (shape.sectionWidths && shape.sectionWidths.length > 0) ? shape.sectionWidths[0] : 20;
+                    const offsetMm = (shape.sectionWidths && shape.sectionWidths.length > 1) ? shape.sectionWidths[1] : 0;
+                    // Section widths/offsets should not scale with DXF shape scale
+                    const centerPx = Math.min(centerWmm * scaleX, totalW);
+                    const offsetPx = offsetMm * scaleX;
 
                     let centerLeft = minX + (totalW - centerPx) / 2 + offsetPx;
                     const minCenterLeft = minX;
@@ -827,17 +945,49 @@ export default function Canvas({
                     return (
                       <g key={idx}>
                         <defs>
-                          <clipPath id={clipId}>
-                            <path d={d} />
+                          <clipPath id={clipId} clipPathUnits="userSpaceOnUse">
+                            <path d={d} transform={baseRotation ? `rotate(${baseRotation} ${centerXpx} ${centerYpx})` : undefined} />
                           </clipPath>
                         </defs>
-                        {leftPxW > 0 && (
-                          <rect x={minX} y={minY} width={leftPxW} height={totalH} fill={sectionColors[0]} clipPath={`url(#${clipId})`} />
-                        )}
-                        <rect x={centerLeft} y={minY} width={centerPx} height={totalH} fill={sectionColors[1]} clipPath={`url(#${clipId})`} />
-                        {rightPxW > 0 && (
-                          <rect x={centerLeft + centerPx} y={minY} width={rightPxW} height={totalH} fill={sectionColors[2]} clipPath={`url(#${clipId})`} />
-                        )}
+                        <g clipPath={`url(#${clipId})`} transform={baseRotation ? `rotate(${-baseRotation} ${centerXpx} ${centerYpx})` : undefined}>
+                          {leftPxW > 0 && (
+                            <polygon
+                              points={stripPolygonPoints(
+                                centerXpx,
+                                centerYpx,
+                                minX - centerXpx - stripExtra(totalW, totalH),
+                                minX - centerXpx + leftPxW,
+                                coverHalfHeight(totalW, totalH),
+                                fillAngle
+                              )}
+                              fill={sectionColors[0]}
+                            />
+                          )}
+                          <polygon
+                            points={stripPolygonPoints(
+                              centerXpx,
+                              centerYpx,
+                              centerLeft - centerXpx,
+                              centerLeft - centerXpx + centerPx,
+                              coverHalfHeight(totalW, totalH),
+                              fillAngle
+                            )}
+                            fill={sectionColors[1]}
+                          />
+                          {rightPxW > 0 && (
+                            <polygon
+                              points={stripPolygonPoints(
+                                centerXpx,
+                                centerYpx,
+                                centerLeft + centerPx - centerXpx,
+                                centerLeft + centerPx - centerXpx + rightPxW + stripExtra(totalW, totalH),
+                                coverHalfHeight(totalW, totalH),
+                                fillAngle
+                              )}
+                              fill={sectionColors[2]}
+                            />
+                          )}
+                        </g>
                         {/* Outline on top */}
                         <path
                           d={d}
