@@ -71,6 +71,22 @@ type Calibration = {
 };
 
 type EditorState = { filename: string; dataUrl: string } | null;
+type EditorMode = "brush" | "crop" | "marquee" | "rectangle" | "pointer";
+type RectShape = {
+  id: string;
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+  angle: number;
+  color: "#000000" | "#ffffff";
+};
+type StrokeShape = {
+  id: string;
+  color: "#000000" | "#ffffff";
+  size: number;
+  points: { x: number; y: number }[];
+};
 
 type PhotoEditorProps = {
   state: EditorState;
@@ -82,13 +98,20 @@ type PhotoEditorProps = {
 function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [brushSize, setBrushSize] = useState(28);
-  const [mode, setMode] = useState<"brush" | "crop" | "select">("select");
+  const [mode, setMode] = useState<EditorMode>("marquee");
   const [brushPreview, setBrushPreview] = useState<{ x: number; y: number; diameter: number } | null>(null);
   const [painting, setPainting] = useState(false);
   const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   // liveRect is the in-progress rectangle while dragging; cropRect is the finalized selection
   const [liveRect, setLiveRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [rectStart, setRectStart] = useState<{ x: number; y: number } | null>(null);
+  const [rectLive, setRectLive] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [rectShapes, setRectShapes] = useState<RectShape[]>([]);
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+  const [strokes, setStrokes] = useState<StrokeShape[]>([]);
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
+  const [drawOrder, setDrawOrder] = useState<{ type: 'rect' | 'stroke'; id: string }[]>([]);
   // aspect ratio is implicitly tracked via canvas width/height and display sizing
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const displayedScaleRef = useRef<number>(1);
@@ -96,12 +119,21 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const [color, setColor] = useState<"#000000" | "#ffffff">('#000000');
   const [overlayStyle, setOverlayStyle] = useState<React.CSSProperties | null>(null);
   const resizingRef = useRef<null | { corner: string; startClientX: number; startClientY: number; origRect: any }>(null);
+  const shapeDragRef = useRef<null | { id: string; startX: number; startY: number; startCx: number; startCy: number }>(null);
+  const shapeResizeRef = useRef<null | { id: string; corner: string; startShape: RectShape }>(null);
+  const shapeRotateRef = useRef<null | { id: string; startAngle: number; startPointerAngle: number; startShape: RectShape }>(null);
+  const shapeIdRef = useRef<number>(1);
   const lastPointerIdRef = useRef<number | null>(null);
+  const strokeDragRef = useRef<null | { id: string; startX: number; startY: number; startPoints: { x: number; y: number }[] }>(null);
+  const currentStrokeRef = useRef<StrokeShape | null>(null);
+  const baseImageRef = useRef<ImageData | null>(null);
+  const modeRef = useRef<EditorMode>('marquee');
+  const paintingRef = useRef(false);
 
   useEffect(() => {
     if (!state) return;
     // default to selection when a new image is opened for editing
-    setMode('select');
+    setMode('marquee');
     setBrushPreview(null);
     const img = new Image();
     img.src = state.dataUrl;
@@ -116,6 +148,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
+      try { baseImageRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height); } catch {}
       // compute display size to fit into wrapper while preserving aspect
       window.requestAnimationFrame(() => {
         updateDisplaySize(img.width, img.height);
@@ -134,7 +167,61 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     function globalPointerMove(ev: PointerEvent) {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      // if resizing via corner handle, process here
+
+      // stroke drag
+      if (strokeDragRef.current) {
+        const drag = strokeDragRef.current;
+        const pt = clientToCanvas(ev);
+        const dx = pt.x - drag.startX;
+        const dy = pt.y - drag.startY;
+        setStrokes((prev) => prev.map((s) => s.id === drag.id ? { ...s, points: drag.startPoints.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : s));
+        return;
+      }
+
+      // shape drag
+      if (shapeDragRef.current) {
+        const drag = shapeDragRef.current;
+        const pt = clientToCanvas(ev);
+        const dx = pt.x - drag.startX;
+        const dy = pt.y - drag.startY;
+        setRectShapes((prev) => prev.map((s) => s.id === drag.id ? { ...s, cx: drag.startCx + dx, cy: drag.startCy + dy } : s));
+        return;
+      }
+
+      // shape resize
+      if (shapeResizeRef.current) {
+        const resize = shapeResizeRef.current;
+        const shape = resize.startShape;
+        const local = canvasToLocal(clientToCanvas(ev), shape);
+        let left = -shape.width / 2;
+        let right = shape.width / 2;
+        let top = -shape.height / 2;
+        let bottom = shape.height / 2;
+        const MIN_SIDE = 4;
+        if (resize.corner === 'nw') { left = Math.min(local.x, right - MIN_SIDE); top = Math.min(local.y, bottom - MIN_SIDE); }
+        if (resize.corner === 'ne') { right = Math.max(local.x, left + MIN_SIDE); top = Math.min(local.y, bottom - MIN_SIDE); }
+        if (resize.corner === 'sw') { left = Math.min(local.x, right - MIN_SIDE); bottom = Math.max(local.y, top + MIN_SIDE); }
+        if (resize.corner === 'se') { right = Math.max(local.x, left + MIN_SIDE); bottom = Math.max(local.y, top + MIN_SIDE); }
+        const newW = right - left;
+        const newH = bottom - top;
+        const centerLocal = { x: (left + right) / 2, y: (top + bottom) / 2 };
+        const centerCanvas = rotateAround({ x: shape.cx + centerLocal.x, y: shape.cy + centerLocal.y }, { x: shape.cx, y: shape.cy }, shape.angle);
+        setRectShapes((prev) => prev.map((s) => s.id === resize.id ? { ...s, width: newW, height: newH, cx: centerCanvas.x, cy: centerCanvas.y } : s));
+        return;
+      }
+
+      // shape rotate
+      if (shapeRotateRef.current) {
+        const rot = shapeRotateRef.current;
+        const pt = clientToCanvas(ev);
+        const angleNow = Math.atan2(pt.y - rot.startShape.cy, pt.x - rot.startShape.cx);
+        const delta = angleNow - rot.startPointerAngle;
+        const nextAngle = rot.startAngle + delta;
+        setRectShapes((prev) => prev.map((s) => s.id === rot.id ? { ...s, angle: nextAngle } : s));
+        return;
+      }
+
+      // if resizing via crop handle, process here
       if (resizingRef.current) {
         const r = resizingRef.current;
         const canvasRect = canvas.getBoundingClientRect();
@@ -148,13 +235,13 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         if (r.corner === 'sw') { newRect.x0 = Math.max(0, Math.min(canvas.width, r.origRect.x0 + clientToCanvasDX)); newRect.y1 = Math.max(0, Math.min(canvas.height, r.origRect.y1 + clientToCanvasDY)); }
         if (r.corner === 'se') { newRect.x1 = Math.max(0, Math.min(canvas.width, r.origRect.x1 + clientToCanvasDX)); newRect.y1 = Math.max(0, Math.min(canvas.height, r.origRect.y1 + clientToCanvasDY)); }
         setCropRect(newRect);
-        // when resizing, this is a finalized change (user is interacting with handles)
         setLiveRect(null);
         updateCropOverlay(newRect);
         return;
       }
-      // if a selection drag is in progress (cropStart), update live
-      if (cropStart && (mode === 'select' || mode === 'crop')) {
+
+      // marquee/crop drag
+      if (cropStart && (modeRef.current === 'marquee' || modeRef.current === 'crop')) {
         const rect = canvas.getBoundingClientRect();
         const x = ((ev.clientX - rect.left) / rect.width) * canvas.width;
         const y = ((ev.clientY - rect.top) / rect.height) * canvas.height;
@@ -162,12 +249,53 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         setLiveRect(live);
         updateCropOverlay(live);
       }
+
+      // rectangle preview drag
+      if (rectStart && modeRef.current === 'rectangle') {
+        const rect = canvas.getBoundingClientRect();
+        const x = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+        const y = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+        const live = { x0: rectStart.x, y0: rectStart.y, x1: x, y1: y };
+        setRectLive(live);
+        updateCropOverlay(live);
+      }
     }
 
     function globalPointerUp() {
+      if (paintingRef.current && modeRef.current === 'brush') {
+        const stroke = currentStrokeRef.current;
+        if (stroke && stroke.points.length) {
+          redrawCanvas(stroke);
+          setStrokes((prev) => [...prev, stroke]);
+          setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
+        }
+        currentStrokeRef.current = null;
+        setPainting(false);
+      }
+      // finalize any shape interactions first
+      shapeDragRef.current = null;
+      shapeResizeRef.current = null;
+      shapeRotateRef.current = null;
+      strokeDragRef.current = null;
+
       // finalize any in-progress actions
+      if (rectStart && rectLive && modeRef.current === 'rectangle') {
+        const x0 = Math.max(0, Math.min(rectLive.x0, rectLive.x1));
+        const y0 = Math.max(0, Math.min(rectLive.y0, rectLive.y1));
+        const x1 = Math.min((canvasRef.current?.width || 0), Math.max(rectLive.x0, rectLive.x1));
+        const y1 = Math.min((canvasRef.current?.height || 0), Math.max(rectLive.y0, rectLive.y1));
+        const MIN_RECT = 8;
+        if ((x1 - x0) >= MIN_RECT && (y1 - y0) >= MIN_RECT) {
+          const w = x1 - x0;
+          const h = y1 - y0;
+          const id = `rect-${shapeIdRef.current++}`;
+          setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color }]);
+          setDrawOrder((prev) => [...prev, { type: 'rect', id }]);
+          setSelectedShapeId(id);
+        }
+        setOverlayStyle(null);
+      }
       if (cropStart) {
-        // finalize using the last liveRect (updated during pointermove)
         if (liveRect) {
           const x0 = Math.max(0, Math.min(liveRect.x0, liveRect.x1));
           const y0 = Math.max(0, Math.min(liveRect.y0, liveRect.y1));
@@ -184,7 +312,9 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       resizingRef.current = null;
       setPainting(false);
       setCropStart(null);
+      setRectStart(null);
       setLiveRect(null);
+      setRectLive(null);
       setBrushPreview(null);
       try { if (canvasRef.current && lastPointerIdRef.current != null) (canvasRef.current as any).releasePointerCapture?.(lastPointerIdRef.current); } catch {}
       lastPointerIdRef.current = null;
@@ -204,15 +334,46 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     setBrushPreview(null);
   }, [brushSize]);
 
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { paintingRef.current = painting; }, [painting]);
+  useEffect(() => { redrawCanvas(); }, [strokes, rectShapes, drawOrder, selectedStrokeId]);
+  useEffect(() => { if (selectedShapeId && !rectShapes.some((s) => s.id === selectedShapeId)) setSelectedShapeId(null); }, [rectShapes, selectedShapeId]);
+  useEffect(() => { if (selectedStrokeId && !strokes.some((s) => s.id === selectedStrokeId)) setSelectedStrokeId(null); }, [strokes, selectedStrokeId]);
+  useEffect(() => {
+    if (mode === 'crop' && cropRect) {
+      applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
+      setMode('marquee');
+    }
+  }, [mode, cropRect]);
+  useEffect(() => {
+    function onKeyDown(ev: KeyboardEvent) {
+      if ((ev.key === 'Delete' || ev.key === 'Backspace') && (selectedShapeId || selectedStrokeId)) {
+        ev.preventDefault();
+        deleteSelection();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedShapeId, selectedStrokeId]);
+
   // register editor controls with parent via `onRegister` prop
   useEffect(() => {
     if (typeof (onRegister as any) !== 'function') return;
     const controls = {
       setBrushSize: (s: number) => setBrushSize(s),
-      // selecting a color should also automatically switch to brush mode
-      setColor: (c: "#000000" | "#ffffff") => { setColor(c); setMode('brush'); },
+      setColor: (c: "#000000" | "#ffffff") => { setColor(c); },
       setMode: (m: string) => setMode(m as any),
       getState: () => ({ brushSize, color, mode, cropRect }),
+      cropSelection: () => {
+        if (cropRect) {
+          applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
+          setMode('marquee');
+          return true;
+        }
+        setMode('crop');
+        return false;
+      },
+      deleteSelection: () => deleteSelection(),
       applyCrop: () => {
         if (!cropRect) return;
         applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
@@ -223,7 +384,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     };
     try { (onRegister as any)(controls); } catch { /* ignore */ }
     return () => { try { (onRegister as any)(null); } catch { /* ignore */ } };
-  }, [brushSize, color, mode, cropRect, onRegister]);
+  }, [brushSize, color, mode, cropRect, onRegister, selectedShapeId, selectedStrokeId]);
 
   function updateDisplaySize(naturalW: number, naturalH: number) {
     const wrap = wrapperRef.current;
@@ -236,6 +397,192 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     const dispH = Math.max(1, Math.round(naturalH * scale));
     displayedScaleRef.current = scale;
     setCanvasStyle({ width: `${dispW}px`, height: `${dispH}px` });
+  }
+
+  function clientToCanvas(ev: PointerEvent | React.PointerEvent) {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const x = ((ev.clientX - rect.left) / rect.width) * (canvas.width || 1);
+    const y = ((ev.clientY - rect.top) / rect.height) * (canvas.height || 1);
+    return { x, y };
+  }
+
+  function rotateAround(pt: { x: number; y: number }, center: { x: number; y: number }, angle: number) {
+    const dx = pt.x - center.x;
+    const dy = pt.y - center.y;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return { x: center.x + dx * cosA - dy * sinA, y: center.y + dx * sinA + dy * cosA };
+  }
+
+  function canvasToLocal(pt: { x: number; y: number }, shape: RectShape) {
+    const rotated = rotateAround(pt, { x: shape.cx, y: shape.cy }, -shape.angle);
+    return { x: rotated.x - shape.cx, y: rotated.y - shape.cy };
+  }
+
+  function localToCanvas(local: { x: number; y: number }, shape: RectShape) {
+    const rotated = rotateAround({ x: shape.cx + local.x, y: shape.cy + local.y }, { x: shape.cx, y: shape.cy }, shape.angle);
+    return rotated;
+  }
+
+  function hitTestRect(pt: { x: number; y: number }, shape: RectShape) {
+    const local = canvasToLocal(pt, shape);
+    return Math.abs(local.x) <= shape.width / 2 && Math.abs(local.y) <= shape.height / 2;
+  }
+
+  function pointToSegmentDistance(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const wx = p.x - a.x;
+    const wy = p.y - a.y;
+    const c1 = vx * wx + vy * wy;
+    if (c1 <= 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const c2 = vx * vx + vy * vy;
+    if (c2 <= c1) return Math.hypot(p.x - b.x, p.y - b.y);
+    const t = c1 / c2;
+    const proj = { x: a.x + t * vx, y: a.y + t * vy };
+    return Math.hypot(p.x - proj.x, p.y - proj.y);
+  }
+
+  function hitTestStroke(pt: { x: number; y: number }, stroke: StrokeShape) {
+    if (!stroke.points.length) return false;
+    const tol = stroke.size / 2 + 6;
+    for (let i = 1; i < stroke.points.length; i++) {
+      const d = pointToSegmentDistance(pt, stroke.points[i - 1], stroke.points[i]);
+      if (d <= tol) return true;
+    }
+    return false;
+  }
+
+  function pickTopShape(pt: { x: number; y: number }) {
+    for (let i = drawOrder.length - 1; i >= 0; i--) {
+      const item = drawOrder[i];
+      if (item.type === 'rect') {
+        const shape = rectShapes.find((s) => s.id === item.id);
+        if (shape && hitTestRect(pt, shape)) return item;
+      } else {
+        const stroke = strokes.find((s) => s.id === item.id);
+        if (stroke && hitTestStroke(pt, stroke)) return item;
+      }
+    }
+    return null;
+  }
+
+  function shapeDisplayStyle(shape: RectShape) {
+    const canvas = canvasRef.current;
+    const wrap = wrapperRef.current;
+    if (!canvas || !wrap || !canvas.width || !canvas.height) return null;
+    const canvasRect = canvas.getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+    const scale = canvasRect.width / canvas.width;
+    const w = shape.width * scale;
+    const h = shape.height * scale;
+    const cx = shape.cx * scale + (canvasRect.left - wrapRect.left);
+    const cy = shape.cy * scale + (canvasRect.top - wrapRect.top);
+    const left = cx - w / 2;
+    const top = cy - h / 2;
+    const angleDeg = (shape.angle * 180) / Math.PI;
+    return {
+      position: 'absolute' as const,
+      width: `${w}px`,
+      height: `${h}px`,
+      left: `${left}px`,
+      top: `${top}px`,
+      transform: `rotate(${angleDeg}deg)`,
+      transformOrigin: 'center center',
+    } as React.CSSProperties;
+  }
+
+  function renderRectOnto(ctx: CanvasRenderingContext2D, s: RectShape) {
+    ctx.save();
+    ctx.translate(s.cx, s.cy);
+    ctx.rotate(s.angle);
+    ctx.fillStyle = s.color;
+    ctx.fillRect(-s.width / 2, -s.height / 2, s.width, s.height);
+    ctx.restore();
+  }
+
+  function renderStrokeOnto(ctx: CanvasRenderingContext2D, stroke: StrokeShape, opts?: { highlight?: boolean }) {
+    if (!stroke.points.length) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (opts?.highlight) {
+      ctx.strokeStyle = '#0074D9';
+      ctx.lineWidth = stroke.size + 6;
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length; i++) ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.size;
+    ctx.beginPath();
+    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (let i = 1; i < stroke.points.length; i++) ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function redrawCanvas(extraStroke?: StrokeShape | null) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if (baseImageRef.current) {
+      ctx.putImageData(baseImageRef.current, 0, 0);
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    const rectMap = new Map(rectShapes.map((r) => [r.id, r] as const));
+    const strokeMap = new Map(strokes.map((s) => [s.id, s] as const));
+    drawOrder.forEach((item) => {
+      if (item.type === 'rect') {
+        const r = rectMap.get(item.id);
+        if (r) renderRectOnto(ctx, r);
+      } else {
+        const s = strokeMap.get(item.id);
+        if (s) renderStrokeOnto(ctx, s);
+      }
+    });
+    if (extraStroke) renderStrokeOnto(ctx, extraStroke);
+    if (selectedStrokeId) {
+      const s = strokeMap.get(selectedStrokeId);
+      if (s) renderStrokeOnto(ctx, s, { highlight: true });
+    }
+  }
+
+  function beginShapeDrag(ev: React.PointerEvent, shape: RectShape) {
+    if (mode !== 'pointer') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    shapeDragRef.current = { id: shape.id, startX: pt.x, startY: pt.y, startCx: shape.cx, startCy: shape.cy };
+    setSelectedShapeId(shape.id);
+    try { (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+  }
+
+  function beginShapeResize(ev: React.PointerEvent, shape: RectShape, corner: string) {
+    if (mode !== 'pointer') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    shapeResizeRef.current = { id: shape.id, corner, startShape: { ...shape } };
+    setSelectedShapeId(shape.id);
+    try { (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+  }
+
+  function beginShapeRotate(ev: React.PointerEvent, shape: RectShape) {
+    if (mode !== 'pointer') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    const startPointerAngle = Math.atan2(pt.y - shape.cy, pt.x - shape.cx);
+    shapeRotateRef.current = { id: shape.id, startAngle: shape.angle, startPointerAngle, startShape: { ...shape } };
+    setSelectedShapeId(shape.id);
+    try { (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
   }
 
   function pointerPos(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -265,11 +612,37 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     const pos = pointerPos(e);
     if (mode === "brush") {
       setPainting(true);
-      paintAt(pos.x, pos.y);
-    } else {
+      const stroke: StrokeShape = { id: `stroke-${shapeIdRef.current++}`, color, size: brushSize, points: [pos] };
+      currentStrokeRef.current = stroke;
+      redrawCanvas(stroke);
+    } else if (mode === 'rectangle') {
+      setRectStart(pos);
+      setRectLive({ x0: pos.x, y0: pos.y, x1: pos.x, y1: pos.y });
+      try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+    } else if (mode === 'marquee' || mode === 'crop') {
       // begin selection and capture pointer so we continue receiving moves
       setCropStart(pos);
       try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+    } else {
+      const hit = pickTopShape(pos);
+      setSelectedShapeId(hit?.type === 'rect' ? hit.id : null);
+      setSelectedStrokeId(hit?.type === 'stroke' ? hit.id : null);
+      if (hit?.type === 'rect') {
+        const shape = rectShapes.find((s) => s.id === hit.id);
+        if (shape) {
+          shapeDragRef.current = { id: shape.id, startX: pos.x, startY: pos.y, startCx: shape.cx, startCy: shape.cy };
+          try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+        }
+      } else if (hit?.type === 'stroke') {
+        const stroke = strokes.find((s) => s.id === hit.id);
+        if (stroke) {
+          strokeDragRef.current = { id: stroke.id, startX: pos.x, startY: pos.y, startPoints: stroke.points.map((p) => ({ ...p })) };
+          try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+        }
+      } else {
+        setSelectedShapeId(null);
+        setSelectedStrokeId(null);
+      }
     }
   }
 
@@ -278,11 +651,26 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     updateBrushPreview(e);
     if (mode === "brush" && painting) {
       const pos = pointerPos(e);
-      paintAt(pos.x, pos.y);
+      const stroke = currentStrokeRef.current;
+      if (stroke) {
+        stroke.points.push(pos);
+        redrawCanvas(stroke);
+      }
+      return;
+    }
+    if (mode === 'rectangle' && rectStart) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * canvas.width;
+      const y = ((e.clientY - rect.top) / rect.height) * canvas.height;
+      const live = { x0: rectStart.x, y0: rectStart.y, x1: x, y1: y };
+      setRectLive(live);
+      updateCropOverlay(live);
       return;
     }
     // while dragging a selection, update the liveRect immediately (so user sees the box while dragging)
-    if (cropStart && (mode === 'select' || mode === 'crop')) {
+    if (cropStart && (mode === 'marquee' || mode === 'crop')) {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
@@ -297,24 +685,56 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
 
   function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!state) return;
-    if (mode === "brush") {
-    // capture the pointer so we continue receiving move/up events
-    try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+
+    if (mode === 'brush') {
+      const stroke = currentStrokeRef.current;
+      if (stroke && stroke.points.length) {
+        redrawCanvas(stroke);
+        setStrokes((prev) => [...prev, stroke]);
+        setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
+        currentStrokeRef.current = null;
+      } else {
+        currentStrokeRef.current = null;
+      }
+      setPainting(false);
+      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+      return;
     }
-    if (cropStart) {
+
+    if (mode === 'rectangle' && rectStart) {
+      const end = pointerPos(e);
+      const x0 = Math.max(0, Math.min(rectStart.x, end.x));
+      const y0 = Math.max(0, Math.min(rectStart.y, end.y));
+      const x1 = Math.min((canvasRef.current?.width || 0), Math.max(rectStart.x, end.x));
+      const y1 = Math.min((canvasRef.current?.height || 0), Math.max(rectStart.y, end.y));
+      const MIN_RECT = 8;
+      if ((x1 - x0) >= MIN_RECT && (y1 - y0) >= MIN_RECT) {
+        const w = x1 - x0;
+        const h = y1 - y0;
+        const id = `rect-${shapeIdRef.current++}`;
+        setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color }]);
+        setDrawOrder((prev) => [...prev, { type: 'rect', id }]);
+        setSelectedShapeId(id);
+      }
+      setRectStart(null);
+      setRectLive(null);
+      setOverlayStyle(null);
+      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+      return;
+    }
+
+    if (cropStart && (mode === 'marquee' || mode === 'crop')) {
       const end = pointerPos(e);
       const dx = Math.abs(end.x - cropStart.x);
       const dy = Math.abs(end.y - cropStart.y);
       const MIN_CROP = 8; // canvas pixels
       if (dx < MIN_CROP || dy < MIN_CROP) {
-        // abort tiny selections
         setCropStart(null);
         setCropRect(null);
         setLiveRect(null);
         try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
         return;
       }
-      // finalize selection but do not apply crop yet — show overlay with handles
       const x0 = Math.max(0, Math.min(cropStart.x, end.x));
       const y0 = Math.max(0, Math.min(cropStart.y, end.y));
       const x1 = Math.min((canvasRef.current?.width || 0), Math.max(cropStart.x, end.x));
@@ -324,20 +744,21 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       updateCropOverlay(rect);
       setCropStart(null);
       setLiveRect(null);
-      // release pointer capture
       try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
     }
   }
 
-  function paintAt(x: number, y: number) {
+  function fillRect(rect: { x0: number; y0: number; x1: number; y1: number }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const x = Math.max(0, Math.min(rect.x0, rect.x1));
+    const y = Math.max(0, Math.min(rect.y0, rect.y1));
+    const w = Math.abs(rect.x1 - rect.x0);
+    const h = Math.abs(rect.y1 - rect.y0);
     ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillRect(x, y, w, h);
   }
 
   function applyCrop(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -365,8 +786,21 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       canvas.height = h;
       ctx.clearRect(0, 0, w, h);
       ctx.putImageData(imgData, 0, 0);
+      try { baseImageRef.current = ctx.getImageData(0, 0, w, h); } catch {}
       // update displayed size to reflect new aspect
       updateDisplaySize(w, h);
+      const shiftedShapes = rectShapes
+        .map((s) => ({ ...s, cx: s.cx - x0, cy: s.cy - y0 }))
+        .filter((s) => s.cx >= 0 && s.cx <= w && s.cy >= 0 && s.cy <= h);
+      setRectShapes(shiftedShapes);
+      const shiftedStrokes = strokes
+        .map((s) => ({ ...s, points: s.points.map((p) => ({ x: p.x - x0, y: p.y - y0 })) }))
+        .filter((s) => s.points.some((p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h));
+      setStrokes(shiftedStrokes);
+      const validIds = new Set([...shiftedShapes.map((s) => s.id), ...shiftedStrokes.map((s) => s.id)]);
+      setDrawOrder((prev) => prev.filter((item) => validIds.has(item.id)));
+      setSelectedShapeId((id) => shiftedShapes.some((s) => s.id === id) ? id : null);
+      setSelectedStrokeId((id) => shiftedStrokes.some((s) => s.id === id) ? id : null);
       // updateDisplaySize already adjusted displayed size; no aspect state needed
       setCropRect(null);
       setCropStart(null);
@@ -417,8 +851,24 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     return { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` } as React.CSSProperties;
   }
 
+  function deleteSelection() {
+    const targetStroke = selectedStrokeId;
+    const targetRect = selectedShapeId;
+    if (!targetStroke && !targetRect) return;
+    setRectShapes((prev) => prev.filter((s) => s.id !== targetRect));
+    setStrokes((prev) => prev.filter((s) => s.id !== targetStroke));
+    setDrawOrder((prev) => prev.filter((item) => {
+      if (item.type === 'rect') return item.id !== targetRect;
+      return item.id !== targetStroke;
+    }));
+    setSelectedShapeId(null);
+    setSelectedStrokeId(null);
+    redrawCanvas();
+  }
+
   function handleSave() {
     if (!state || !canvasRef.current) return;
+    redrawCanvas();
     const url = canvasRef.current.toDataURL("image/png");
     onSave(url, state.filename);
   }
@@ -480,21 +930,23 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
             }}
           />
         )}
-        {((liveRect || cropRect) && canvasRef.current) && (() => {
-          const currentRect = liveRect || cropRect;
+        {((rectLive || liveRect || cropRect) && canvasRef.current) && (() => {
+          const currentRect = rectLive || liveRect || cropRect;
           const currentStyle = computeOverlayStyle(currentRect);
           if (!currentStyle) return null;
+          const isRectPreview = !!rectLive && !cropRect;
+          const borderColor = isRectPreview ? 'transparent' : '#555';
+          const overlayBg = isRectPreview ? color : 'rgba(0,0,0,0.05)';
+          const pointerEvents = isRectPreview ? 'none' : 'auto';
           return (
             <div
               className="crop-overlay"
-              style={{ position: 'absolute', boxSizing: 'border-box', border: '2px dashed #555', background: 'rgba(0,0,0,0.05)', pointerEvents: 'auto', ...(currentStyle || {}) }}
+              style={{ position: 'absolute', boxSizing: 'border-box', border: `2px ${isRectPreview ? 'solid' : 'dashed'} ${borderColor}`, background: overlayBg, pointerEvents, zIndex: isRectPreview ? 5 : 1, ...(currentStyle || {}) }}
               onPointerDown={(e) => {
-                // allow resizing from corner handles via child elements
                 const target = e.target as HTMLElement;
                 const corner = target.dataset?.corner;
                 if (corner && cropRect) {
                   resizingRef.current = { corner, startClientX: e.clientX, startClientY: e.clientY, origRect: { ...cropRect } };
-                  // capture pointer so we continue receiving move/up even if pointer leaves overlay
                   try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
                   e.stopPropagation();
                 }
@@ -511,6 +963,40 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
             </div>
           );
         })()}
+        {rectShapes.map((shape) => {
+          const style = shapeDisplayStyle(shape);
+          if (!style) return null;
+          const selected = shape.id === selectedShapeId;
+          const orderIndex = drawOrder.findIndex((d) => d.type === 'rect' && d.id === shape.id);
+          const z = orderIndex >= 0 ? 10 + orderIndex : 2;
+          const borderColor = selected ? '#0074D9' : 'transparent';
+          return (
+            <div
+              key={shape.id}
+              style={{
+                ...style,
+                boxSizing: 'border-box',
+                border: `2px solid ${borderColor}`,
+                background: 'transparent',
+                boxShadow: selected ? '0 0 0 1px rgba(0,116,217,0.8)' : undefined,
+                pointerEvents: selected && mode === 'pointer' ? 'auto' : 'none',
+                cursor: mode === 'pointer' ? 'move' : 'default',
+                zIndex: z,
+              }}
+              onPointerDown={(ev) => beginShapeDrag(ev, shape)}
+            >
+              {selected && mode === 'pointer' && (
+                <>
+                  <div data-corner="nw" style={{ position: 'absolute', left: -6, top: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nwse-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'nw')} />
+                  <div data-corner="ne" style={{ position: 'absolute', right: -6, top: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'ne')} />
+                  <div data-corner="sw" style={{ position: 'absolute', left: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'sw')} />
+                  <div data-corner="se" style={{ position: 'absolute', right: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nwse-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'se')} />
+                  <div data-rotate="true" style={{ position: 'absolute', left: '50%', top: -28, width: 14, height: 14, marginLeft: -7, borderRadius: '50%', background: '#fff', border: '1px solid #000', cursor: 'grab' }} onPointerDown={(ev) => beginShapeRotate(ev, shape)} />
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
