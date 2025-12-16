@@ -144,6 +144,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const lastPointerIdRef = useRef<number | null>(null);
   const strokeDragRef = useRef<null | { id: string; startX: number; startY: number; startPoints: { x: number; y: number }[] }>(null);
   const currentStrokeRef = useRef<StrokeShape | null>(null);
+  const lastFinalizedStrokeRef = useRef<StrokeShape | null>(null);
   const baseImageRef = useRef<ImageData | null>(null);
   const modeRef = useRef<EditorMode>('marquee');
   const paintingRef = useRef(false);
@@ -341,6 +342,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           setStrokes((prev) => [...prev, stroke]);
           setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
           setEditsMade(true);
+          // remember the last finalized stroke so controls.save can export it synchronously
+          try { lastFinalizedStrokeRef.current = stroke; } catch {}
         }
         currentStrokeRef.current = null;
         setPainting(false);
@@ -471,10 +474,26 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         if (paintingRef.current && currentStrokeRef.current) {
           const stroke = currentStrokeRef.current;
           if (stroke.points.length) {
+            // draw the stroke immediately onto the canvas so we can export synchronously
             redrawCanvas(stroke);
+            // also enqueue into state so it persists for future edits
             setStrokes((prev) => [...prev, stroke]);
             setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
             setEditsMade(true);
+            // export immediately from the canvas to avoid waiting for React state to flush
+            try {
+              if (canvasRef.current && state) {
+                const url = canvasRef.current.toDataURL('image/png');
+                onSave(url, state.filename, true);
+                // we've already performed the save/export; stop further save handling
+                currentStrokeRef.current = null;
+                setPainting(false);
+                return;
+              }
+            } catch (err) {
+              // fall through to normal save path on error
+              console.warn('[PhotoEditor.controls] immediate stroke export failed', err);
+            }
           }
           currentStrokeRef.current = null;
           setPainting(false);
@@ -516,6 +535,24 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           setOverlayStyle(null);
           setCircleStart(null);
           setCircleLive(null);
+        }
+        // if a stroke was just finalized (pointerup) it may not be present in state yet;
+        // export it synchronously from the canvas so the Save action captures it
+        if (lastFinalizedStrokeRef.current) {
+          try {
+            const stroke = lastFinalizedStrokeRef.current;
+            // ensure the canvas contains the stroke
+            redrawCanvas(stroke);
+            if (canvasRef.current && state) {
+              const url = canvasRef.current.toDataURL('image/png');
+              // clear the ref to avoid double-saving
+              lastFinalizedStrokeRef.current = null;
+              onSave(url, state.filename, true);
+              return;
+            }
+          } catch (err) {
+            console.warn('[PhotoEditor.controls] immediate finalized-stroke export failed', err);
+          }
         }
         handleSave(true);
       };
@@ -935,6 +972,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         redrawCanvas(stroke);
         setStrokes((prev) => [...prev, stroke]);
         setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
+        setEditsMade(true);
+        try { lastFinalizedStrokeRef.current = stroke; } catch {}
         currentStrokeRef.current = null;
       } else {
         currentStrokeRef.current = null;
