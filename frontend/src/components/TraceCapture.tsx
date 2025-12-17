@@ -147,6 +147,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const lastFinalizedStrokeRef = useRef<StrokeShape | null>(null);
   const baseImageRef = useRef<ImageData | null>(null);
   const modeRef = useRef<EditorMode>('marquee');
+  const lastDrawModeRef = useRef<EditorMode>('marquee');
+  const hoverPointerRef = useRef(false);
   const paintingRef = useRef(false);
 
   useEffect(() => {
@@ -415,6 +417,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   }, [brushSize]);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { if (mode !== 'pointer') lastDrawModeRef.current = mode; }, [mode]);
   useEffect(() => { paintingRef.current = painting; }, [painting]);
   useEffect(() => { redrawCanvas(); }, [strokes, rectShapes, circleShapes, drawOrder, selectedStrokeId, selectedCircleId]);
   useEffect(() => { if (selectedShapeId && !rectShapes.some((s) => s.id === selectedShapeId)) setSelectedShapeId(null); }, [rectShapes, selectedShapeId]);
@@ -1299,8 +1302,13 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           const h = shape.ry * 2 * scale;
           const cx = shape.cx * scale + (canvasRect.left - wrapRect.left);
           const cy = shape.cy * scale + (canvasRect.top - wrapRect.top);
-          const left = cx - w / 2;
-          const top = cy - h / 2;
+          const hitPad = 20; // invisible padding for hover/pointer
+          const leftVis = cx - w / 2;
+          const topVis = cy - h / 2;
+          const leftPad = leftVis - hitPad;
+          const topPad = topVis - hitPad;
+          const boxW = w + hitPad * 2;
+          const boxH = h + hitPad * 2;
           const orderIndex = drawOrder.findIndex((d) => d.type === 'circle' && d.id === shape.id);
           const z = orderIndex >= 0 ? 10 + orderIndex : 2;
           const selected = shape.id === selectedCircleId;
@@ -1310,31 +1318,70 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
               key={shape.id}
               style={{
                 position: 'absolute',
-                width: `${w}px`,
-                height: `${h}px`,
-                left: `${left}px`,
-                top: `${top}px`,
-                borderRadius: '50%',
-                transform: `rotate(${angleDeg}deg)`,
-                transformOrigin: 'center center',
+                width: `${boxW}px`,
+                height: `${boxH}px`,
+                left: `${leftPad}px`,
+                top: `${topPad}px`,
+                borderRadius: '6px',
                 boxSizing: 'border-box',
-                border: selected ? '2px solid #0074D9' : '2px solid transparent',
+                border: '0 solid transparent',
                 background: 'transparent',
-                boxShadow: selected ? '0 0 0 1px rgba(0,116,217,0.8)' : undefined,
-                pointerEvents: selected && mode === 'pointer' ? 'auto' : 'none',
+                pointerEvents: selected ? 'auto' : 'none',
                 cursor: mode === 'pointer' ? 'move' : 'default',
                 zIndex: z,
               }}
+              onPointerEnter={() => {
+                if (selected && mode !== 'pointer') {
+                  hoverPointerRef.current = true;
+                  setMode('pointer');
+                }
+              }}
+              onPointerLeave={() => {
+                if (hoverPointerRef.current && mode === 'pointer') {
+                  hoverPointerRef.current = false;
+                  setMode(lastDrawModeRef.current);
+                }
+              }}
               onPointerDown={(ev) => beginCircleDrag(ev, shape)}
             >
+              <div
+                style={{
+                  position: 'absolute',
+                  width: `${w}px`,
+                  height: `${h}px`,
+                  left: `${hitPad}px`,
+                  top: `${hitPad}px`,
+                  borderRadius: '50%',
+                  boxSizing: 'border-box',
+                  border: selected ? '2px solid #0074D9' : '2px solid transparent',
+                  boxShadow: selected ? '0 0 0 1px rgba(0,116,217,0.8)' : undefined,
+                  pointerEvents: 'none',
+                  transform: `rotate(${angleDeg}deg)`,
+                  transformOrigin: 'center center',
+                  zIndex: z + 1,
+                }}
+              />
               {selected && mode === 'pointer' && (
-                <>
-                  <div data-rotate="true" style={{ position: 'absolute', left: '50%', top: -28, width: 14, height: 14, marginLeft: -7, borderRadius: '50%', background: '#fff', border: '1px solid #000', cursor: 'grab' }} onPointerDown={(ev) => beginCircleRotate(ev, shape)} />
+                <div
+                  style={{
+                    position: 'absolute',
+                    width: `${w}px`,
+                    height: `${h}px`,
+                    left: `${hitPad}px`,
+                    top: `${hitPad}px`,
+                    borderRadius: '50%',
+                    transform: `rotate(${angleDeg}deg)`,
+                    transformOrigin: 'center center',
+                    pointerEvents: 'auto',
+                    zIndex: z + 2,
+                  }}
+                >
+                  <div data-rotate="true" style={{ position: 'absolute', left: '50%', top: -18, width: 16, height: 16, marginLeft: -8, borderRadius: '50%', background: '#fff', border: '1px solid #000', cursor: 'grab' }} onPointerDown={(ev) => beginCircleRotate(ev, shape)} />
                   <div data-corner="nw" style={{ position: 'absolute', left: -6, top: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nwse-resize' }} onPointerDown={(ev) => beginCircleResize(ev, shape, 'nw')} />
                   <div data-corner="ne" style={{ position: 'absolute', right: -6, top: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginCircleResize(ev, shape, 'ne')} />
                   <div data-corner="sw" style={{ position: 'absolute', left: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginCircleResize(ev, shape, 'sw')} />
                   <div data-corner="se" style={{ position: 'absolute', right: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nwse-resize' }} onPointerDown={(ev) => beginCircleResize(ev, shape, 'se')} />
-                </>
+                </div>
               )}
             </div>
           );
@@ -1356,9 +1403,21 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
                 border: `2px solid ${borderColor}`,
                 background: 'transparent',
                 boxShadow: selected ? '0 0 0 1px rgba(0,116,217,0.8)' : undefined,
-                pointerEvents: selected && mode === 'pointer' ? 'auto' : 'none',
+                pointerEvents: selected ? 'auto' : 'none',
                 cursor: mode === 'pointer' ? 'move' : 'default',
                 zIndex: z,
+              }}
+              onPointerEnter={() => {
+                if (selected && mode !== 'pointer') {
+                  hoverPointerRef.current = true;
+                  setMode('pointer');
+                }
+              }}
+              onPointerLeave={() => {
+                if (hoverPointerRef.current && mode === 'pointer') {
+                  hoverPointerRef.current = false;
+                  setMode(lastDrawModeRef.current);
+                }
               }}
               onPointerDown={(ev) => beginShapeDrag(ev, shape)}
             >
@@ -1368,7 +1427,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
                   <div data-corner="ne" style={{ position: 'absolute', right: -6, top: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'ne')} />
                   <div data-corner="sw" style={{ position: 'absolute', left: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nesw-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'sw')} />
                   <div data-corner="se" style={{ position: 'absolute', right: -6, bottom: -6, width: 12, height: 12, background: '#fff', border: '1px solid #000', borderRadius: 2, cursor: 'nwse-resize' }} onPointerDown={(ev) => beginShapeResize(ev, shape, 'se')} />
-                  <div data-rotate="true" style={{ position: 'absolute', left: '50%', top: -28, width: 14, height: 14, marginLeft: -7, borderRadius: '50%', background: '#fff', border: '1px solid #000', cursor: 'grab' }} onPointerDown={(ev) => beginShapeRotate(ev, shape)} />
+                  <div data-rotate="true" style={{ position: 'absolute', left: '50%', top: -18, width: 16, height: 16, marginLeft: -8, borderRadius: '50%', background: '#fff', border: '1px solid #000', cursor: 'grab' }} onPointerDown={(ev) => beginShapeRotate(ev, shape)} />
                 </>
               )}
             </div>

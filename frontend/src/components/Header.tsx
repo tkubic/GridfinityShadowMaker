@@ -34,7 +34,15 @@ export default function Header({ projectName, onRename, onSave, onLoadClick, act
         <nav style={{ display: "flex", gap: 8 }} aria-label="Top tabs">
           <button className={"tab-btn" + (activeTab === "trace" ? " active" : "")} onClick={() => setActiveTab("trace")}>Trace Object</button>
           <button className={"tab-btn" + (activeTab === "canvas" ? " active" : "")} onClick={() => setActiveTab("canvas")}>2D Canvas</button>
-          <button className={"tab-btn" + (activeTab === "render" ? " active" : "")} onClick={() => setActiveTab("render")}>3D Viewer</button>
+          <button
+            className={"tab-btn" + (activeTab === "render" ? " active" : "")}
+            onClick={() => {
+              setActiveTab("render");
+              try { (window as any).__gsmReload3d?.(); } catch {}
+              try { window.dispatchEvent(new CustomEvent('gsm-reload-3d')); } catch {}
+              try { setTimeout(() => (window as any).__gsmReload3d?.(), 0); } catch {}
+            }}
+          >3D Viewer</button>
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12 }}>

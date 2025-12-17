@@ -82,6 +82,30 @@ export default function Inspector({
   // Keep track of which inspector field (if any) the user is actively editing.
   const [focusedField, setFocusedField] = React.useState<string | null>(null);
 
+  const applyNumericChange = React.useCallback(
+    (
+      field: keyof ToolShape,
+      raw: string,
+      opts?: {
+        transform?: (n: number) => number;
+        format?: (n: number) => string;
+        clampMin?: number;
+        clampMax?: number;
+        skipHistory?: boolean;
+      },
+    ): string => {
+      if (!selectedShape) return raw;
+      const parsed = parseFloat(raw);
+      if (Number.isNaN(parsed)) return raw;
+      let next = opts?.transform ? opts.transform(parsed) : parsed;
+      if (opts?.clampMin !== undefined) next = Math.max(opts.clampMin, next);
+      if (opts?.clampMax !== undefined) next = Math.min(opts.clampMax, next);
+      updateShape(selectedShape.id, { [field]: next } as Partial<ToolShape>, opts?.skipHistory ? { skipHistory: true } : undefined);
+      return opts?.format ? opts.format(next) : `${next}`;
+    },
+    [selectedShape, updateShape],
+  );
+
   // When the selected shape's key properties change externally (for example
   // when the user drags or rotates the shape), and the inspector field is
   // not currently being edited, clear the edit buffer so the inspector shows
@@ -535,7 +559,10 @@ export default function Inspector({
                     setFocusedField('fontSize');
                     if (editFields.fontSize === undefined) setEditFields({ ...editFields, fontSize: ((selectedShape.fontSizeMM ?? 15)).toFixed(1) });
                   }}
-                  onChange={(e) => setEditFields({ ...editFields, fontSize: e.target.value })}
+                  onChange={(e) => {
+                    const next = applyNumericChange('fontSizeMM', e.target.value, { format: (n) => n.toFixed(1) });
+                    setEditFields({ ...editFields, fontSize: next });
+                  }}
                   onBlur={() => { setFocusedField(null); commitEditField("fontSize"); }}
                   onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("fontSize"); (e.target as HTMLInputElement).blur(); } }}
                 />
@@ -555,7 +582,7 @@ export default function Inspector({
                   onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
                   onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
                   style={{ width: "100%" }}
-                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
               </div>
               <div className="field">
@@ -567,7 +594,10 @@ export default function Inspector({
                   onFocus={() => {
                     if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
                   }}
-                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                  onChange={(e) => {
+                    const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
+                    setEditFields({ ...editFields, rotate: next });
+                  }}
                   onBlur={() => commitEditField("rotate")}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
                   style={{ width: "100%" }}
@@ -706,7 +736,10 @@ export default function Inspector({
                 type="number"
                 step="0.1"
                 value={editFields.x ?? (selectedShape.x ?? 0).toFixed(1)}
-                onChange={(e) => setEditFields({ ...editFields, x: e.target.value })}
+                onChange={(e) => {
+                  const next = applyNumericChange('x', e.target.value, { transform: (n) => Math.round(n * 10) / 10, format: (n) => n.toFixed(1) });
+                  setEditFields({ ...editFields, x: next });
+                }}
                 onFocus={() => {
                   setFocusedField('x');
                   if (editFields.x === undefined) setEditFields({ ...editFields, x: (selectedShape.x ?? 0).toFixed(1) });
@@ -723,7 +756,10 @@ export default function Inspector({
                 type="number"
                 step="0.1"
                 value={editFields.y ?? (selectedShape.y ?? 0).toFixed(1)}
-                onChange={(e) => setEditFields({ ...editFields, y: e.target.value })}
+                onChange={(e) => {
+                  const next = applyNumericChange('y', e.target.value, { transform: (n) => Math.round(n * 10) / 10, format: (n) => n.toFixed(1) });
+                  setEditFields({ ...editFields, y: next });
+                }}
                 onFocus={() => {
                   setFocusedField('y');
                   if (editFields.y === undefined) setEditFields({ ...editFields, y: (selectedShape.y ?? 0).toFixed(1) });
@@ -743,7 +779,10 @@ export default function Inspector({
                   type="number"
                   step="1"
                       value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                      onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                        onChange={(e) => {
+                          const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
+                          setEditFields({ ...editFields, rotate: next });
+                      }}
                       onFocus={() => {
                         setFocusedField('rotate');
                         if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: (selectedShape.rotateDeg ?? 0).toFixed(1) });
@@ -760,7 +799,10 @@ export default function Inspector({
                   step="0.1"
                   min={0.1}
                       value={editFields.scale ?? ((selectedShape.scale ?? 1)).toFixed(1)}
-                      onChange={(e) => setEditFields({ ...editFields, scale: e.target.value })}
+                        onChange={(e) => {
+                          const next = applyNumericChange('scale', e.target.value, { transform: (n) => Math.round(n * 10) / 10, clampMin: 0.1, format: (n) => n.toFixed(1) });
+                          setEditFields({ ...editFields, scale: next });
+                        }}
                       onFocus={() => {
                         setFocusedField('scale');
                         if (editFields.scale === undefined) setEditFields({ ...editFields, scale: (selectedShape.scale ?? 1).toFixed(1) });
@@ -776,7 +818,7 @@ export default function Inspector({
                   type="number"
                   step="0.1"
                       value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                      onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
+                        onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
                       onFocus={() => {
                         setFocusedField('depth');
                         if (editFields.depth === undefined) setEditFields({ ...editFields, depth: (selectedShape.depthMM ?? 0.6).toFixed(1) });
@@ -784,7 +826,7 @@ export default function Inspector({
                       onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
                       onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
                       style={{ width: "100%" }}
-                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                    disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
               </div>
 
@@ -920,11 +962,15 @@ export default function Inspector({
                       <label>Width (mm)</label>
                       <input
                         type="number"
-                        value={editFields.width ?? (selectedShape.widthMM ?? 0).toString()}
-                        onChange={(e) => setEditFields({ ...editFields, width: e.target.value })}
+                        step="0.1"
+                        value={editFields.width ?? (selectedShape.widthMM ?? 0).toFixed(1)}
+                        onChange={(e) => {
+                          const next = applyNumericChange('widthMM', e.target.value, { transform: (n) => Math.max(0, Math.round(n * 10) / 10), format: (n) => n.toFixed(1) });
+                          setEditFields({ ...editFields, width: next });
+                        }}
                         onFocus={() => {
                           setFocusedField('width');
-                          if (editFields.width === undefined) setEditFields({ ...editFields, width: (selectedShape.widthMM ?? 0).toString() });
+                          if (editFields.width === undefined) setEditFields({ ...editFields, width: (selectedShape.widthMM ?? 0).toFixed(1) });
                         }}
                         onBlur={() => { setFocusedField(null); commitEditField("width"); }}
                         onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("width"); (e.target as HTMLInputElement).blur(); } }}
@@ -935,11 +981,15 @@ export default function Inspector({
                       <label>Height (mm)</label>
                       <input
                         type="number"
-                        value={editFields.height ?? (selectedShape.heightMM ?? 0).toString()}
-                        onChange={(e) => setEditFields({ ...editFields, height: e.target.value })}
+                        step="0.1"
+                        value={editFields.height ?? (selectedShape.heightMM ?? 0).toFixed(1)}
+                        onChange={(e) => {
+                          const next = applyNumericChange('heightMM', e.target.value, { transform: (n) => Math.max(0, Math.round(n * 10) / 10), format: (n) => n.toFixed(1) });
+                          setEditFields({ ...editFields, height: next });
+                        }}
                         onFocus={() => {
                           setFocusedField('height');
-                          if (editFields.height === undefined) setEditFields({ ...editFields, height: (selectedShape.heightMM ?? 0).toString() });
+                          if (editFields.height === undefined) setEditFields({ ...editFields, height: (selectedShape.heightMM ?? 0).toFixed(1) });
                         }}
                         onBlur={() => { setFocusedField(null); commitEditField("height"); }}
                         onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("height"); (e.target as HTMLInputElement).blur(); } }}
@@ -974,7 +1024,10 @@ export default function Inspector({
                   type="number"
                   step="1"
                   value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, rotate: e.target.value })}
+                  onChange={(e) => {
+                    const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
+                    setEditFields({ ...editFields, rotate: next });
+                  }}
                   onFocus={() => {
                     setFocusedField('rotate');
                     if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
@@ -994,7 +1047,7 @@ export default function Inspector({
                   onBlur={() => commitEditField("depth")}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
                   style={{ width: "100%" }}
-                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker"}
+                  disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
               </div>
 

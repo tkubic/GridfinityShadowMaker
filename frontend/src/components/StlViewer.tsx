@@ -73,7 +73,7 @@ function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geome
   );
 }
 
-export default function StlViewer({ projectName, pollIntervalMs = 0 }: Props) {
+export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs = 0 }: Props, ref: React.Ref<{ reload: () => void }>) {
   // default: no automatic polling (0) — keeps viewer stable after initial load
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [loading, setLoading] = useState(false);
@@ -186,6 +186,8 @@ export default function StlViewer({ projectName, pollIntervalMs = 0 }: Props) {
     }
   }, [activeProject]);
 
+  React.useImperativeHandle(ref, () => ({ reload }), [reload]);
+
   // Subscribe to server-sent events so the viewer only loads when the server
   // announces that an STL has been generated for a project. This makes the
   // viewer event-driven instead of timer-driven.
@@ -276,7 +278,7 @@ export default function StlViewer({ projectName, pollIntervalMs = 0 }: Props) {
       </div>
     </div>
   );
-}
+});
 
 // Make OrbitControls wheel listener passive where possible to avoid console warnings
 // and improve scroll responsiveness. We remove the existing listener and re-add
