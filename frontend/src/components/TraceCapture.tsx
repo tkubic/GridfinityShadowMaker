@@ -1403,6 +1403,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
   const [captureName, setCaptureName] = useState("");
   const [photoList, setPhotoList] = useState<PhotoItem[]>([]);
   const [editorState, setEditorState] = useState<EditorState>(null);
+  const [showCameraPreview, setShowCameraPreview] = useState(false);
   // notify parent when the editor opens/closes
   useEffect(() => {
     try { onEditorActiveChange?.(!!editorState); } catch { /* ignore */ }
@@ -1413,6 +1414,14 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadingCalib, setUploadingCalib] = useState(false);
   const editingActive = loadingEditor || !!editorState;
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // If editor/other views take over, stop the camera preview and reset selection
+  useEffect(() => {
+    if (editingActive && showCameraPreview) {
+      stopCameraPreview();
+    }
+  }, [editingActive, showCameraPreview]);
 
   // Load OpenCV and calibration once
   useEffect(() => {
@@ -1466,9 +1475,22 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     };
   }, [cvReady, projectName]);
 
-  // Start/stop video stream when device changes (no default selection)
+  function stopCameraPreview() {
+    setShowCameraPreview(false);
+    setSelectedDeviceId(null);
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      streamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Start/stop video stream when device or preview visibility changes (no default selection)
   useEffect(() => {
-    let currentStream: MediaStream | null = null;
     async function start() {
       try {
         setStreamError(null);
@@ -1502,8 +1524,8 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
 
         setDevices(videoInputs);
 
-        // If user hasn't selected a device, do not auto-start streaming
-        if (!selectedDeviceId) return;
+        // If user hasn't selected a device or preview is hidden, do not auto-start streaming
+        if (!selectedDeviceId || !showCameraPreview) return;
 
         const constraints: MediaStreamConstraints = {
           video: { deviceId: { exact: selectedDeviceId }, width: { ideal: 4000 }, height: { ideal: 3000 } },
@@ -1512,7 +1534,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
 
         try {
           const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          currentStream = stream;
+          streamRef.current = stream;
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             await videoRef.current.play().catch(() => {});
@@ -1528,14 +1550,19 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     }
     start();
     return () => {
-      if (currentStream) {
-        currentStream.getTracks().forEach((t) => t.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
     };
-  }, [selectedDeviceId]);
+  }, [selectedDeviceId, showCameraPreview]);
 
   // Draw preview (undistort if available)
   useEffect(() => {
+    if (!showCameraPreview) return;
     let rafId: number | null = null;
     function drawFrame() {
       const video = videoRef.current;
@@ -1585,7 +1612,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     return () => {
       if (rafId) window.cancelAnimationFrame(rafId);
     };
-  }, [cvReady]);
+  }, [cvReady, showCameraPreview]);
 
   async function refreshList() {
     try {
@@ -1631,24 +1658,10 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
 
   async function openForEdit(item: PhotoItem) {
     try {
+      stopCameraPreview();
       setLoadingEditor(true);
       let filename = item.name;
-      if (filename.startsWith("_")) {
-        const resp = await fetch(`${backendUrl}/api/photos/mark-edited`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ project: projectName, filename }),
-        });
-        const j = await resp.json();
-        if (resp.ok && j.filename) {
-          filename = j.filename;
-          refreshList();
-        } else if (!resp.ok) {
-          alert(`Edit failed: ${j.error || resp.statusText}`);
-          setLoadingEditor(false);
-          return;
-        }
-      }
+      // No longer rename or mark files when opening for edit — use the original filename as provided
       const imgResp = await fetch(`${backendUrl}/api/photos/raw?project=${encodeURIComponent(projectName)}&file=${encodeURIComponent(filename)}`);
       if (!imgResp.ok) throw new Error("Could not load image for edit");
       const blob = await imgResp.blob();
@@ -1664,6 +1677,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
   // Load an image from server and feed it into the same image pipeline as the file input
   async function loadImageFromPhoto(item: PhotoItem) {
     try {
+      stopCameraPreview();
       // ensure any open editor is closed so the processed preview becomes visible
       setEditorState(null);
       setLoadingEditor(false);
@@ -1774,7 +1788,15 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
               Camera
               <select
                 value={selectedDeviceId || ""}
-                onChange={(e) => setSelectedDeviceId(e.target.value || null)}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  setSelectedDeviceId(val);
+                  setShowCameraPreview(!!val);
+                  if (val) {
+                    setEditorState(null);
+                    setLoadingEditor(false);
+                  }
+                }}
                 style={{ flex: 1 }}
               >
                 <option value="">Select a camera…</option>
@@ -1791,17 +1813,18 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
               >
                 Request
               </button>
-              <div style={{ color: '#666', fontSize: 11 }}>Click to request camera permission if cameras don't appear.</div>
-            </div>
-            {streamError && <div className="error-text">{streamError}</div>}
-            <div className="preview-wrap">
-              <video ref={videoRef} className="capture-video" muted playsInline />
-              <canvas ref={displayCanvasRef} className="capture-canvas" />
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-              <button className="action-text-button" style={{ padding: '2px 6px', fontSize: 12 }} onClick={() => calibrationInputRef.current?.click()} disabled={uploadingCalib}>
+              <button
+                className="action-text-button"
+                style={{ padding: '2px 6px', fontSize: 11, height: 24 }}
+                onClick={() => calibrationInputRef.current?.click()}
+                disabled={uploadingCalib}
+              >
                 Load calibration
               </button>
+              <div style={{ color: '#666', fontSize: 11, flex: 1 }}>Click to request camera permission if cameras don't appear.</div>
+            </div>
+            {streamError && <div className="error-text">{streamError}</div>}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
               <input
                 type="text"
                 placeholder="Photo name"
@@ -1812,7 +1835,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
               />
             </div>
             <button onClick={handleCapture} disabled={busyCapture || !captureName.trim() || !selectedDeviceId}>
-              {busyCapture ? "Saving..." : "Capture & Save"}
+              {busyCapture ? "Saving..." : "Capture Photo"}
             </button>
           </div>
         </div>
@@ -1820,7 +1843,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
           <div className="section-header" style={{ marginBottom: 8 }}>Captured photos</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
             <button onClick={refreshList} disabled={busyList}>Refresh</button>
-            <button onClick={() => { setEditorState(null); setLoadingEditor(false); imageInputRef.current?.click(); }}>Load Image</button>
+            <button onClick={() => { stopCameraPreview(); setEditorState(null); setLoadingEditor(false); imageInputRef.current?.click(); }}>Load Image</button>
           </div>
           <div className="photo-list">
             {busyList && <div>Loading...</div>}
@@ -1841,7 +1864,16 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
         </div>
       </div>
       <div className="editor-column">
-        {editingActive && (
+        {showCameraPreview && selectedDeviceId && (
+          <div className="capture-card">
+            <div className="section-header" style={{ marginBottom: 8 }}>Camera preview</div>
+            <div className="preview-wrap" style={{ height: '100%', minHeight: 320 }}>
+              <video ref={videoRef} className="capture-video" muted playsInline />
+              <canvas ref={displayCanvasRef} className="capture-canvas" />
+            </div>
+          </div>
+        )}
+        {!showCameraPreview && editingActive && (
           <div className="capture-card">
             <div className="section-header" style={{ marginBottom: 8 }}>{editorState?.filename || 'Edit photo'}</div>
             {loadingEditor && <div>Loading image…</div>}
@@ -1853,7 +1885,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
             />
           </div>
         )}
-        {!editingActive && (
+        {!showCameraPreview && !editingActive && (
           <div className="capture-card">
             <div className="section-header" style={{ marginBottom: 8 }}>Processed preview</div>
             <TraceCanvas images={processedImages || undefined} />

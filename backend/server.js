@@ -325,7 +325,8 @@ app.post('/api/photos/capture', (req, res) => {
     const parsedName = path.parse(rawName || '');
     const base = sanitizeFilenameBase(parsedName.name || rawName || `capture_${Date.now()}`) || `capture_${Date.now()}`;
     const ext = (parsedName.ext && IMAGE_EXTS.includes(parsedName.ext.toLowerCase())) ? parsedName.ext : parsed.ext;
-    const finalName = `_${base}${ext}`;
+    // Save captured files using the provided base name (no leading underscore prefix)
+    const finalName = `${base}${ext}`;
     const target = path.join(projectFolder, finalName);
     fs.writeFileSync(target, parsed.buffer);
     return res.json({ ok: true, filename: finalName, project: projectName });
