@@ -393,34 +393,34 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                             if bp and isinstance(bp, dict):
                                 try:
                                     if 'gridX' in bp:
-                                        gridx_size = int(bp.get('gridX'))
+                                        gridx_size = float(bp.get('gridX'))
                                         board_gx = gridx_size
                                     elif 'width' in bp:
-                                        gridx_size = int(bp.get('width'))
+                                        gridx_size = float(bp.get('width'))
                                         board_gx = gridx_size
                                 except Exception:
                                     pass
                                 try:
                                     if 'gridY' in bp:
-                                        gridy_size = int(bp.get('gridY'))
+                                        gridy_size = float(bp.get('gridY'))
                                         board_gy = gridy_size
                                     elif 'depth' in bp:
-                                        gridy_size = int(bp.get('depth'))
+                                        gridy_size = float(bp.get('depth'))
                                         board_gy = gridy_size
                                 except Exception:
                                     pass
                                 try:
                                     if 'gridZ' in bp:
-                                        gridz_size = int(bp.get('gridZ'))
+                                        gridz_size = float(bp.get('gridZ'))
                                         board_gz = gridz_size
                                     elif 'height7Units' in bp:
-                                        gridz_size = int(bp.get('height7Units'))
+                                        gridz_size = float(bp.get('height7Units'))
                                         board_gz = gridz_size
                                     elif 'height' in bp:
-                                        gridz_size = int(bp.get('height'))
+                                        gridz_size = float(bp.get('height'))
                                         board_gz = gridz_size
                                     elif 'heightMM' in bp:
-                                        gridz_size = int(bp.get('heightMM'))
+                                        gridz_size = float(bp.get('heightMM'))
                                         board_gz = gridz_size
                                 except Exception:
                                     pass
@@ -799,35 +799,35 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
                                     # Prefer explicit gridX/gridY first, then width/depth
                                     try:
                                         if 'gridX' in bp:
-                                            gridx_size = int(bp.get('gridX'))
+                                            gridx_size = float(bp.get('gridX'))
                                             board_gx = gridx_size
                                         elif 'width' in bp:
-                                            gridx_size = int(bp.get('width'))
+                                            gridx_size = float(bp.get('width'))
                                             board_gx = gridx_size
                                     except Exception:
                                         pass
                                     try:
                                         if 'gridY' in bp:
-                                            gridy_size = int(bp.get('gridY'))
+                                            gridy_size = float(bp.get('gridY'))
                                             board_gy = gridy_size
                                         elif 'depth' in bp:
-                                            gridy_size = int(bp.get('depth'))
+                                            gridy_size = float(bp.get('depth'))
                                             board_gy = gridy_size
                                     except Exception:
                                         pass
                                     try:
                                         # handle gridZ or various height keys including height7Units
                                         if 'gridZ' in bp:
-                                            gridz_size = int(bp.get('gridZ'))
+                                            gridz_size = float(bp.get('gridZ'))
                                             board_gz = gridz_size
                                         elif 'height7Units' in bp:
-                                            gridz_size = int(bp.get('height7Units'))
+                                            gridz_size = float(bp.get('height7Units'))
                                             board_gz = gridz_size
                                         elif 'height' in bp:
-                                            gridz_size = int(bp.get('height'))
+                                            gridz_size = float(bp.get('height'))
                                             board_gz = gridz_size
                                         elif 'heightMM' in bp:
-                                            gridz_size = int(bp.get('heightMM'))
+                                            gridz_size = float(bp.get('heightMM'))
                                             board_gz = gridz_size
                                         else:
                                             # fallback: scan for any key that contains 'height'
@@ -1024,20 +1024,20 @@ def import_to_openscad(dxf_path, gridx_size, gridy_size, console_text, file_name
             if board_gz is not None:
                 gridz_size = board_gz
             try:
-                gx = int(gridx_size) if gridx_size is not None else 5
+                gx = round(float(gridx_size) * 10) / 10 if gridx_size is not None else 5.0
             except Exception:
-                gx = 5
+                gx = 5.0
             try:
-                gy = int(gridy_size) if gridy_size is not None else 2
+                gy = round(float(gridy_size) * 10) / 10 if gridy_size is not None else 2.0
             except Exception:
-                gy = 2
+                gy = 2.0
             try:
-                gz = int(gridz_size) if gridz_size is not None else 6
+                gz = round(float(gridz_size) * 10) / 10 if gridz_size is not None else 6.0
             except Exception:
-                gz = 6
+                gz = 6.0
             # Replace size assignment even if the template includes trailing comments or spacing
             size_pattern = re.compile(r'size\s*=\s*\[[^\]]*\];[^\n]*')
-            updated_scad_content, _ = size_pattern.subn(f'size = [{gx}, {gy}, {gz}]; // grid sizes', updated_scad_content, count=1)
+            updated_scad_content, _ = size_pattern.subn(f'size = [{gx:.1f}, {gy:.1f}, {gz:.1f}]; // grid sizes', updated_scad_content, count=1)
 
             # Determine chamfer settings from GSM `board` if available. Default: enabled, 2mm
             chamfer_enabled = True

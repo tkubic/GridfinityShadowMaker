@@ -1415,6 +1415,8 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
   const [uploadingCalib, setUploadingCalib] = useState(false);
   const editingActive = loadingEditor || !!editorState;
   const streamRef = useRef<MediaStream | null>(null);
+  const previewWrapRef = useRef<HTMLDivElement | null>(null);
+  const [previewSize, setPreviewSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
   // If editor/other views take over, stop the camera preview and reset selection
   useEffect(() => {
@@ -1474,6 +1476,23 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       matsRef.current = null;
     };
   }, [cvReady, projectName]);
+
+  // Keep camera preview sized to fit within the viewport while preserving aspect ratio
+  useEffect(() => {
+    function updatePreviewSize() {
+      if (!showCameraPreview) return;
+      const parent = previewWrapRef.current?.parentElement;
+      const maxW = Math.max(240, (parent?.clientWidth ?? window.innerWidth) - 16);
+      const maxH = Math.max(240, window.innerHeight - 180);
+      const widthByHeight = (maxH * 4) / 3;
+      const width = Math.min(maxW, widthByHeight);
+      const height = Math.round((width * 3) / 4);
+      setPreviewSize({ width, height });
+    }
+    updatePreviewSize();
+    window.addEventListener('resize', updatePreviewSize);
+    return () => window.removeEventListener('resize', updatePreviewSize);
+  }, [showCameraPreview]);
 
   function stopCameraPreview() {
     setShowCameraPreview(false);
@@ -1867,7 +1886,16 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
         {showCameraPreview && selectedDeviceId && (
           <div className="capture-card">
             <div className="section-header" style={{ marginBottom: 8 }}>Camera preview</div>
-            <div className="preview-wrap" style={{ height: '100%', minHeight: 320 }}>
+            <div
+              className="preview-wrap"
+              ref={previewWrapRef}
+              style={{
+                height: previewSize.height ? `${previewSize.height}px` : 'auto',
+                width: previewSize.width ? `${previewSize.width}px` : '100%',
+                maxWidth: '100%',
+                margin: '6px auto',
+              }}
+            >
               <video ref={videoRef} className="capture-video" muted playsInline />
               <canvas ref={displayCanvasRef} className="capture-canvas" />
             </div>
