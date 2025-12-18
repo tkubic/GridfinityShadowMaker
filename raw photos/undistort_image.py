@@ -6,7 +6,7 @@ from tkinter.filedialog import askopenfilename
 
 # Path to calibration data
 CALIBRATION_FILE = 'calibration_files/calibration_data.pkl'
-UNDISTORTED_IMAGES_DIR = '../Design Files'
+UNDISTORTED_IMAGES_DIR = '../projects'
 
 def load_calibration_data(calibration_file):
     """
@@ -72,7 +72,7 @@ def save_image(dst, output_dir, image_name):
 
 def main():
     """
-    Main function to undistort all .jpg images in the current directory.
+    Main function to undistort all .jpg/.png images in the current directory.
     """
     print("Loading calibration data...")
     mtx, dist = load_calibration_data(CALIBRATION_FILE)
@@ -86,12 +86,16 @@ def main():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    # Find all .jpg files in the current directory
-    print("Finding .jpg files in the current directory...")
-    image_files = [f for f in os.listdir('.') if f.lower().endswith('.jpg')]
+    # Find all supported files in the current directory
+    print("Finding .jpg/.png files in the current directory...")
+    image_files = [
+        f
+        for f in os.listdir('.')
+        if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+    ]
     
     if not image_files:
-        print("No .jpg files found in the current directory. Exiting.")
+        print("No .jpg/.png files found in the current directory. Exiting.")
         return
     
     for image_file in image_files:

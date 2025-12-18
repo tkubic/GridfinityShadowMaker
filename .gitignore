@@ -60,3 +60,18 @@ raw photos/calibration_files/WIN_20251214_15_42_53_Pro.jpg
 raw photos/calibration_files/WIN_20251214_15_42_55_Pro.jpg
 raw photos/calibration_files/WIN_20251214_15_42_58_Pro.jpg
 /tests
+
+# Ignore image, calibration and json files in raw photos folders
+raw photos/*.jpg
+raw photos/*.png
+raw photos/*.pkl
+raw photos/*.json
+
+raw photos/calibration_files/*.jpg
+raw photos/calibration_files/*.png
+raw photos/calibration_files/*.pkl
+raw photos/calibration_files/*.json
+
+# Ignore any .logs folders
+/.logs/
+**/.logs/

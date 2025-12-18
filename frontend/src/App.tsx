@@ -251,11 +251,8 @@ function App() {
       if (!equal) { hasDiff = true; break; }
     }
     if (!hasDiff) {
-      console.info('updateShape: no-op diff', { id, keys: Object.keys(partial), skipHistory: !!opts?.skipHistory });
       return;
     }
-
-    console.info('updateShape: apply', { id, keys: Object.keys(partial), skipHistory: !!opts?.skipHistory });
 
     if (!opts?.skipHistory) pushHistoryCheckpoint('updateShape');
 

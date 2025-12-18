@@ -6,8 +6,9 @@ const { spawn, execSync, spawnSync } = require('child_process');
 
 const app = express();
 const REPO_ROOT = path.join(__dirname, '..');
-const CALIB_PKL_PATH = path.join(__dirname, '..', 'raw photos', 'calibration_files', 'calibration_data.pkl');
-const CALIB_JSON_PATH = path.join(__dirname, '..', 'raw photos', 'calibration_files', 'calibration_data.json');
+const CALIB_DIR = path.join(__dirname, '..', 'raw photos', 'calibration_files');
+const CALIB_PKL_PATH = path.join(CALIB_DIR, 'calibration_data.pkl');
+const CALIB_JSON_PATH = path.join(CALIB_DIR, 'calibration_data.json');
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif', '.webp'];
 
 function sanitizeProjectName(raw) {
@@ -19,6 +20,11 @@ function sanitizeProjectName(raw) {
 function sanitizeFilenameBase(raw) {
   if (!raw) return '';
   return String(raw).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/\s+/g, '_').trim();
+}
+
+function sanitizeDeviceId(raw) {
+  if (!raw) return '';
+  return sanitizeFilenameBase(raw).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 100);
 }
 
 function ensureProjectFolder(projectName) {
@@ -55,17 +61,47 @@ function parseDataUrlToBuffer(dataUrl, explicitMime) {
   }
 }
 
-let cachedCalibration = { mtime: 0, data: null };
-function loadCalibrationData() {
+const cachedCalibration = new Map(); // key -> { mtime, data }
+function loadCalibrationData(deviceId) {
   try {
-    const candidates = [];
-    if (fs.existsSync(CALIB_JSON_PATH)) candidates.push({ path: CALIB_JSON_PATH, type: 'json' });
-    if (fs.existsSync(CALIB_PKL_PATH)) candidates.push({ path: CALIB_PKL_PATH, type: 'pkl' });
+    const key = sanitizeDeviceId(deviceId || '') || 'default';
+    const deviceCandidates = [];
+    const defaultCandidates = [];
+    const isDisabled = (p) => {
+      try {
+        const metaPath = p.replace(/\.[^.]+$/, '') + '.meta.json';
+        if (!fs.existsSync(metaPath)) return false;
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        return !!(meta && meta.disabled === true);
+      } catch (e) {
+        return false;
+      }
+    };
+
+    const deviceJson = path.join(CALIB_DIR, `calibration_${key}.json`);
+    const devicePkl = path.join(CALIB_DIR, `calibration_${key}.pkl`);
+    let deviceTombstone = false;
+    if (deviceId) {
+      if (isDisabled(deviceJson) || isDisabled(devicePkl)) deviceTombstone = true;
+      if (fs.existsSync(deviceJson) && !isDisabled(deviceJson)) deviceCandidates.push({ path: deviceJson, type: 'json', cacheKey: key });
+      if (fs.existsSync(devicePkl) && !isDisabled(devicePkl)) deviceCandidates.push({ path: devicePkl, type: 'pkl', cacheKey: key });
+    }
+    if (fs.existsSync(CALIB_JSON_PATH) && !isDisabled(CALIB_JSON_PATH)) defaultCandidates.push({ path: CALIB_JSON_PATH, type: 'json', cacheKey: 'default' });
+    if (fs.existsSync(CALIB_PKL_PATH) && !isDisabled(CALIB_PKL_PATH)) defaultCandidates.push({ path: CALIB_PKL_PATH, type: 'pkl', cacheKey: 'default' });
+
+    // If this device was explicitly disabled, do not fall back to default calibration
+    if (deviceId && deviceTombstone && deviceCandidates.length === 0) return null;
+    // Prefer a device-specific calibration when a deviceId is provided; otherwise fall back to default
+    const candidates = deviceCandidates.length ? deviceCandidates : defaultCandidates;
     if (!candidates.length) return null;
-    const chosen = candidates[0];
-    const stat = fs.statSync(chosen.path);
-    const mtime = stat.mtimeMs || stat.ctimeMs || Date.now();
-    if (cachedCalibration.data && cachedCalibration.mtime === mtime) return cachedCalibration.data;
+
+    const withTimes = candidates.map((c) => {
+      const stat = fs.statSync(c.path);
+      return { ...c, mtime: stat.mtimeMs || stat.ctimeMs || Date.now() };
+    });
+    const chosen = withTimes.reduce((latest, curr) => (curr.mtime > latest.mtime ? curr : latest), withTimes[0]);
+    const cacheEntry = cachedCalibration.get(chosen.cacheKey);
+    if (cacheEntry && cacheEntry.mtime === chosen.mtime) return cacheEntry.data;
 
     let data = null;
     if (chosen.type === 'json') {
@@ -77,7 +113,7 @@ function loadCalibrationData() {
       const script = [
         'import pickle, json, numpy as np',
         'from pathlib import Path',
-        'p = Path(' + JSON.stringify(CALIB_PKL_PATH.replace(/\\/g, '\\\\')) + ')',
+        'p = Path(' + JSON.stringify(chosen.path.replace(/\\/g, '\\\\')) + ')',
         'data = pickle.load(open(p, "rb"))',
         'def normalize(x):',
         '    if isinstance(x, np.ndarray):',
@@ -100,8 +136,26 @@ function loadCalibrationData() {
       }
       data = JSON.parse(sp.stdout || '{}');
     }
-    cachedCalibration = { mtime, data };
-    return data;
+    // attach a friendly filename: prefer stored metadata originalName if present
+    let friendlyName = path.basename(chosen.path);
+    try {
+      const baseNoExt = chosen.path.replace(/\.[^.]+$/, '');
+      const metaPath = `${baseNoExt}.meta.json`;
+      if (fs.existsSync(metaPath)) {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        if (meta && typeof meta.originalName === 'string' && meta.originalName.trim()) {
+          friendlyName = meta.originalName.trim();
+        } else if (meta && typeof meta.storedFilename === 'string') {
+          friendlyName = meta.storedFilename;
+        }
+      }
+    } catch (e) {
+      // non-fatal
+    }
+
+    const dataWithMeta = { ...data, filename: friendlyName, storedFilename: path.basename(chosen.path) };
+    cachedCalibration.set(chosen.cacheKey, { mtime: chosen.mtime, data: dataWithMeta });
+    return dataWithMeta;
   } catch (e) {
     console.error('loadCalibrationData failed', e);
     return null;
@@ -191,7 +245,7 @@ const upload = multer({ dest: path.join(__dirname, 'uploads') });
 // Enable simple CORS for local development
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   // handle preflight
   if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -257,12 +311,21 @@ app.use(express.json({ limit: '50mb' }));
 
 // Photo capture + calibration helpers for the Trace tab
 app.get('/api/photos/calibration', (req, res) => {
-  const data = loadCalibrationData();
-  if (!data) return res.status(404).json({ error: 'calibration_not_found' });
+  const deviceId = (req.query && req.query.deviceId) ? String(req.query.deviceId) : '';
+  const data = loadCalibrationData(deviceId);
+  if (!data) {
+    return res.json({
+      camera_matrix: null,
+      distortion_coefficients: null,
+      filename: null,
+      storedFilename: null,
+      disabled: true,
+    });
+  }
   const cameraMatrix = data.camera_matrix || data.cameraMatrix || data.mtx || null;
   const distortion = data.distortion_coefficients || data.distortion_coeffs || data.distortion || data.dist || null;
   if (!cameraMatrix || !distortion) return res.status(500).json({ error: 'calibration_missing_fields' });
-  return res.json({ camera_matrix: cameraMatrix, distortion_coefficients: distortion });
+  return res.json({ camera_matrix: cameraMatrix, distortion_coefficients: distortion, filename: data.filename || null, storedFilename: data.storedFilename || null });
 });
 
 app.get('/api/photos/list', (req, res) => {
@@ -394,26 +457,79 @@ app.post('/api/photos/calibration-upload', (req, res) => {
     }
     try {
       if (!req.file) return res.status(400).json({ error: 'missing_file' });
+      const deviceIdRaw = (req.body && req.body.deviceId) ? String(req.body.deviceId) : '';
+      const deviceKey = sanitizeDeviceId(deviceIdRaw) || 'default';
       const ext = (path.extname(req.file.originalname || '') || '').toLowerCase();
       if (!['.pkl', '.json'].includes(ext)) return res.status(400).json({ error: 'unsupported_extension' });
-      const targetDir = path.join(__dirname, '..', 'raw photos', 'calibration_files');
+      const targetDir = CALIB_DIR;
       fs.mkdirSync(targetDir, { recursive: true });
-      const pklPath = path.join(targetDir, 'calibration_data.pkl');
-      const jsonPath = path.join(targetDir, 'calibration_data.json');
+      const base = deviceKey === 'default' ? 'calibration_data' : `calibration_${deviceKey}`;
+      const pklPath = path.join(targetDir, `${base}.pkl`);
+      const jsonPath = path.join(targetDir, `${base}.json`);
+      const metaPath = path.join(targetDir, `${base}.meta.json`);
       if (ext === '.pkl') {
         fs.copyFileSync(req.file.path, pklPath);
         // attempt to refresh cache
-        cachedCalibration = { mtime: 0, data: null };
+        cachedCalibration.delete(deviceKey);
       } else if (ext === '.json') {
         fs.copyFileSync(req.file.path, jsonPath);
-        cachedCalibration = { mtime: 0, data: null };
+        cachedCalibration.delete(deviceKey);
       }
-      return res.json({ ok: true, stored: ext === '.pkl' ? pklPath : jsonPath });
+      try {
+        const meta = {
+          originalName: req.file.originalname || '',
+          storedFilename: path.basename(ext === '.pkl' ? pklPath : jsonPath),
+        };
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+      } catch (e) {
+        console.warn('failed to write calibration meta', e);
+      }
+      return res.json({ ok: true, stored: ext === '.pkl' ? pklPath : jsonPath, filename: req.file.originalname || path.basename(ext === '.pkl' ? pklPath : jsonPath), deviceId: deviceKey });
     } catch (e) {
       console.error('calibration upload failed', e);
       return res.status(500).json({ error: 'calibration_upload_failed', detail: String(e) });
     }
   });
+});
+
+// Delete calibration for a device (and its metadata)
+app.delete('/api/photos/calibration', (req, res) => {
+  try {
+    const deviceIdRaw = (req.query && req.query.deviceId) ? String(req.query.deviceId) : '';
+    const deviceKey = sanitizeDeviceId(deviceIdRaw) || 'default';
+    const base = deviceKey === 'default' ? 'calibration_data' : `calibration_${deviceKey}`;
+    const pklPath = path.join(CALIB_DIR, `${base}.pkl`);
+    const jsonPath = path.join(CALIB_DIR, `${base}.json`);
+    const metaPath = path.join(CALIB_DIR, `${base}.meta.json`);
+    fs.mkdirSync(CALIB_DIR, { recursive: true });
+
+    // Preserve calibration files; mark the calibration disabled via meta so it appears "none loaded"
+    let meta = {};
+    try {
+      if (fs.existsSync(metaPath)) {
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) || {};
+      }
+    } catch (e) {
+      meta = {};
+    }
+    if (!meta.storedFilename) {
+      if (fs.existsSync(pklPath)) meta.storedFilename = path.basename(pklPath);
+      else if (fs.existsSync(jsonPath)) meta.storedFilename = path.basename(jsonPath);
+    }
+    meta.disabled = true;
+    meta.disabledAt = new Date().toISOString();
+    try {
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('failed to write calibration disable meta', e);
+    }
+
+    cachedCalibration.delete(deviceKey);
+    return res.json({ ok: true, disabled: true, deviceId: deviceKey });
+  } catch (e) {
+    console.error('calibration delete failed', e);
+    return res.status(500).json({ error: 'calibration_delete_failed', detail: String(e) });
+  }
 });
 
 app.post('/api/photos/save', (req, res) => {

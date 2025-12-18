@@ -1,10 +1,24 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import TraceCanvas from "./TraceCanvas";
 
 // Minimal typing for OpenCV.js
+type CvMat = { delete?: () => void };
+interface OpenCvModule { onRuntimeInitialized?: () => void }
+interface OpenCvLike {
+  Mat: new (...args: unknown[]) => CvMat;
+  onRuntimeInitialized?: () => void;
+  imread(src: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement): CvMat;
+  undistort(src: CvMat, dst: CvMat, mtx: CvMat, dist: CvMat): void;
+  imshow(canvas: HTMLCanvasElement, mat: CvMat): void;
+  matFromArray(rows: number, cols: number, type: number, data: Float64Array): CvMat;
+  CV_64F: number;
+  ellipse?: (...args: unknown[]) => void;
+}
+
 declare global {
   interface Window {
-    cv?: any;
+    cv?: OpenCvLike;
+    Module?: OpenCvModule;
   }
 }
 
@@ -12,8 +26,9 @@ const backendUrl = "http://localhost:5000";
 let openCvLoading: Promise<void> | null = null;
 
 async function ensureOpenCv() {
-  if (window.cv && (window.cv as any).Mat) {
-    if (typeof (window.cv as any).onRuntimeInitialized === "function") {
+  const cv = window.cv;
+  if (cv?.Mat) {
+    if (typeof cv.onRuntimeInitialized === "function") {
       await Promise.resolve();
     }
     return;
@@ -22,16 +37,12 @@ async function ensureOpenCv() {
   openCvLoading = new Promise<void>((resolve, reject) => {
     // Use the Emscripten Module hook pattern: set Module.onRuntimeInitialized
     // before loading the script so OpenCV can call it when ready.
-    try {
-      (window as any).Module = (window as any).Module || {};
-      (window as any).Module.onRuntimeInitialized = () => {
-        // ensure cv is available
-        if (window.cv && (window.cv as any).Mat) resolve();
-        else resolve();
-      };
-    } catch (err) {
-      // ignore
-    }
+    const moduleObj: OpenCvModule = window.Module || {};
+    moduleObj.onRuntimeInitialized = () => {
+      if (window.cv?.Mat) resolve();
+      else resolve();
+    };
+    window.Module = moduleObj;
     const script = document.createElement("script");
     // pin to a stable release; fall back to docs latest if network blocked
     script.src = "https://docs.opencv.org/4.7.0/opencv.js";
@@ -72,6 +83,7 @@ type Calibration = {
 
 type EditorState = { filename: string; dataUrl: string } | null;
 type EditorMode = "brush" | "crop" | "marquee" | "rectangle" | "circle" | "pointer";
+type CropRect = { x0: number; y0: number; x1: number; y1: number };
 type RectShape = {
   id: string;
   cx: number;
@@ -97,12 +109,27 @@ type StrokeShape = {
   points: { x: number; y: number }[];
 };
 
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+type EditorControls = {
+  setBrushSize: (s: number) => void;
+  setColor: (c: "#000000" | "#ffffff") => void;
+  setMode: (m: EditorMode) => void;
+  getState: () => { brushSize: number; color: "#000000" | "#ffffff"; mode: EditorMode; cropRect: CropRect | null };
+  cropSelection: () => boolean;
+  deleteSelection: () => void;
+  applyCrop: () => void;
+  save: () => void;
+  cancel: () => void;
+  clearSelection: () => void;
+};
+
 type PhotoEditorProps = {
   state: EditorState;
   // third parameter indicates whether the editor has tracked edits
   onSave: (dataUrl: string, filename: string, editsMade: boolean) => void;
   onCancel: () => void;
-  onRegister?: (controls: any | null) => void;
+  onRegister?: (controls: EditorControls | null) => void;
 };
 
 function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) {
@@ -112,13 +139,13 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const [brushPreview, setBrushPreview] = useState<{ x: number; y: number; diameter: number } | null>(null);
   const [painting, setPainting] = useState(false);
   const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
-  const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [cropRect, setCropRect] = useState<CropRect | null>(null);
   // liveRect is the in-progress rectangle while dragging; cropRect is the finalized selection
-  const [liveRect, setLiveRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [liveRect, setLiveRect] = useState<CropRect | null>(null);
   const [rectStart, setRectStart] = useState<{ x: number; y: number } | null>(null);
-  const [rectLive, setRectLive] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [rectLive, setRectLive] = useState<CropRect | null>(null);
   const [circleStart, setCircleStart] = useState<{ x: number; y: number } | null>(null);
-  const [circleLive, setCircleLive] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [circleLive, setCircleLive] = useState<CropRect | null>(null);
   const [rectShapes, setRectShapes] = useState<RectShape[]>([]);
   const [circleShapes, setCircleShapes] = useState<CircleShape[]>([]);
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
@@ -133,7 +160,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const [color, setColor] = useState<"#000000" | "#ffffff">('#000000');
   const [overlayStyle, setOverlayStyle] = useState<React.CSSProperties | null>(null);
   const [editsMade, setEditsMade] = useState(false);
-  const resizingRef = useRef<null | { corner: string; startClientX: number; startClientY: number; origRect: any }>(null);
+  const resizingRef = useRef<null | { corner: string; startClientX: number; startClientY: number; origRect: CropRect }>(null);
   const shapeDragRef = useRef<null | { id: string; startX: number; startY: number; startCx: number; startCy: number }>(null);
   const shapeResizeRef = useRef<null | { id: string; corner: string; startShape: RectShape }>(null);
   const shapeRotateRef = useRef<null | { id: string; startAngle: number; startPointerAngle: number; startShape: RectShape }>(null);
@@ -150,6 +177,165 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
   const lastDrawModeRef = useRef<EditorMode>('marquee');
   const hoverPointerRef = useRef(false);
   const paintingRef = useRef(false);
+
+  useEffect(() => {
+    if (mode === 'brush' || mode === 'marquee') {
+      setSelectedShapeId(null);
+      setSelectedCircleId(null);
+      setSelectedStrokeId(null);
+    }
+    modeRef.current = mode;
+  }, [mode]);
+
+  function setPointerCaptureSafe(target: Element | null | undefined, pointerId: number) {
+    if (!target) return;
+    try {
+      (target as HTMLElement).setPointerCapture?.(pointerId);
+      lastPointerIdRef.current = pointerId;
+    } catch (err) {
+      console.warn('setPointerCapture failed', err);
+    }
+  }
+
+  function releasePointerCaptureSafe(target: Element | null | undefined, pointerId?: number) {
+    const activeId = pointerId ?? lastPointerIdRef.current;
+    if (!target || activeId == null) return;
+    try {
+      (target as HTMLElement).releasePointerCapture?.(activeId);
+    } catch (err) {
+      console.warn('releasePointerCapture failed', err);
+    } finally {
+      if (pointerId == null) lastPointerIdRef.current = null;
+    }
+  }
+
+  const redrawCanvas = useCallback((extraStroke?: StrokeShape | null) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if (baseImageRef.current) {
+      ctx.putImageData(baseImageRef.current, 0, 0);
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    const rectMap = new Map(rectShapes.map((r) => [r.id, r] as const));
+    const circleMap = new Map(circleShapes.map((r) => [r.id, r] as const));
+    const strokeMap = new Map(strokes.map((s) => [s.id, s] as const));
+    drawOrder.forEach((item) => {
+      if (item.type === 'rect') {
+        const r = rectMap.get(item.id);
+        if (r) renderRectOnto(ctx, r);
+      } else if (item.type === 'circle') {
+        const c = circleMap.get(item.id);
+        if (c) renderCircleOnto(ctx, c);
+      } else {
+        const s = strokeMap.get(item.id);
+        if (s) renderStrokeOnto(ctx, s);
+      }
+    });
+    if (extraStroke) renderStrokeOnto(ctx, extraStroke);
+    if (selectedStrokeId) {
+      const s = strokeMap.get(selectedStrokeId);
+      if (s) renderStrokeOnto(ctx, s, { highlight: true });
+    }
+  }, [circleShapes, drawOrder, rectShapes, selectedStrokeId, strokes]);
+
+  const deleteSelection = useCallback(() => {
+    const targetStroke = selectedStrokeId;
+    const targetRect = selectedShapeId;
+    const targetCircle = selectedCircleId;
+    if (!targetStroke && !targetRect && !targetCircle) return;
+    setRectShapes((prev) => prev.filter((s) => s.id !== targetRect));
+    setCircleShapes((prev) => prev.filter((s) => s.id !== targetCircle));
+    setStrokes((prev) => prev.filter((s) => s.id !== targetStroke));
+    setDrawOrder((prev) => prev.filter((item) => {
+      if (item.type === 'rect') return item.id !== targetRect;
+      if (item.type === 'circle') return item.id !== targetCircle;
+      return item.id !== targetStroke;
+    }));
+    setSelectedShapeId(null);
+    setSelectedCircleId(null);
+    setSelectedStrokeId(null);
+    setEditsMade(true);
+    redrawCanvas();
+  }, [redrawCanvas, selectedCircleId, selectedShapeId, selectedStrokeId]);
+
+  const applyCrop = useCallback((a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      const x0 = Math.max(0, Math.min(a.x, b.x));
+      const y0 = Math.max(0, Math.min(a.y, b.y));
+      const x1 = Math.min(canvas.width, Math.max(a.x, b.x));
+      const y1 = Math.min(canvas.height, Math.max(a.y, b.y));
+      const w = Math.max(0, x1 - x0);
+      const h = Math.max(0, y1 - y0);
+      const MIN_CROP = 8; // pixels
+      if (w < MIN_CROP || h < MIN_CROP) {
+        console.warn('Crop aborted: selection too small', { w, h });
+        setCropRect(null);
+        setCropStart(null);
+        setLiveRect(null);
+        return;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const imgData = ctx.getImageData(x0, y0, w, h);
+      canvas.width = w;
+      canvas.height = h;
+      ctx.clearRect(0, 0, w, h);
+      ctx.putImageData(imgData, 0, 0);
+      try {
+        baseImageRef.current = ctx.getImageData(0, 0, w, h);
+      } catch (err) {
+        console.warn('Failed to cache cropped image', err);
+      }
+      // update displayed size to reflect new aspect
+      updateDisplaySize(w, h);
+      const shiftedShapes = rectShapes
+        .map((s) => ({ ...s, cx: s.cx - x0, cy: s.cy - y0 }))
+        .filter((s) => s.cx >= 0 && s.cx <= w && s.cy >= 0 && s.cy <= h);
+      setRectShapes(shiftedShapes);
+      const shiftedCircles = circleShapes
+        .map((c) => ({ ...c, cx: c.cx - x0, cy: c.cy - y0 }))
+        .filter((c) => c.cx >= 0 && c.cx <= w && c.cy >= 0 && c.cy <= h);
+      setCircleShapes(shiftedCircles);
+      const shiftedStrokes = strokes
+        .map((s) => ({ ...s, points: s.points.map((p) => ({ x: p.x - x0, y: p.y - y0 })) }))
+        .filter((s) => s.points.some((p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h));
+      setStrokes(shiftedStrokes);
+      const validIds = new Set([...shiftedShapes.map((s) => s.id), ...shiftedCircles.map((s) => s.id), ...shiftedStrokes.map((s) => s.id)]);
+      setDrawOrder((prev) => prev.filter((item) => validIds.has(item.id)));
+      setSelectedShapeId((id) => shiftedShapes.some((s) => s.id === id) ? id : null);
+      setSelectedStrokeId((id) => shiftedStrokes.some((s) => s.id === id) ? id : null);
+      setSelectedCircleId((id) => shiftedCircles.some((s) => s.id === id) ? id : null);
+      // updateDisplaySize already adjusted displayed size; no aspect state needed
+      setCropRect(null);
+      setCropStart(null);
+      setLiveRect(null);
+      setOverlayStyle(null);
+      setEditsMade(true);
+    } catch (err) {
+      console.error('applyCrop failed', err);
+      setCropRect(null);
+      setCropStart(null);
+      setLiveRect(null);
+      setOverlayStyle(null);
+    }
+  }, [circleShapes, rectShapes, strokes]);
+
+  const canvasToLocal = useCallback((pt: { x: number; y: number }, shape: RectShape) => {
+    const rotated = rotateAround(pt, { x: shape.cx, y: shape.cy }, -shape.angle);
+    return { x: rotated.x - shape.cx, y: rotated.y - shape.cy };
+  }, []);
+
+  const handleSave = useCallback((forceEdits?: boolean) => {
+    if (!state || !canvasRef.current) return;
+    redrawCanvas();
+    const url = canvasRef.current.toDataURL("image/png");
+    onSave(url, state.filename, typeof forceEdits === 'boolean' ? forceEdits : editsMade);
+  }, [editsMade, onSave, redrawCanvas, state]);
 
   useEffect(() => {
     if (!state) return;
@@ -170,7 +356,11 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       if (!ctx) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
-      try { baseImageRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height); } catch {}
+      try {
+        baseImageRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      } catch (err) {
+        console.warn('Failed to cache base image', err);
+      }
       // compute display size to fit into wrapper while preserving aspect
       window.requestAnimationFrame(() => {
         updateDisplaySize(img.width, img.height);
@@ -213,8 +403,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
 
       // circle resize (rotation-aware)
       if (circleResizeRef.current) {
-        const resize = circleResizeRef.current as any;
-        const start = resize.startShape as CircleShape;
+        const resize = circleResizeRef.current;
+        const start = resize.startShape;
         const pt = clientToCanvas(ev);
         const angle = start.angle || 0;
         const rotated = rotateAround(pt, { x: start.cx, y: start.cy }, -angle);
@@ -302,7 +492,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         const canvasRect = canvas.getBoundingClientRect();
         const dxClient = ev.clientX - r.startClientX;
         const dyClient = ev.clientY - r.startClientY;
-        let newRect = { ...r.origRect };
+        const newRect = { ...r.origRect };
         const clientToCanvasDX = (dxClient / canvasRect.width) * canvas.width;
         const clientToCanvasDY = (dyClient / canvasRect.height) * canvas.height;
         if (r.corner === 'nw') { newRect.x0 = Math.max(0, Math.min(canvas.width, r.origRect.x0 + clientToCanvasDX)); newRect.y0 = Math.max(0, Math.min(canvas.height, r.origRect.y0 + clientToCanvasDY)); }
@@ -345,7 +535,11 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
           setEditsMade(true);
           // remember the last finalized stroke so controls.save can export it synchronously
-          try { lastFinalizedStrokeRef.current = stroke; } catch {}
+          try {
+            lastFinalizedStrokeRef.current = stroke;
+          } catch (err) {
+            console.warn('Failed to store finalized stroke', err);
+          }
         }
         currentStrokeRef.current = null;
         setPainting(false);
@@ -370,8 +564,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           const w = x1 - x0;
           const h = y1 - y0;
           const id = `rect-${shapeIdRef.current++}`;
-            setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color }]);
-            setEditsMade(true);
+          setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color }]);
+          setEditsMade(true);
           setDrawOrder((prev) => [...prev, { type: 'rect', id }]);
           setSelectedShapeId(id);
         }
@@ -398,7 +592,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       setLiveRect(null);
       setRectLive(null);
       setBrushPreview(null);
-      try { if (canvasRef.current && lastPointerIdRef.current != null) (canvasRef.current as any).releasePointerCapture?.(lastPointerIdRef.current); } catch {}
+      releasePointerCaptureSafe(canvasRef.current, lastPointerIdRef.current ?? undefined);
       lastPointerIdRef.current = null;
     }
 
@@ -409,17 +603,16 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       window.removeEventListener('pointermove', globalPointerMove);
       window.removeEventListener('pointerup', globalPointerUp);
     };
-  }, []);
+  }, [canvasToLocal, color, cropStart, liveRect, rectLive, rectStart, redrawCanvas]);
 
   // Clear preview when brush size changes so the next move recalculates the indicator
   useEffect(() => {
     setBrushPreview(null);
   }, [brushSize]);
 
-  useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { if (mode !== 'pointer') lastDrawModeRef.current = mode; }, [mode]);
   useEffect(() => { paintingRef.current = painting; }, [painting]);
-  useEffect(() => { redrawCanvas(); }, [strokes, rectShapes, circleShapes, drawOrder, selectedStrokeId, selectedCircleId]);
+  useEffect(() => { redrawCanvas(); }, [strokes, rectShapes, circleShapes, drawOrder, selectedStrokeId, selectedCircleId, redrawCanvas]);
   useEffect(() => { if (selectedShapeId && !rectShapes.some((s) => s.id === selectedShapeId)) setSelectedShapeId(null); }, [rectShapes, selectedShapeId]);
   useEffect(() => { if (selectedCircleId && !circleShapes.some((s) => s.id === selectedCircleId)) setSelectedCircleId(null); }, [circleShapes, selectedCircleId]);
   useEffect(() => { if (selectedStrokeId && !strokes.some((s) => s.id === selectedStrokeId)) setSelectedStrokeId(null); }, [strokes, selectedStrokeId]);
@@ -428,7 +621,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
       setMode('marquee');
     }
-  }, [mode, cropRect]);
+  }, [mode, cropRect, applyCrop]);
   useEffect(() => {
     function onKeyDown(ev: KeyboardEvent) {
       if ((ev.key === 'Delete' || ev.key === 'Backspace') && (selectedShapeId || selectedCircleId || selectedStrokeId)) {
@@ -438,33 +631,57 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedShapeId, selectedCircleId, selectedStrokeId]);
+  }, [selectedShapeId, selectedCircleId, selectedStrokeId, deleteSelection]);
 
   // register editor controls with parent via `onRegister` prop
+  const brushSizeRef = useRef(brushSize);
+  const colorRef = useRef(color);
+  const cropRectRef = useRef<CropRect | null>(null);
+  const stateRef = useRef<EditorState>(null);
+  const applyCropRef = useRef(applyCrop);
+  const handleSaveRef = useRef(handleSave);
+  const deleteSelectionRef = useRef(deleteSelection);
+  const redrawCanvasRef = useRef(redrawCanvas);
+  const onSaveRef = useRef(onSave);
+  const onCancelRef = useRef(onCancel);
+
+  useEffect(() => { brushSizeRef.current = brushSize; }, [brushSize]);
+  useEffect(() => { colorRef.current = color; }, [color]);
+  useEffect(() => { cropRectRef.current = cropRect; }, [cropRect]);
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { applyCropRef.current = applyCrop; }, [applyCrop]);
+  useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
+  useEffect(() => { deleteSelectionRef.current = deleteSelection; }, [deleteSelection]);
+  useEffect(() => { redrawCanvasRef.current = redrawCanvas; }, [redrawCanvas]);
+  useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
+
   const controls = React.useMemo(() => ({
     setBrushSize: (s: number) => setBrushSize(s),
     setColor: (c: "#000000" | "#ffffff") => { setColor(c); },
-    setMode: (m: string) => setMode(m as any),
-    getState: () => ({ brushSize, color, mode, cropRect }),
+    setMode: (m: EditorMode) => setMode(m),
+    getState: () => ({ brushSize: brushSizeRef.current, color: colorRef.current, mode: modeRef.current, cropRect: cropRectRef.current }),
     cropSelection: () => {
-      if (cropRect) {
-        applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
+      const currentCrop = cropRectRef.current;
+      if (currentCrop) {
+        applyCropRef.current?.({ x: currentCrop.x0, y: currentCrop.y0 }, { x: currentCrop.x1, y: currentCrop.y1 });
         setMode('marquee');
         return true;
       }
       setMode('crop');
       return false;
     },
-    deleteSelection: () => deleteSelection(),
+    deleteSelection: () => deleteSelectionRef.current?.(),
     applyCrop: () => {
-      if (!cropRect) return;
-      applyCrop({ x: cropRect.x0, y: cropRect.y0 }, { x: cropRect.x1, y: cropRect.y1 });
+      const currentCrop = cropRectRef.current;
+      if (!currentCrop) return;
+      applyCropRef.current?.({ x: currentCrop.x0, y: currentCrop.y0 }, { x: currentCrop.x1, y: currentCrop.y1 });
     },
     save: () => {
-      // finalize save
       const doSave = (attempt = 0) => {
         const MAX = 20; // ~2s retry window
-        if (!state || !canvasRef.current) {
+        const currentState = stateRef.current;
+        if (!currentState || !canvasRef.current) {
           if (attempt < MAX) {
             setTimeout(() => doSave(attempt + 1), 100);
             return;
@@ -473,35 +690,28 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
             return;
           }
         }
-        // finalize any in-progress brush stroke so Save captures it
         if (paintingRef.current && currentStrokeRef.current) {
           const stroke = currentStrokeRef.current;
           if (stroke.points.length) {
-            // draw the stroke immediately onto the canvas so we can export synchronously
-            redrawCanvas(stroke);
-            // also enqueue into state so it persists for future edits
+            redrawCanvasRef.current?.(stroke);
             setStrokes((prev) => [...prev, stroke]);
             setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
             setEditsMade(true);
-            // export immediately from the canvas to avoid waiting for React state to flush
             try {
-              if (canvasRef.current && state) {
+              if (canvasRef.current) {
                 const url = canvasRef.current.toDataURL('image/png');
-                onSave(url, state.filename, true);
-                // we've already performed the save/export; stop further save handling
+                onSaveRef.current?.(url, currentState.filename, true);
                 currentStrokeRef.current = null;
                 setPainting(false);
                 return;
               }
             } catch (err) {
-              // fall through to normal save path on error
               console.warn('[PhotoEditor.controls] immediate stroke export failed', err);
             }
           }
           currentStrokeRef.current = null;
           setPainting(false);
         }
-        // finalize any in-progress rectangle so Save captures it immediately
         if (rectStart && rectLive && modeRef.current === 'rectangle') {
           const x0 = Math.max(0, Math.min(rectLive.x0, rectLive.x1));
           const y0 = Math.max(0, Math.min(rectLive.y0, rectLive.y1));
@@ -512,7 +722,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
             const w = x1 - x0;
             const h = y1 - y0;
             const id = `rect-${shapeIdRef.current++}`;
-            setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color }]);
+            setRectShapes((prev) => [...prev, { id, cx: x0 + w / 2, cy: y0 + h / 2, width: w, height: h, angle: 0, color: colorRef.current }]);
             setEditsMade(true);
             setDrawOrder((prev) => [...prev, { type: 'rect', id }]);
             setSelectedShapeId(id);
@@ -521,7 +731,6 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           setRectStart(null);
           setRectLive(null);
         }
-        // finalize any in-progress circle so Save captures it immediately
         if (circleStart && circleLive && modeRef.current === 'circle') {
           const w = Math.abs(circleLive.x1 - circleLive.x0);
           const h = Math.abs(circleLive.y1 - circleLive.y0);
@@ -530,7 +739,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
             const id = `circle-${shapeIdRef.current++}`;
             const cxCenter = (circleLive.x0 + circleLive.x1) / 2;
             const cyCenter = (circleLive.y0 + circleLive.y1) / 2;
-            setCircleShapes((prev) => [...prev, { id, cx: cxCenter, cy: cyCenter, rx: w / 2, ry: h / 2, angle: 0, color }]);
+            setCircleShapes((prev) => [...prev, { id, cx: cxCenter, cy: cyCenter, rx: w / 2, ry: h / 2, angle: 0, color: colorRef.current }]);
             setEditsMade(true);
             setDrawOrder((prev) => [...prev, { type: 'circle', id }]);
             setSelectedCircleId(id);
@@ -539,37 +748,44 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           setCircleStart(null);
           setCircleLive(null);
         }
-        // if a stroke was just finalized (pointerup) it may not be present in state yet;
-        // export it synchronously from the canvas so the Save action captures it
         if (lastFinalizedStrokeRef.current) {
           try {
             const stroke = lastFinalizedStrokeRef.current;
-            // ensure the canvas contains the stroke
-            redrawCanvas(stroke);
-            if (canvasRef.current && state) {
+            redrawCanvasRef.current?.(stroke);
+            if (canvasRef.current) {
               const url = canvasRef.current.toDataURL('image/png');
-              // clear the ref to avoid double-saving
               lastFinalizedStrokeRef.current = null;
-              onSave(url, state.filename, true);
+              onSaveRef.current?.(url, currentState.filename, true);
               return;
             }
           } catch (err) {
             console.warn('[PhotoEditor.controls] immediate finalized-stroke export failed', err);
           }
         }
-        handleSave(true);
+        handleSaveRef.current?.(true);
       };
       doSave();
     },
-    cancel: () => onCancel(),
+    cancel: () => onCancelRef.current?.(),
     clearSelection: () => { setCropRect(null); setOverlayStyle(null); setCropStart(null); setLiveRect(null); setSelectedCircleId(null); setSelectedShapeId(null); setSelectedStrokeId(null); }
-  }), [brushSize, color, mode, cropRect, selectedShapeId, selectedCircleId, selectedStrokeId, state]);
+  }), [brushSize, color, mode, cropRect]);
 
+  // register controls once; object is stable, internals stay fresh via refs
   useEffect(() => {
-    if (typeof (onRegister as any) !== 'function') return;
-    try { (onRegister as any)(controls); } catch { /* ignore */ }
-    return () => { try { (onRegister as any)(null); } catch { /* ignore */ } };
-  }, [controls, onRegister]);
+    if (!onRegister) return;
+    try {
+      onRegister(controls);
+    } catch (err) {
+      console.warn('onRegister failed', err);
+    }
+    return () => {
+      try {
+        onRegister(null);
+      } catch (err) {
+        console.warn('onRegister cleanup failed', err);
+      }
+    };
+  }, [onRegister, controls]);
 
   function updateDisplaySize(naturalW: number, naturalH: number) {
     const wrap = wrapperRef.current;
@@ -599,16 +815,6 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
     return { x: center.x + dx * cosA - dy * sinA, y: center.y + dx * sinA + dy * cosA };
-  }
-
-  function canvasToLocal(pt: { x: number; y: number }, shape: RectShape) {
-    const rotated = rotateAround(pt, { x: shape.cx, y: shape.cy }, -shape.angle);
-    return { x: rotated.x - shape.cx, y: rotated.y - shape.cy };
-  }
-
-  function localToCanvas(local: { x: number; y: number }, shape: RectShape) {
-    const rotated = rotateAround({ x: shape.cx + local.x, y: shape.cy + local.y }, { x: shape.cx, y: shape.cy }, shape.angle);
-    return rotated;
   }
 
   function hitTestRect(pt: { x: number; y: number }, shape: RectShape) {
@@ -739,58 +945,28 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     ctx.restore();
   }
 
-  function redrawCanvas(extraStroke?: StrokeShape | null) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    if (baseImageRef.current) {
-      ctx.putImageData(baseImageRef.current, 0, 0);
-    } else {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-    const rectMap = new Map(rectShapes.map((r) => [r.id, r] as const));
-    const circleMap = new Map(circleShapes.map((r) => [r.id, r] as const));
-    const strokeMap = new Map(strokes.map((s) => [s.id, s] as const));
-    drawOrder.forEach((item) => {
-      if (item.type === 'rect') {
-        const r = rectMap.get(item.id);
-        if (r) renderRectOnto(ctx, r);
-      } else if (item.type === 'circle') {
-        const c = circleMap.get(item.id);
-        if (c) renderCircleOnto(ctx, c);
-      } else {
-        const s = strokeMap.get(item.id);
-        if (s) renderStrokeOnto(ctx, s);
-      }
-    });
-    if (extraStroke) renderStrokeOnto(ctx, extraStroke);
-    if (selectedStrokeId) {
-      const s = strokeMap.get(selectedStrokeId);
-      if (s) renderStrokeOnto(ctx, s, { highlight: true });
-    }
-  }
-
   function beginShapeDrag(ev: React.PointerEvent, shape: RectShape) {
     if (mode !== 'pointer') return;
     ev.preventDefault();
     ev.stopPropagation();
-    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    const native = ev.nativeEvent as PointerEvent;
+    const pt = clientToCanvas(native);
     shapeDragRef.current = { id: shape.id, startX: pt.x, startY: pt.y, startCx: shape.cx, startCy: shape.cy };
     setSelectedShapeId(shape.id);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function beginCircleDrag(ev: React.PointerEvent, shape: CircleShape) {
     if (mode !== 'pointer') return;
     ev.preventDefault();
     ev.stopPropagation();
-    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    const native = ev.nativeEvent as PointerEvent;
+    const pt = clientToCanvas(native);
     circleDragRef.current = { id: shape.id, startX: pt.x, startY: pt.y, startCx: shape.cx, startCy: shape.cy };
     setSelectedCircleId(shape.id);
     setSelectedShapeId(null);
     setSelectedStrokeId(null);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function beginCircleResize(ev: React.PointerEvent, shape: CircleShape, corner: string) {
@@ -801,21 +977,22 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     setSelectedCircleId(shape.id);
     setSelectedShapeId(null);
     setSelectedStrokeId(null);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function beginCircleRotate(ev: React.PointerEvent, shape: CircleShape) {
     if (mode !== 'pointer') return;
     ev.preventDefault();
     ev.stopPropagation();
-    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    const native = ev.nativeEvent as PointerEvent;
+    const pt = clientToCanvas(native);
     const startPointerAngle = Math.atan2(pt.y - shape.cy, pt.x - shape.cx);
     const startAngle = shape.angle || 0;
     circleRotateRef.current = { id: shape.id, startAngle, startPointerAngle, startShape: { ...shape } };
     setSelectedCircleId(shape.id);
     setSelectedShapeId(null);
     setSelectedStrokeId(null);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function beginShapeResize(ev: React.PointerEvent, shape: RectShape, corner: string) {
@@ -824,18 +1001,19 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     ev.stopPropagation();
     shapeResizeRef.current = { id: shape.id, corner, startShape: { ...shape } };
     setSelectedShapeId(shape.id);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function beginShapeRotate(ev: React.PointerEvent, shape: RectShape) {
     if (mode !== 'pointer') return;
     ev.preventDefault();
     ev.stopPropagation();
-    const pt = clientToCanvas(ev.nativeEvent || (ev as any));
+    const native = ev.nativeEvent as PointerEvent;
+    const pt = clientToCanvas(native);
     const startPointerAngle = Math.atan2(pt.y - shape.cy, pt.x - shape.cx);
     shapeRotateRef.current = { id: shape.id, startAngle: shape.angle, startPointerAngle, startShape: { ...shape } };
     setSelectedShapeId(shape.id);
-    try { canvasRef.current?.setPointerCapture?.(ev.pointerId); lastPointerIdRef.current = ev.pointerId; } catch {}
+    setPointerCaptureSafe(canvasRef.current, ev.pointerId);
   }
 
   function pointerPos(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -869,6 +1047,11 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     if (!state) return;
     updateBrushPreview(e);
     const pos = pointerPos(e);
+    if (mode === 'brush' || mode === 'marquee' || mode === 'crop') {
+      setSelectedShapeId(null);
+      setSelectedCircleId(null);
+      setSelectedStrokeId(null);
+    }
     if (mode === "brush") {
       setPainting(true);
       const stroke: StrokeShape = { id: `stroke-${shapeIdRef.current++}`, color, size: brushSize, points: [pos] };
@@ -877,15 +1060,15 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     } else if (mode === 'rectangle') {
       setRectStart(pos);
       setRectLive({ x0: pos.x, y0: pos.y, x1: pos.x, y1: pos.y });
-      try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+      setPointerCaptureSafe(canvasRef.current, e.pointerId);
     } else if (mode === 'circle') {
       setCircleStart(pos);
       setCircleLive({ x0: pos.x, y0: pos.y, x1: pos.x, y1: pos.y });
-      try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+      setPointerCaptureSafe(canvasRef.current, e.pointerId);
     } else if (mode === 'marquee' || mode === 'crop') {
       // begin selection and capture pointer so we continue receiving moves
       setCropStart(pos);
-      try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+      setPointerCaptureSafe(canvasRef.current, e.pointerId);
     } else {
       const hit = pickTopShape(pos);
       setSelectedShapeId(hit?.type === 'rect' ? hit.id : null);
@@ -895,19 +1078,19 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         const shape = rectShapes.find((s) => s.id === hit.id);
         if (shape) {
           shapeDragRef.current = { id: shape.id, startX: pos.x, startY: pos.y, startCx: shape.cx, startCy: shape.cy };
-          try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+          setPointerCaptureSafe(canvasRef.current, e.pointerId);
         }
       } else if (hit?.type === 'circle') {
         const shape = circleShapes.find((s) => s.id === hit.id);
         if (shape) {
           circleDragRef.current = { id: shape.id, startX: pos.x, startY: pos.y, startCx: shape.cx, startCy: shape.cy };
-          try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+          setPointerCaptureSafe(canvasRef.current, e.pointerId);
         }
       } else if (hit?.type === 'stroke') {
         const stroke = strokes.find((s) => s.id === hit.id);
         if (stroke) {
           strokeDragRef.current = { id: stroke.id, startX: pos.x, startY: pos.y, startPoints: stroke.points.map((p) => ({ ...p })) };
-          try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+          setPointerCaptureSafe(canvasRef.current, e.pointerId);
         }
       } else {
         setSelectedShapeId(null);
@@ -976,13 +1159,17 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         setStrokes((prev) => [...prev, stroke]);
         setDrawOrder((prev) => [...prev, { type: 'stroke', id: stroke.id }]);
         setEditsMade(true);
-        try { lastFinalizedStrokeRef.current = stroke; } catch {}
+        try {
+          lastFinalizedStrokeRef.current = stroke;
+        } catch (err) {
+          console.warn('Failed to record finalized stroke', err);
+        }
         currentStrokeRef.current = null;
       } else {
         currentStrokeRef.current = null;
       }
       setPainting(false);
-      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+      releasePointerCaptureSafe(e.currentTarget, e.pointerId);
       return;
     }
 
@@ -1006,7 +1193,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       setRectStart(null);
       setRectLive(null);
       setOverlayStyle(null);
-      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+      releasePointerCaptureSafe(e.currentTarget, e.pointerId);
       return;
     }
 
@@ -1035,7 +1222,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       setCircleStart(null);
       setCircleLive(null);
       setOverlayStyle(null);
-      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+      releasePointerCaptureSafe(e.currentTarget, e.pointerId);
       return;
     }
 
@@ -1048,7 +1235,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
         setCropStart(null);
         setCropRect(null);
         setLiveRect(null);
-        try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
+        releasePointerCaptureSafe(e.currentTarget, e.pointerId);
         return;
       }
       const x0 = Math.max(0, Math.min(cropStart.x, end.x));
@@ -1060,80 +1247,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
       updateCropOverlay(rect);
       setCropStart(null);
       setLiveRect(null);
-      try { (e.currentTarget as HTMLCanvasElement).releasePointerCapture?.(e.pointerId); } catch {}
-    }
-  }
-
-  function fillRect(rect: { x0: number; y0: number; x1: number; y1: number }) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const x = Math.max(0, Math.min(rect.x0, rect.x1));
-    const y = Math.max(0, Math.min(rect.y0, rect.y1));
-    const w = Math.abs(rect.x1 - rect.x0);
-    const h = Math.abs(rect.y1 - rect.y0);
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, w, h);
-  }
-
-  function applyCrop(a: { x: number; y: number }, b: { x: number; y: number }) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    try {
-      const x0 = Math.max(0, Math.min(a.x, b.x));
-      const y0 = Math.max(0, Math.min(a.y, b.y));
-      const x1 = Math.min(canvas.width, Math.max(a.x, b.x));
-      const y1 = Math.min(canvas.height, Math.max(a.y, b.y));
-      const w = Math.max(0, x1 - x0);
-      const h = Math.max(0, y1 - y0);
-      const MIN_CROP = 8; // pixels
-      if (w < MIN_CROP || h < MIN_CROP) {
-        console.warn('Crop aborted: selection too small', { w, h });
-        setCropRect(null);
-        setCropStart(null);
-        setLiveRect(null);
-        return;
-      }
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const imgData = ctx.getImageData(x0, y0, w, h);
-      canvas.width = w;
-      canvas.height = h;
-      ctx.clearRect(0, 0, w, h);
-      ctx.putImageData(imgData, 0, 0);
-      try { baseImageRef.current = ctx.getImageData(0, 0, w, h); } catch {}
-      // update displayed size to reflect new aspect
-      updateDisplaySize(w, h);
-      const shiftedShapes = rectShapes
-        .map((s) => ({ ...s, cx: s.cx - x0, cy: s.cy - y0 }))
-        .filter((s) => s.cx >= 0 && s.cx <= w && s.cy >= 0 && s.cy <= h);
-      setRectShapes(shiftedShapes);
-      const shiftedCircles = circleShapes
-        .map((c) => ({ ...c, cx: c.cx - x0, cy: c.cy - y0 }))
-        .filter((c) => c.cx >= 0 && c.cx <= w && c.cy >= 0 && c.cy <= h);
-      setCircleShapes(shiftedCircles);
-      const shiftedStrokes = strokes
-        .map((s) => ({ ...s, points: s.points.map((p) => ({ x: p.x - x0, y: p.y - y0 })) }))
-        .filter((s) => s.points.some((p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h));
-      setStrokes(shiftedStrokes);
-      const validIds = new Set([...shiftedShapes.map((s) => s.id), ...shiftedCircles.map((s) => s.id), ...shiftedStrokes.map((s) => s.id)]);
-      setDrawOrder((prev) => prev.filter((item) => validIds.has(item.id)));
-      setSelectedShapeId((id) => shiftedShapes.some((s) => s.id === id) ? id : null);
-      setSelectedStrokeId((id) => shiftedStrokes.some((s) => s.id === id) ? id : null);
-      setSelectedCircleId((id) => shiftedCircles.some((s) => s.id === id) ? id : null);
-      // updateDisplaySize already adjusted displayed size; no aspect state needed
-      setCropRect(null);
-      setCropStart(null);
-      setLiveRect(null);
-      setOverlayStyle(null);
-      setEditsMade(true);
-    } catch (err) {
-      console.error('applyCrop failed', err);
-      setCropRect(null);
-      setCropStart(null);
-      setLiveRect(null);
-      setOverlayStyle(null);
+      releasePointerCaptureSafe(e.currentTarget, e.pointerId);
     }
   }
 
@@ -1173,32 +1287,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
     return { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` } as React.CSSProperties;
   }
 
-  function deleteSelection() {
-    const targetStroke = selectedStrokeId;
-    const targetRect = selectedShapeId;
-    const targetCircle = selectedCircleId;
-    if (!targetStroke && !targetRect && !targetCircle) return;
-    setRectShapes((prev) => prev.filter((s) => s.id !== targetRect));
-    setCircleShapes((prev) => prev.filter((s) => s.id !== targetCircle));
-    setStrokes((prev) => prev.filter((s) => s.id !== targetStroke));
-    setDrawOrder((prev) => prev.filter((item) => {
-      if (item.type === 'rect') return item.id !== targetRect;
-      if (item.type === 'circle') return item.id !== targetCircle;
-      return item.id !== targetStroke;
-    }));
-    setSelectedShapeId(null);
-    setSelectedCircleId(null);
-    setSelectedStrokeId(null);
-    setEditsMade(true);
-    redrawCanvas();
-  }
-
-  function handleSave(forceEdits?: boolean) {
-    if (!state || !canvasRef.current) return;
-    redrawCanvas();
-    const url = canvasRef.current.toDataURL("image/png");
-    onSave(url, state.filename, typeof forceEdits === 'boolean' ? forceEdits : editsMade);
-  }
+  const selectionTint = color === '#ffffff' ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)';
 
   if (!state) {
     return (
@@ -1263,8 +1352,8 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
           if (!currentStyle) return null;
           const isRectPreview = !!rectLive && !cropRect;
           const isCirclePreview = !!circleLive && !cropRect;
-          const borderColor = isRectPreview || isCirclePreview ? 'transparent' : '#555';
-          const overlayBg = isRectPreview || isCirclePreview ? color : 'rgba(0,0,0,0.05)';
+          const borderColor = isRectPreview || isCirclePreview ? 'transparent' : (color === '#ffffff' ? '#999' : '#333');
+          const overlayBg = isRectPreview || isCirclePreview ? color : selectionTint;
           const pointerEvents = isRectPreview || isCirclePreview ? 'none' : 'auto';
           return (
             <div
@@ -1275,7 +1364,7 @@ function PhotoEditor({ state, onSave, onCancel, onRegister }: PhotoEditorProps) 
                 const corner = target.dataset?.corner;
                 if (corner && cropRect) {
                   resizingRef.current = { corner, startClientX: e.clientX, startClientY: e.clientY, origRect: { ...cropRect } };
-                  try { canvasRef.current?.setPointerCapture?.(e.pointerId); lastPointerIdRef.current = e.pointerId; } catch {}
+                  setPointerCaptureSafe(canvasRef.current, e.pointerId);
                   e.stopPropagation();
                 }
               }}
@@ -1446,15 +1535,16 @@ type TraceCaptureProps = {
   onImageFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   calibrationInputRef: React.RefObject<HTMLInputElement | null>;
   onEditorActiveChange?: (active: boolean) => void;
-  onEditorRegister?: (controls: any | null) => void;
+  onEditorRegister?: (controls: EditorControls | null) => void;
 };
 
 export default function TraceCapture({ projectName, processedImages, panelRef, imageInputRef, onImageFile, calibrationInputRef, onEditorActiveChange, onEditorRegister }: TraceCaptureProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rawCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const matsRef = useRef<{ mtx: any; dist: any } | null>(null);
-  const calibrationRef = useRef<Calibration | null>(null);
+  const matsRef = useRef<{ mtx: CvMat; dist: CvMat } | null>(null);
+  const [calibrationData, setCalibrationData] = useState<Calibration | null>(null);
+  const [calibrationName, setCalibrationName] = useState<string | null>(null);
   const [cvReady, setCvReady] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
@@ -1465,7 +1555,12 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
   const [showCameraPreview, setShowCameraPreview] = useState(false);
   // notify parent when the editor opens/closes
   useEffect(() => {
-    try { onEditorActiveChange?.(!!editorState); } catch { /* ignore */ }
+    if (!onEditorActiveChange) return;
+    try {
+      onEditorActiveChange(!!editorState);
+    } catch (err) {
+      console.warn('onEditorActiveChange failed', err);
+    }
   }, [editorState, onEditorActiveChange]);
   const [busyCapture, setBusyCapture] = useState(false);
   const [busyList, setBusyList] = useState(false);
@@ -1484,23 +1579,33 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     }
   }, [editingActive, showCameraPreview]);
 
-  // Load OpenCV and calibration once
+  // Load OpenCV once
   useEffect(() => {
     ensureOpenCv()
       .then(() => setCvReady(true))
       .catch(() => setCvReady(false));
-    fetchCalibration();
   }, []);
 
-  async function fetchCalibration() {
+  async function fetchCalibration(deviceId?: string | null) {
     try {
-      const r = await fetch(`${backendUrl}/api/photos/calibration`);
+      setCalibrationData(null);
+      setCalibrationName(null);
+      const qs = deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : '';
+      const r = await fetch(`${backendUrl}/api/photos/calibration${qs}`);
       const j = r.ok ? await r.json() : null;
       if (j && j.camera_matrix && j.distortion_coefficients) {
-        calibrationRef.current = j as Calibration;
+        setCalibrationData(j as Calibration);
+        setCalibrationName(j.filename || j.storedFilename || null);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn('fetchCalibration failed', err);
+    }
   }
+
+  // Fetch calibration when camera selection changes
+  useEffect(() => {
+    fetchCalibration(selectedDeviceId);
+  }, [selectedDeviceId]);
 
   // Request camera permission helper
   async function requestCameraPermission() {
@@ -1512,29 +1617,37 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       const devs = await navigator.mediaDevices.enumerateDevices();
       setDevices(devs.filter((d) => d.kind === 'videoinput'));
       setStreamError(null);
-    } catch (e: any) {
-      setStreamError(e?.message || String(e));
+    } catch (e: unknown) {
+      setStreamError(errorMessage(e));
     }
   }
 
   // Prepare calibration mats when cv is ready
   useEffect(() => {
-    if (!cvReady || !window.cv || !calibrationRef.current) return;
+    if (!cvReady || !window.cv || !calibrationData) return;
     const cv = window.cv;
-    const cal = calibrationRef.current;
+    const cal = calibrationData;
     const distVal = cal.distortion_coefficients || [];
-    const flatDist = Array.isArray(distVal) && Array.isArray((distVal as any)[0])
+    const flatDist = Array.isArray(distVal) && Array.isArray((distVal as number[][])[0])
       ? (distVal as number[][]).flat()
       : (distVal as number[]);
     const mtx = cv.matFromArray(3, 3, cv.CV_64F, new Float64Array(((cal.camera_matrix || []) as number[][]).flat()));
     const dist = cv.matFromArray(1, flatDist.length, cv.CV_64F, new Float64Array(flatDist));
     matsRef.current = { mtx, dist };
     return () => {
-      try { matsRef.current?.mtx?.delete(); } catch { /* ignore */ }
-      try { matsRef.current?.dist?.delete(); } catch { /* ignore */ }
+      try {
+        matsRef.current?.mtx?.delete?.();
+      } catch (err) {
+        console.warn('Failed to delete mtx', err);
+      }
+      try {
+        matsRef.current?.dist?.delete?.();
+      } catch (err) {
+        console.warn('Failed to delete dist', err);
+      }
       matsRef.current = null;
     };
-  }, [cvReady, projectName]);
+  }, [calibrationData, cvReady, projectName]);
 
   // Keep camera preview sized to fit within the viewport while preserving aspect ratio
   useEffect(() => {
@@ -1564,7 +1677,9 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn('stopCameraPreview cleanup failed', err);
+    }
   }
 
   // Start/stop video stream when device or preview visibility changes (no default selection)
@@ -1593,10 +1708,10 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
             devs = await navigator.mediaDevices.enumerateDevices();
             // enumerateDevices after permission probe
             videoInputs = devs.filter((d) => d.kind === 'videoinput');
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.warn('Permission probe failed:', err);
             // If permission was denied or failed, expose the message so the user can act
-            setStreamError(err?.message || 'Camera permission denied or not available');
+            setStreamError(errorMessage(err));
           }
         }
 
@@ -1617,23 +1732,24 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
             videoRef.current.srcObject = stream;
             await videoRef.current.play().catch(() => {});
           }
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error('getUserMedia for selected device failed', e);
-          setStreamError(e?.message || 'Unable to access camera for selected device');
+          setStreamError(errorMessage(e));
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error('Error starting video stream:', e);
-        setStreamError(e?.message || 'Unable to access camera');
+        setStreamError(errorMessage(e));
       }
     }
     start();
+    const videoEl = videoRef.current;
     return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
+      if (videoEl) {
+        videoEl.srcObject = null;
       }
     };
   }, [selectedDeviceId, showCameraPreview]);
@@ -1665,7 +1781,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       displayCanvas.width = targetW;
       displayCanvas.height = targetH;
       // use willReadFrequently when we call getImageData via OpenCV to improve performance
-      const rawCtx = rawCanvas.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
+      const rawCtx = rawCanvas.getContext("2d", { willReadFrequently: true } as CanvasRenderingContext2DSettings) as CanvasRenderingContext2D | null;
       const dispCtx = displayCanvas.getContext("2d") as CanvasRenderingContext2D | null;
       if (!rawCtx || !dispCtx) return;
       rawCtx.drawImage(video as CanvasImageSource, 0, 0, targetW, targetH);
@@ -1675,9 +1791,9 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
           const dst = new window.cv.Mat();
           window.cv.undistort(src, dst, matsRef.current.mtx, matsRef.current.dist);
           window.cv.imshow(displayCanvas, dst);
-          src.delete();
-          dst.delete();
-        } catch (e) {
+          src.delete?.();
+          dst.delete?.();
+        } catch {
           dispCtx.drawImage(rawCanvas, 0, 0);
         }
       } else {
@@ -1692,7 +1808,7 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     };
   }, [cvReady, showCameraPreview]);
 
-  async function refreshList() {
+  const refreshList = useCallback(async () => {
     try {
       setBusyList(true);
       const resp = await fetch(`${backendUrl}/api/photos/list?project=${encodeURIComponent(projectName)}`);
@@ -1704,11 +1820,11 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     } finally {
       setBusyList(false);
     }
-  }
+  }, [projectName]);
 
   useEffect(() => {
     refreshList();
-  }, [projectName]);
+  }, [refreshList]);
 
   async function handleCapture() {
     if (!displayCanvasRef.current) return;
@@ -1727,8 +1843,8 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
         setCaptureName("");
         refreshList();
       }
-    } catch (e: any) {
-      alert(`Capture failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      alert(`Capture failed: ${errorMessage(e)}`);
     } finally {
       setBusyCapture(false);
     }
@@ -1738,15 +1854,15 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     try {
       stopCameraPreview();
       setLoadingEditor(true);
-      let filename = item.name;
+      const filename = item.name;
       // No longer rename or mark files when opening for edit — use the original filename as provided
       const imgResp = await fetch(`${backendUrl}/api/photos/raw?project=${encodeURIComponent(projectName)}&file=${encodeURIComponent(filename)}`);
       if (!imgResp.ok) throw new Error("Could not load image for edit");
       const blob = await imgResp.blob();
       const dataUrl = await blobToDataUrl(blob);
       setEditorState({ filename, dataUrl });
-    } catch (e: any) {
-      alert(`Open edit failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      alert(`Open edit failed: ${errorMessage(e)}`);
     } finally {
       setLoadingEditor(false);
     }
@@ -1770,11 +1886,11 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
       } as unknown as React.ChangeEvent<HTMLInputElement>;
       try {
         onImageFile(fakeEvent);
-      } catch (e) {
+      } catch {
         // fallback: trigger the file input and set files there if possible
         try {
           const dt = new DataTransfer();
-          dt.items.add(file as any);
+          dt.items.add(file);
           if (imageInputRef.current) {
             (imageInputRef.current as HTMLInputElement).files = dt.files;
             // dispatch change event
@@ -1786,8 +1902,8 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
           alert('Could not load image into pipeline.');
         }
       }
-    } catch (e: any) {
-      alert(`Load failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      alert(`Load failed: ${errorMessage(e)}`);
     }
   }
 
@@ -1814,8 +1930,8 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
         setLoadingEditor(false);
         refreshList();
       }
-    } catch (e: any) {
-      alert(`Save failed: ${e?.message || e}`);
+    } catch (e: unknown) {
+      alert(`Save failed: ${errorMessage(e)}`);
     }
   }
 
@@ -1826,28 +1942,65 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
     try {
       const fd = new FormData();
       fd.append('calibration', file);
+      fd.append('deviceId', selectedDeviceId || '');
       const resp = await fetch(`${backendUrl}/api/photos/calibration-upload`, { method: 'POST', body: fd });
       const ct = resp.headers.get('content-type') || '';
-      let j: any = null;
+      let parsed: unknown = null;
       if (ct.includes('application/json')) {
-        j = await resp.json();
+        parsed = await resp.json();
       } else {
         const text = await resp.text();
-        try { j = JSON.parse(text); } catch { j = { error: text || resp.statusText }; }
+        try {
+          parsed = JSON.parse(text);
+        } catch (jsonErr) {
+          console.warn('Calibration upload JSON parse failed', jsonErr);
+          parsed = { error: text || resp.statusText };
+        }
       }
-      if (!resp.ok || (j && j.error)) {
-        const detail = (j && (j.error || j.detail)) || resp.statusText;
+      const parsedObj = typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : null;
+      if (!resp.ok || (parsedObj && (parsedObj.error || parsedObj.detail))) {
+        const detail = (parsedObj?.error || parsedObj?.detail || resp.statusText) as string;
         alert(`Calibration upload failed: ${detail}`);
       } else {
-        await fetchCalibration();
+        await fetchCalibration(selectedDeviceId);
+        if (parsedObj) {
+          const name = (parsedObj as any).filename || file.name || null;
+          setCalibrationName(typeof name === 'string' ? name : null);
+        }
         alert('Calibration uploaded');
       }
-    } catch (err: any) {
-      alert(`Calibration upload failed: ${err?.message || err}`);
+    } catch (err: unknown) {
+      alert(`Calibration upload failed: ${errorMessage(err)}`);
     } finally {
       setUploadingCalib(false);
-      try { e.target.value = ''; } catch { /* ignore */ }
+      try {
+        e.target.value = '';
+      } catch (err) {
+        console.warn('Failed to reset calibration input', err);
+      }
     }
+  }
+
+  async function clearCalibration() {
+    try {
+      const qs = selectedDeviceId ? `?deviceId=${encodeURIComponent(selectedDeviceId)}` : '';
+      await fetch(`${backendUrl}/api/photos/calibration${qs}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('clearCalibration request failed', err);
+    }
+    try {
+      matsRef.current?.mtx?.delete?.();
+    } catch (err) {
+      console.warn('Failed to delete mtx on clear', err);
+    }
+    try {
+      matsRef.current?.dist?.delete?.();
+    } catch (err) {
+      console.warn('Failed to delete dist on clear', err);
+    }
+    matsRef.current = null;
+    setCalibrationData(null);
+    setCalibrationName(null);
   }
 
   return (
@@ -1899,7 +2052,18 @@ export default function TraceCapture({ projectName, processedImages, panelRef, i
               >
                 Load calibration
               </button>
-              <div style={{ color: '#666', fontSize: 11, flex: 1 }}>Click to request camera permission if cameras don't appear.</div>
+              <button
+                className="action-text-button"
+                style={{ padding: '2px 6px', fontSize: 11, height: 24 }}
+                onClick={clearCalibration}
+                disabled={!calibrationData}
+              >
+                Remove calibration
+              </button>
+            </div>
+            <div style={{ color: '#666', fontSize: 11, marginTop: 4 }}>Click to request camera permission if cameras don't appear.</div>
+            <div style={{ fontSize: 11, color: calibrationData ? '#0a0' : '#666', marginTop: 4 }}>
+              {calibrationData ? `Calibration loaded: ${calibrationName || 'unnamed calibration'}` : 'Calibration: none loaded'}
             </div>
             {streamError && <div className="error-text">{streamError}</div>}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
