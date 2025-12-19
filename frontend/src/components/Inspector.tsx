@@ -82,29 +82,112 @@ export default function Inspector({
   // Keep track of which inspector field (if any) the user is actively editing.
   const [focusedField, setFocusedField] = React.useState<string | null>(null);
 
-  const applyNumericChange = React.useCallback(
-    (
-      field: keyof ToolShape,
-      raw: string,
-      opts?: {
-        transform?: (n: number) => number;
-        format?: (n: number) => string;
-        clampMin?: number;
-        clampMax?: number;
-        skipHistory?: boolean;
-      },
-    ): string => {
-      if (!selectedShape) return raw;
+  const isStepperInput = (native?: InputEvent) => {
+    if (!native) return false;
+    const t = native.inputType;
+    // Spinner clicks and arrow increments often surface as insertReplacementText or deleteContentBackward
+    return t === 'insertReplacementText' || t === 'deleteContentBackward' || t === 'deleteContentForward';
+  };
+  const stepperPointerRef = React.useRef(false);
+
+  function buildNumberField(config: {
+    editKey: string;
+    getValue: () => number;
+    commitValue: (n: number) => void;
+    format?: (n: number) => string;
+    transform?: (n: number) => number;
+  }) {
+    const formatter = config.format ?? ((n: number) => `${n}`);
+    const getInitial = () => formatter(config.getValue());
+
+    const applyCommit = (raw: string) => {
       const parsed = parseFloat(raw);
-      if (Number.isNaN(parsed)) return raw;
-      let next = opts?.transform ? opts.transform(parsed) : parsed;
-      if (opts?.clampMin !== undefined) next = Math.max(opts.clampMin, next);
-      if (opts?.clampMax !== undefined) next = Math.min(opts.clampMax, next);
-      updateShape(selectedShape.id, { [field]: next } as Partial<ToolShape>, opts?.skipHistory ? { skipHistory: true } : undefined);
-      return opts?.format ? opts.format(next) : `${next}`;
-    },
-    [selectedShape, updateShape],
-  );
+      if (Number.isNaN(parsed)) {
+        const fallback = getInitial();
+        setEditFields((prev) => ({ ...prev, [config.editKey]: fallback }));
+        return fallback;
+      }
+      const next = config.transform ? config.transform(parsed) : parsed;
+      config.commitValue(next);
+      const formatted = formatter(next);
+      setEditFields((prev) => ({ ...prev, [config.editKey]: formatted }));
+      return formatted;
+    };
+
+    const revert = () => {
+      const fallback = getInitial();
+      setEditFields((prev) => ({ ...prev, [config.editKey]: fallback }));
+      return fallback;
+    };
+
+    const commitIfStepper = (val: string, native?: InputEvent) => {
+      if (stepperPointerRef.current || isStepperInput(native)) {
+        applyCommit(val);
+        stepperPointerRef.current = false;
+        return true;
+      }
+      return false;
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setEditFields((prev) => ({ ...prev, [config.editKey]: val }));
+      commitIfStepper(val, e.nativeEvent as InputEvent | undefined);
+    };
+
+    const handleInput = (e: React.FormEvent<HTMLInputElement>) => {
+      const val = (e.target as HTMLInputElement).value;
+      commitIfStepper(val, (e as unknown as React.ChangeEvent<HTMLInputElement>).nativeEvent as InputEvent | undefined);
+    };
+
+    const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+      setFocusedField(null);
+      applyCommit(e.target.value);
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        applyCommit(e.currentTarget.value);
+        e.currentTarget.blur();
+        return;
+      }
+      if (e.key === 'Escape') {
+        revert();
+        setFocusedField(null);
+        e.currentTarget.blur();
+        return;
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        requestAnimationFrame(() => applyCommit(e.currentTarget.value));
+      }
+    };
+
+    const handleFocus = () => {
+      setFocusedField(config.editKey);
+      if (editFields[config.editKey] === undefined) {
+        setEditFields((prev) => ({ ...prev, [config.editKey]: getInitial() }));
+      }
+    };
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLInputElement>) => {
+      const target = e.currentTarget;
+      const rect = target.getBoundingClientRect();
+      const spinnerZonePx = 22; // heuristic width of native spinner area
+      if (e.clientX >= rect.right - spinnerZonePx) {
+        stepperPointerRef.current = true;
+      }
+    };
+
+    return {
+      value: editFields[config.editKey] ?? getInitial(),
+      onChange: handleChange,
+      onInput: handleInput,
+      onBlur: handleBlur,
+      onKeyDown: handleKeyDown,
+      onFocus: handleFocus,
+      onPointerDown: handlePointerDown,
+    };
+  }
 
   // When the selected shape's key properties change externally (for example
   // when the user drags or rotates the shape), and the inspector field is
@@ -554,17 +637,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.fontSize !== undefined ? editFields.fontSize : ((selectedShape.fontSizeMM ?? 15)).toFixed(1)}
-                  onFocus={() => {
-                    setFocusedField('fontSize');
-                    if (editFields.fontSize === undefined) setEditFields({ ...editFields, fontSize: ((selectedShape.fontSizeMM ?? 15)).toFixed(1) });
-                  }}
-                  onChange={(e) => {
-                    const next = applyNumericChange('fontSizeMM', e.target.value, { format: (n) => n.toFixed(1) });
-                    setEditFields({ ...editFields, fontSize: next });
-                  }}
-                  onBlur={() => { setFocusedField(null); commitEditField("fontSize"); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("fontSize"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'fontSize',
+                    getValue: () => selectedShape.fontSizeMM ?? 15,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n * 10) / 10,
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { fontSizeMM: n }); },
+                  })}
                 />
               </div>
 
@@ -573,14 +652,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.depth !== undefined ? editFields.depth : ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                  onFocus={() => {
-                    setFocusedField('depth');
-                    if (editFields.depth === undefined) setEditFields({ ...editFields, depth: ((selectedShape.depthMM ?? 0.6)).toFixed(1) });
-                  }}
-                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                  onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'depth',
+                    getValue: () => selectedShape.depthMM ?? 0.6,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n * 10) / 10,
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                  })}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
@@ -590,16 +668,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="1"
-                  value={editFields.rotate !== undefined ? editFields.rotate : ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                  onFocus={() => {
-                    if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
-                  }}
-                  onChange={(e) => {
-                    const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
-                    setEditFields({ ...editFields, rotate: next });
-                  }}
-                  onBlur={() => commitEditField("rotate")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("rotate"); }}
+                  {...buildNumberField({
+                    editKey: 'rotate',
+                    getValue: () => selectedShape.rotateDeg ?? 0,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n),
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                  })}
                   style={{ width: "100%" }}
                 />
               </div>
@@ -640,12 +715,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[0] ?? 20}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth0',
+                              getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[0] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 1 (innermost)"
                           />
@@ -653,12 +734,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[1] ?? 15}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth1',
+                              getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[1] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 2 (middle)"
                           />
@@ -666,12 +753,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[2] ?? 10}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth2',
+                              getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[2] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 3 (outermost)"
                           />
@@ -686,12 +779,18 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="0"
-                            value={selectedShape.sectionWidths?.[0] ?? 20}
-                            onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                              widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionWidths: widths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionWidth0',
+                              getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                widths[0] = n;
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Center island width (mm)"
                           />
@@ -699,12 +798,17 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="-9999"
-                            value={selectedShape.sectionWidths?.[1] ?? 0}
-                            onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                              widths[1] = parseFloat(e.target.value) || 0;
-                              updateShape(selectedShape.id, { sectionWidths: widths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionWidth1',
+                              getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                              format: (n) => n.toString(),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                widths[1] = n;
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Offset of center island from center (mm). Positive shifts right."
                           />
@@ -717,8 +821,13 @@ export default function Inspector({
                         <input
                           type="number"
                           step="1"
-                          value={selectedShape.sectionRotation ?? 0}
-                          onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                          {...buildNumberField({
+                            editKey: 'sectionRotation',
+                            getValue: () => selectedShape.sectionRotation ?? 0,
+                            format: (n) => n.toFixed(1),
+                            transform: (n) => Math.round(n * 10) / 10,
+                            commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { sectionRotation: n }); },
+                          })}
                           style={{ width: '100%' }}
                         />
                       </div>
@@ -735,18 +844,14 @@ export default function Inspector({
               <input
                 type="number"
                 step="0.1"
-                value={editFields.x ?? (selectedShape.x ?? 0).toFixed(1)}
-                onChange={(e) => {
-                  const next = applyNumericChange('x', e.target.value, { transform: (n) => Math.round(n * 10) / 10, format: (n) => n.toFixed(1) });
-                  setEditFields({ ...editFields, x: next });
-                }}
-                onFocus={() => {
-                  setFocusedField('x');
-                  if (editFields.x === undefined) setEditFields({ ...editFields, x: (selectedShape.x ?? 0).toFixed(1) });
-                }}
+                {...buildNumberField({
+                  editKey: 'x',
+                  getValue: () => selectedShape.x ?? 0,
+                  format: (n) => n.toFixed(1),
+                  transform: (n) => Math.round(n * 10) / 10,
+                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { x: n }); },
+                })}
                 style={{ width: "100%" }}
-                onBlur={() => { setFocusedField(null); commitEditField("x"); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("x"); (e.target as HTMLInputElement).blur(); } }}
               />
             </div>
 
@@ -755,18 +860,14 @@ export default function Inspector({
               <input
                 type="number"
                 step="0.1"
-                value={editFields.y ?? (selectedShape.y ?? 0).toFixed(1)}
-                onChange={(e) => {
-                  const next = applyNumericChange('y', e.target.value, { transform: (n) => Math.round(n * 10) / 10, format: (n) => n.toFixed(1) });
-                  setEditFields({ ...editFields, y: next });
-                }}
-                onFocus={() => {
-                  setFocusedField('y');
-                  if (editFields.y === undefined) setEditFields({ ...editFields, y: (selectedShape.y ?? 0).toFixed(1) });
-                }}
+                {...buildNumberField({
+                  editKey: 'y',
+                  getValue: () => selectedShape.y ?? 0,
+                  format: (n) => n.toFixed(1),
+                  transform: (n) => Math.round(n * 10) / 10,
+                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { y: n }); },
+                })}
                 style={{ width: "100%" }}
-                onBlur={() => { setFocusedField(null); commitEditField("y"); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("y"); (e.target as HTMLInputElement).blur(); } }}
               />
             </div>
           </div>
@@ -778,17 +879,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="1"
-                      value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                        onChange={(e) => {
-                          const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
-                          setEditFields({ ...editFields, rotate: next });
-                      }}
-                      onFocus={() => {
-                        setFocusedField('rotate');
-                        if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: (selectedShape.rotateDeg ?? 0).toFixed(1) });
-                      }}
-                      onBlur={() => { setFocusedField(null); commitEditField("rotate"); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("rotate"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'rotate',
+                    getValue: () => selectedShape.rotateDeg ?? 0,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n),
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                  })}
                       style={{ width: "100%" }}
                 />
               </div>
@@ -798,17 +895,13 @@ export default function Inspector({
                   type="number"
                   step="0.1"
                   min={0.1}
-                      value={editFields.scale ?? ((selectedShape.scale ?? 1)).toFixed(1)}
-                        onChange={(e) => {
-                          const next = applyNumericChange('scale', e.target.value, { transform: (n) => Math.round(n * 10) / 10, clampMin: 0.1, format: (n) => n.toFixed(1) });
-                          setEditFields({ ...editFields, scale: next });
-                        }}
-                      onFocus={() => {
-                        setFocusedField('scale');
-                        if (editFields.scale === undefined) setEditFields({ ...editFields, scale: (selectedShape.scale ?? 1).toFixed(1) });
-                      }}
-                      onBlur={() => { setFocusedField(null); commitEditField("scale"); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("scale"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'scale',
+                    getValue: () => selectedShape.scale ?? 1,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.max(0.1, Math.round(n * 10) / 10),
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { scale: n }); },
+                  })}
                       style={{ width: "100%" }}
                 />
               </div>
@@ -817,14 +910,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                      value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                        onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                      onFocus={() => {
-                        setFocusedField('depth');
-                        if (editFields.depth === undefined) setEditFields({ ...editFields, depth: (selectedShape.depthMM ?? 0.6).toFixed(1) });
-                      }}
-                      onBlur={() => { setFocusedField(null); commitEditField("depth"); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("depth"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'depth',
+                    getValue: () => selectedShape.depthMM ?? 0.6,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n * 10) / 10,
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                  })}
                       style={{ width: "100%" }}
                     disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
@@ -866,12 +958,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[0] ?? 20}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth0',
+                              getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[0] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 1 (innermost)"
                           />
@@ -879,12 +977,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[1] ?? 15}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth1',
+                              getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[1] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 2 (middle)"
                           />
@@ -892,12 +996,18 @@ export default function Inspector({
                             type="number"
                             step="0.5"
                             min="0"
-                            value={selectedShape.sectionDepths?.[2] ?? 10}
-                            onChange={(e) => {
-                              const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                              depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionDepths: depths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionDepth2',
+                              getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                depths[2] = n;
+                                updateShape(selectedShape.id, { sectionDepths: depths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Depth 3 (outermost)"
                           />
@@ -912,12 +1022,18 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="0"
-                            value={selectedShape.sectionWidths?.[0] ?? 20}
-                            onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                              widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                              updateShape(selectedShape.id, { sectionWidths: widths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionWidth0',
+                              getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                              format: (n) => n.toString(),
+                              transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                widths[0] = n;
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Center island width (mm)"
                           />
@@ -925,12 +1041,17 @@ export default function Inspector({
                             type="number"
                             step="1"
                             min="-9999"
-                            value={selectedShape.sectionWidths?.[1] ?? 0}
-                            onChange={(e) => {
-                              const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                              widths[1] = parseFloat(e.target.value) || 0;
-                              updateShape(selectedShape.id, { sectionWidths: widths });
-                            }}
+                            {...buildNumberField({
+                              editKey: 'sectionWidth1',
+                              getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                              format: (n) => n.toString(),
+                              commitValue: (n) => {
+                                if (!selectedShape) return;
+                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                widths[1] = n;
+                                updateShape(selectedShape.id, { sectionWidths: widths });
+                              },
+                            })}
                             style={{ width: '100%' }}
                             title="Offset of center island from center (mm). Positive shifts right."
                           />
@@ -943,8 +1064,13 @@ export default function Inspector({
                         <input
                           type="number"
                           step="1"
-                          value={selectedShape.sectionRotation ?? 0}
-                          onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                          {...buildNumberField({
+                            editKey: 'sectionRotation',
+                            getValue: () => selectedShape.sectionRotation ?? 0,
+                            format: (n) => n.toFixed(1),
+                            transform: (n) => Math.round(n * 10) / 10,
+                            commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { sectionRotation: n }); },
+                          })}
                           style={{ width: '100%' }}
                         />
                       </div>
@@ -963,17 +1089,13 @@ export default function Inspector({
                       <input
                         type="number"
                         step="0.1"
-                        value={editFields.width ?? (selectedShape.widthMM ?? 0).toFixed(1)}
-                        onChange={(e) => {
-                          const next = applyNumericChange('widthMM', e.target.value, { transform: (n) => Math.max(0, Math.round(n * 10) / 10), format: (n) => n.toFixed(1) });
-                          setEditFields({ ...editFields, width: next });
-                        }}
-                        onFocus={() => {
-                          setFocusedField('width');
-                          if (editFields.width === undefined) setEditFields({ ...editFields, width: (selectedShape.widthMM ?? 0).toFixed(1) });
-                        }}
-                        onBlur={() => { setFocusedField(null); commitEditField("width"); }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("width"); (e.target as HTMLInputElement).blur(); } }}
+                        {...buildNumberField({
+                          editKey: 'width',
+                          getValue: () => selectedShape.widthMM ?? 0,
+                          format: (n) => n.toFixed(1),
+                          transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { widthMM: n }); },
+                        })}
                       />
                     </div>
 
@@ -982,17 +1104,13 @@ export default function Inspector({
                       <input
                         type="number"
                         step="0.1"
-                        value={editFields.height ?? (selectedShape.heightMM ?? 0).toFixed(1)}
-                        onChange={(e) => {
-                          const next = applyNumericChange('heightMM', e.target.value, { transform: (n) => Math.max(0, Math.round(n * 10) / 10), format: (n) => n.toFixed(1) });
-                          setEditFields({ ...editFields, height: next });
-                        }}
-                        onFocus={() => {
-                          setFocusedField('height');
-                          if (editFields.height === undefined) setEditFields({ ...editFields, height: (selectedShape.heightMM ?? 0).toFixed(1) });
-                        }}
-                        onBlur={() => { setFocusedField(null); commitEditField("height"); }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("height"); (e.target as HTMLInputElement).blur(); } }}
+                        {...buildNumberField({
+                          editKey: 'height',
+                          getValue: () => selectedShape.heightMM ?? 0,
+                          format: (n) => n.toFixed(1),
+                          transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { heightMM: n }); },
+                        })}
                       />
                     </div>
                   </div>
@@ -1023,17 +1141,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="1"
-                  value={editFields.rotate ?? ((selectedShape.rotateDeg ?? 0)).toFixed(1)}
-                  onChange={(e) => {
-                    const next = applyNumericChange('rotateDeg', e.target.value, { transform: (n) => Math.round(n), format: (n) => n.toFixed(1) });
-                    setEditFields({ ...editFields, rotate: next });
-                  }}
-                  onFocus={() => {
-                    setFocusedField('rotate');
-                    if (editFields.rotate === undefined) setEditFields({ ...editFields, rotate: ((selectedShape.rotateDeg ?? 0)).toFixed(1) });
-                  }}
-                  onBlur={() => { setFocusedField(null); commitEditField("rotate"); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { commitEditField("rotate"); (e.target as HTMLInputElement).blur(); } }}
+                  {...buildNumberField({
+                    editKey: 'rotate',
+                    getValue: () => selectedShape.rotateDeg ?? 0,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n),
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                  })}
                   style={{ width: "100%" }}
                 />
               </div>
@@ -1042,10 +1156,13 @@ export default function Inspector({
                 <input
                   type="number"
                   step="0.1"
-                  value={editFields.depth ?? ((selectedShape.depthMM ?? 0.6)).toFixed(1)}
-                  onChange={(e) => setEditFields({ ...editFields, depth: e.target.value })}
-                  onBlur={() => commitEditField("depth")}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitEditField("depth"); }}
+                  {...buildNumberField({
+                    editKey: 'depth',
+                    getValue: () => selectedShape.depthMM ?? 0.6,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.round(n * 10) / 10,
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                  })}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
                 />
@@ -1089,12 +1206,18 @@ export default function Inspector({
                               type="number"
                               step="0.5"
                               min="0"
-                              value={selectedShape.sectionDepths?.[0] ?? 20}
-                              onChange={(e) => {
-                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                                updateShape(selectedShape.id, { sectionDepths: depths });
-                              }}
+                              {...buildNumberField({
+                                editKey: 'sectionDepth0',
+                                getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                                format: (n) => n.toString(),
+                                transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                                commitValue: (n) => {
+                                  if (!selectedShape) return;
+                                  const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                  depths[0] = n;
+                                  updateShape(selectedShape.id, { sectionDepths: depths });
+                                },
+                              })}
                               style={{ width: '100%' }}
                               title="Depth 1 (innermost)"
                             />
@@ -1102,12 +1225,18 @@ export default function Inspector({
                               type="number"
                               step="0.5"
                               min="0"
-                              value={selectedShape.sectionDepths?.[1] ?? 15}
-                              onChange={(e) => {
-                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[1] = Math.max(0, parseFloat(e.target.value) || 0);
-                                updateShape(selectedShape.id, { sectionDepths: depths });
-                              }}
+                              {...buildNumberField({
+                                editKey: 'sectionDepth1',
+                                getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                                format: (n) => n.toString(),
+                                transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                                commitValue: (n) => {
+                                  if (!selectedShape) return;
+                                  const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                  depths[1] = n;
+                                  updateShape(selectedShape.id, { sectionDepths: depths });
+                                },
+                              })}
                               style={{ width: '100%' }}
                               title="Depth 2 (middle)"
                             />
@@ -1115,12 +1244,18 @@ export default function Inspector({
                               type="number"
                               step="0.5"
                               min="0"
-                              value={selectedShape.sectionDepths?.[2] ?? 10}
-                              onChange={(e) => {
-                                const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[2] = Math.max(0, parseFloat(e.target.value) || 0);
-                                updateShape(selectedShape.id, { sectionDepths: depths });
-                              }}
+                              {...buildNumberField({
+                                editKey: 'sectionDepth2',
+                                getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                                format: (n) => n.toString(),
+                                transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                                commitValue: (n) => {
+                                  if (!selectedShape) return;
+                                  const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
+                                  depths[2] = n;
+                                  updateShape(selectedShape.id, { sectionDepths: depths });
+                                },
+                              })}
                               style={{ width: '100%' }}
                               title="Depth 3 (outermost)"
                             />
@@ -1135,12 +1270,18 @@ export default function Inspector({
                               type="number"
                               step="1"
                               min="0"
-                              value={selectedShape.sectionWidths?.[0] ?? 20}
-                              onChange={(e) => {
-                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[0] = Math.max(0, parseFloat(e.target.value) || 0);
-                                updateShape(selectedShape.id, { sectionWidths: widths });
-                              }}
+                              {...buildNumberField({
+                                editKey: 'sectionWidth0',
+                                getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                                format: (n) => n.toString(),
+                                transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                                commitValue: (n) => {
+                                  if (!selectedShape) return;
+                                  const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                  widths[0] = n;
+                                  updateShape(selectedShape.id, { sectionWidths: widths });
+                                },
+                              })}
                               style={{ width: '100%' }}
                               title="Center island width (mm)"
                             />
@@ -1148,12 +1289,17 @@ export default function Inspector({
                               type="number"
                               step="1"
                               min="-9999"
-                              value={selectedShape.sectionWidths?.[1] ?? 0}
-                              onChange={(e) => {
-                                const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[1] = parseFloat(e.target.value) || 0;
-                                updateShape(selectedShape.id, { sectionWidths: widths });
-                              }}
+                              {...buildNumberField({
+                                editKey: 'sectionWidth1',
+                                getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                                format: (n) => n.toString(),
+                                commitValue: (n) => {
+                                  if (!selectedShape) return;
+                                  const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
+                                  widths[1] = n;
+                                  updateShape(selectedShape.id, { sectionWidths: widths });
+                                },
+                              })}
                               style={{ width: '100%' }}
                               title="Offset of center island from center (mm). Positive shifts right."
                             />
@@ -1166,8 +1312,13 @@ export default function Inspector({
                           <input
                             type="number"
                             step="1"
-                            value={selectedShape.sectionRotation ?? 0}
-                            onChange={(e) => updateShape(selectedShape.id, { sectionRotation: parseFloat(e.target.value) || 0 })}
+                            {...buildNumberField({
+                              editKey: 'sectionRotation',
+                              getValue: () => selectedShape.sectionRotation ?? 0,
+                              format: (n) => n.toFixed(1),
+                              transform: (n) => Math.round(n * 10) / 10,
+                              commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { sectionRotation: n }); },
+                            })}
                             style={{ width: '100%' }}
                           />
                         </div>

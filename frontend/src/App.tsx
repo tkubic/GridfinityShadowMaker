@@ -10,6 +10,8 @@ import RenderCanvas from "./components/RenderCanvas";
 import { parseDxf } from "./utils/dxf";
 import { showToast } from './utils/toast';
 import { convertTextShapeToPolygons, type TextShape, type Point } from "./lib/textToPolylines";
+// Set to `true` to enable verbose history logging for debugging
+const LOG_HISTORY = false;
 function App() {
   // Generate a default project name like GSM-YYYYMMDD-Hmm (e.g. GSM-20251124-351)
   function getDefaultProjectName() {
@@ -102,11 +104,11 @@ function App() {
     setUndoStack((prev) => {
       const next = [...prev, snap];
       const trimmed = next.length > UNDO_LIMIT ? next.slice(next.length - UNDO_LIMIT) : next;
-      console.info('history:push', { label: label ?? 'checkpoint', undoSizeBefore: prev.length, undoSizeAfter: trimmed.length, redoSizeBefore: redoStackRef.current.length, activeTab: activeTabRef.current });
+      if (LOG_HISTORY) console.info('history:push', { label: label ?? 'checkpoint', undoSizeBefore: prev.length, undoSizeAfter: trimmed.length, redoSizeBefore: redoStackRef.current.length, activeTab: activeTabRef.current });
       return trimmed;
     });
     setRedoStack((prev) => {
-      if (prev.length) console.info('history:clearRedo', { label: label ?? 'checkpoint', cleared: prev.length });
+      if (prev.length && LOG_HISTORY) console.info('history:clearRedo', { label: label ?? 'checkpoint', cleared: prev.length });
       return [];
     });
   }, [snapshotProject]);
@@ -145,7 +147,7 @@ function App() {
     setDraggingId(null);
     setDragOffset(null);
     setTimeout(() => { isApplyingHistoryRef.current = false; }, 0);
-    console.info('history:undo', {
+    if (LOG_HISTORY) console.info('history:undo', {
       undoSizeBefore: undoStackRef.current.length + 1,
       undoSizeAfter: undoStackRef.current.length,
       redoSizeAfter: redoStackRef.current.length,
@@ -185,7 +187,7 @@ function App() {
     setDraggingId(null);
     setDragOffset(null);
     setTimeout(() => { isApplyingHistoryRef.current = false; }, 0);
-    console.info('history:redo', {
+    if (LOG_HISTORY) console.info('history:redo', {
       redoSizeBefore: redoStackRef.current.length + 1,
       redoSizeAfter: redoStackRef.current.length,
       undoSizeAfter: undoStackRef.current.length,
