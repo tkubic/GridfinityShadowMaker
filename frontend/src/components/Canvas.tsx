@@ -1243,7 +1243,6 @@ export default function Canvas({
             {handles.map((h) => {
               const xPx = h.p.x * scaleX - sizePx / 2;
               const yPx = boardPxHeight - h.p.y * scaleY - sizePx / 2;
-              const centerPx = { x: xPx + sizePx / 2, y: yPx + sizePx / 2 };
               // Compute endpoints in world space using true world dir, then project to px
               const halfLenWorld = (sizePx * 0.4) / Math.max(scaleX, scaleY);
               const p1World = { x: h.p.x + h.dir.x * halfLenWorld, y: h.p.y + h.dir.y * halfLenWorld };
