@@ -280,10 +280,12 @@ export default function Canvas({
   }
 
   // resizing ref holds the active resize interaction
+  const [hoverHandle, setHoverHandle] = React.useState<string | null>(null);
   const resizingRef = React.useRef<{
     id: string | null;
     handle: string | null;
     startShape?: ToolShape;
+    startPointer?: { x: number; y: number };
   }>({ id: null, handle: null });
 
   // handle mouse move for resizing (separate from group drag)
@@ -297,89 +299,71 @@ export default function Canvas({
     const handle = resizingRef.current.handle!;
     const sLocal = drawShapes.find((d) => d.id === id);
     if (!sLocal) return;
-    const s = sLocal;
-    const pt = getSvgPoint(e); // world mm
+    const start = resizingRef.current.startShape ?? sLocal;
+    const ptStart = resizingRef.current.startPointer ?? { x: start.x ?? 0, y: start.y ?? 0 };
+    const pt = getSvgPoint(e); // world mm now
 
-    // helper: rotate a local point (in mm) to world coords using shape rotation
-    const deg = sLocal.rotateDeg ?? 0;
-    const r = (deg * Math.PI) / 180.0;
-    const cosr = Math.cos(r);
-    const sinr = Math.sin(r);
+    // Unified rotation convention: world/mm coordinates are y-up. SVG applies
+    // positive angles clockwise (y-down). To match the rendered shape, use a
+    // single rotation `rotRadUsed` = -deg in math space.
+    const rotDeg = start.rotateDeg ?? 0;
+    const rotRadUsed = -((rotDeg) * Math.PI) / 180.0;
+    const cosR = Math.cos(rotRadUsed);
+    const sinR = Math.sin(rotRadUsed);
 
-    function worldToLocal(wx: number, wy: number) {
-      const dx = wx - (s.x ?? 0);
-      const dy = wy - (s.y ?? 0);
-      return { x: Math.round((dx * cosr + dy * -sinr) * 10) / 10, y: Math.round((dx * sinr + dy * cosr) * 10) / 10 };
-    }
-
-    const halfW = Math.max(0.01, ((sLocal.widthMM ?? 0) * (sLocal.scale ?? 1)) / 2);
-    const halfH = Math.max(0.01, ((sLocal.heightMM ?? 0) * (sLocal.scale ?? 1)) / 2);
-
-    // local coordinates for opposite/fixed corner depending on handle
-    const localCorners: Record<string, { x: number; y: number }> = {
-      nw: { x: -halfW, y: halfH },
-      n: { x: 0, y: halfH },
-      ne: { x: halfW, y: halfH },
-      e: { x: halfW, y: 0 },
-      se: { x: halfW, y: -halfH },
-      s: { x: 0, y: -halfH },
-      sw: { x: -halfW, y: -halfH },
-      w: { x: -halfW, y: 0 },
+    const rotate = (v: { x: number; y: number }, angleRad: number) => {
+      const c = Math.cos(angleRad);
+      const s = Math.sin(angleRad);
+      return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
     };
 
-    // opposite mapping (which local point remains fixed)
-    const opposite: Record<string, { x: number; y: number }> = {
-      nw: localCorners.se,
-      ne: localCorners.sw,
-      se: localCorners.nw,
-      sw: localCorners.ne,
-      n: localCorners.s,
-      s: localCorners.n,
-      e: localCorners.w,
-      w: localCorners.e,
+    const dWorld = { x: pt.x - ptStart.x, y: pt.y - ptStart.y };
+    const dLocal = rotate(dWorld, -rotRadUsed);
+
+    const wStartScaled = Math.max(0.01, (start.widthMM ?? 0) * (start.scale ?? 1));
+    const hStartScaled = Math.max(0.01, (start.heightMM ?? 0) * (start.scale ?? 1));
+
+    const meta: Record<string, { sx: number; sy: number }> = {
+      e: { sx: 1, sy: 0 },
+      w: { sx: -1, sy: 0 },
+      n: { sx: 0, sy: 1 },
+      s: { sx: 0, sy: -1 },
+      ne: { sx: 1, sy: 1 },
+      nw: { sx: -1, sy: 1 },
+      se: { sx: 1, sy: -1 },
+      sw: { sx: -1, sy: -1 },
+    };
+    const dir = meta[handle];
+    if (!dir) return;
+    const MIN_SIDE = 1.0;
+
+    const newWidthScaled = dir.sx !== 0 ? Math.max(MIN_SIDE, wStartScaled + dir.sx * dLocal.x) : wStartScaled;
+    const newHeightScaled = dir.sy !== 0 ? Math.max(MIN_SIDE, hStartScaled + dir.sy * dLocal.y) : hStartScaled;
+
+    const anchorLocalStart = {
+      x: dir.sx !== 0 ? -dir.sx * wStartScaled / 2 : 0,
+      y: dir.sy !== 0 ? -dir.sy * hStartScaled / 2 : 0,
+    };
+    const anchorLocalNew = {
+      x: dir.sx !== 0 ? -dir.sx * newWidthScaled / 2 : 0,
+      y: dir.sy !== 0 ? -dir.sy * newHeightScaled / 2 : 0,
     };
 
-    const mouseLocal = worldToLocal(pt.x, pt.y);
-    const fixedLocal = opposite[handle];
+    // Opposite handle must stay anchored in world space during resize
+    const anchorWorld = {
+      x: (start.x ?? 0) + anchorLocalStart.x * cosR - anchorLocalStart.y * sinR,
+      y: (start.y ?? 0) + anchorLocalStart.x * sinR + anchorLocalStart.y * cosR,
+    };
 
-    // For mid-edge handles constrain one axis and preserve the other dimension
-    let newLocal = { x: mouseLocal.x, y: mouseLocal.y };
-    // original scaled halves
-    const origHalfW = halfW;
-    const origHalfH = halfH;
+    const centerNew = {
+      x: anchorWorld.x - (anchorLocalNew.x * cosR - anchorLocalNew.y * sinR),
+      y: anchorWorld.y - (anchorLocalNew.x * sinR + anchorLocalNew.y * cosR),
+    };
 
-    // compute new sizes in scaled units (local units include shape.scale)
-    let newWidthScaled: number;
-    let newHeightScaled: number;
+    const newWidthMM = Math.round((newWidthScaled / (start.scale ?? 1)) * 10) / 10;
+    const newHeightMM = Math.round((newHeightScaled / (start.scale ?? 1)) * 10) / 10;
 
-    if (handle === "n" || handle === "s") {
-      // vertical drag: width preserved, height changes
-      newWidthScaled = Math.max(1.0, origHalfW * 2);
-      // constrain horizontal local coordinate to center (so we only change height)
-      newLocal.x = 0;
-      newHeightScaled = Math.max(1.0, Math.abs(newLocal.y - fixedLocal.y));
-    } else if (handle === "e" || handle === "w") {
-      // horizontal drag: height preserved, width changes
-      newHeightScaled = Math.max(1.0, origHalfH * 2);
-      // constrain vertical local coordinate to center
-      newLocal.y = 0;
-      newWidthScaled = Math.max(1.0, Math.abs(newLocal.x - fixedLocal.x));
-    } else {
-      // corner drag: both dimensions change
-      newLocal = { x: mouseLocal.x, y: mouseLocal.y };
-      newWidthScaled = Math.max(1.0, Math.abs(newLocal.x - fixedLocal.x));
-      newHeightScaled = Math.max(1.0, Math.abs(newLocal.y - fixedLocal.y));
-    }
-    const newWidthMM = Math.round((newWidthScaled / (s.scale ?? 1)) * 10) / 10;
-    const newHeightMM = Math.round((newHeightScaled / (s.scale ?? 1)) * 10) / 10;
-
-    // new center in local coords (relative to original center)
-    const centerLocal = { x: (newLocal.x + fixedLocal.x) / 2, y: (newLocal.y + fixedLocal.y) / 2 };
-    // convert centerLocal (local mm) back to world coords
-    const newCenterWorldX = Math.round(((s.x ?? 0) + (centerLocal.x * cosr - centerLocal.y * sinr)) * 10) / 10;
-    const newCenterWorldY = Math.round(((s.y ?? 0) + (centerLocal.x * sinr + centerLocal.y * cosr)) * 10) / 10;
-
-    updateShape(id, { x: newCenterWorldX, y: newCenterWorldY, widthMM: newWidthMM, heightMM: newHeightMM }, { skipHistory: true });
+    updateShape(id, { x: Math.round(centerNew.x * 10) / 10, y: Math.round(centerNew.y * 10) / 10, widthMM: newWidthMM, heightMM: newHeightMM }, { skipHistory: true });
   }
 
   function onMouseUp() {
@@ -1206,15 +1190,52 @@ export default function Canvas({
         const spt = { x: (sw.x + se.x) / 2, y: (sw.y + se.y) / 2 };
         const e = { x: (se.x + ne.x) / 2, y: (se.y + ne.y) / 2 };
         const w = { x: (sw.x + nw.x) / 2, y: (sw.y + nw.y) / 2 };
-        const handles: Array<{ name: string; p: { x: number; y: number }; cursor: string }> = [
-          { name: 'nw', p: nw, cursor: 'nwse-resize' },
-          { name: 'n', p: n, cursor: 'ns-resize' },
-          { name: 'ne', p: ne, cursor: 'nesw-resize' },
-          { name: 'e', p: e, cursor: 'ew-resize' },
-          { name: 'se', p: se, cursor: 'nwse-resize' },
-          { name: 's', p: spt, cursor: 'ns-resize' },
-          { name: 'sw', p: sw, cursor: 'nesw-resize' },
-          { name: 'w', p: w, cursor: 'ew-resize' },
+        const cursorForDirWorld = (dx: number, dy: number) => {
+          // World/math axes (y-up). Normalize to [0,180)
+          const ang = (Math.atan2(dy, dx) * 180) / Math.PI;
+          const a = ((ang % 180) + 180) % 180;
+          if (a < 22.5 || a >= 157.5) return 'ew-resize';
+          if (a >= 67.5 && a < 112.5) return 'ns-resize';
+          const sameSign = (dx >= 0 && dy >= 0) || (dx < 0 && dy < 0);
+          return sameSign ? 'nwse-resize' : 'nesw-resize';
+        };
+
+        // Unified rotation: world coords are y-up; SVG applies positive angles clockwise.
+        // Use a single rotRadUsed for all conversions.
+        const rotRadUsed = ((s.rotateDeg ?? 0) * Math.PI) / 180;
+        const rotateUsed = (v: { x: number; y: number }) => ({
+          x: v.x * Math.cos(rotRadUsed) - v.y * Math.sin(rotRadUsed),
+          y: v.x * Math.sin(rotRadUsed) + v.y * Math.cos(rotRadUsed),
+        });
+
+        // Base local axes (width, height)
+        const uX = { x: 1, y: 0 }; // +width direction
+        const uY = { x: 0, y: 1 }; // +height direction (matches edge handles)
+        const norm = (v: { x: number; y: number }) => {
+          const m = Math.hypot(v.x, v.y) || 1;
+          return { x: v.x / m, y: v.y / m };
+        };
+
+        const localDirs: Record<string, { x: number; y: number }> = {
+          e: uX,
+          w: { x: -uX.x, y: -uX.y },
+          n: uY,
+          s: { x: -uY.x, y: -uY.y },
+          ne: norm({ x: uX.x - uY.x, y: uX.y - uY.y }),
+          nw: norm({ x: -uX.x - uY.x, y: -uX.y - uY.y }),
+          se: norm({ x: uX.x + uY.x, y: uX.y + uY.y }),
+          sw: norm({ x: -uX.x + uY.x, y: -uX.y + uY.y }),
+        };
+
+        const handles: Array<{ name: string; p: { x: number; y: number }; cursor: string; dir: { x: number; y: number } }> = [
+          (() => { const world = rotateUsed(localDirs.nw); return { name: 'nw', p: nw, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.n); return { name: 'n', p: n, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.ne); return { name: 'ne', p: ne, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.e); return { name: 'e', p: e, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.se); return { name: 'se', p: se, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.s); return { name: 's', p: spt, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.sw); return { name: 'sw', p: sw, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
+          (() => { const world = rotateUsed(localDirs.w); return { name: 'w', p: w, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
         ];
         const sizePx = 8;
         return (
@@ -1222,26 +1243,60 @@ export default function Canvas({
             {handles.map((h) => {
               const xPx = h.p.x * scaleX - sizePx / 2;
               const yPx = boardPxHeight - h.p.y * scaleY - sizePx / 2;
+              const centerPx = { x: xPx + sizePx / 2, y: yPx + sizePx / 2 };
+              // Compute endpoints in world space using true world dir, then project to px
+              const halfLenWorld = (sizePx * 0.4) / Math.max(scaleX, scaleY);
+              const p1World = { x: h.p.x + h.dir.x * halfLenWorld, y: h.p.y + h.dir.y * halfLenWorld };
+              const p2World = { x: h.p.x - h.dir.x * halfLenWorld, y: h.p.y - h.dir.y * halfLenWorld };
+              const toPx = (p: { x: number; y: number }) => ({ x: p.x * scaleX, y: boardPxHeight - p.y * scaleY });
+              const p1Px = toPx(p1World);
+              const p2Px = toPx(p2World);
               return (
-                <rect
-                  key={h.name}
-                  x={xPx}
-                  y={yPx}
-                  width={sizePx}
-                  height={sizePx}
-                  fill="#ffffff"
-                  stroke="#333333"
-                  strokeWidth={1}
-                  style={{ cursor: h.cursor }}
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                    resizingRef.current = { id, handle: h.name };
-                    // prevent interfering with drag
-                    setDraggingId(null);
-                    setDragOffset(null);
-                    gestureHistoryPushedRef.current = false;
-                  }}
-                />
+                <g key={h.name} pointerEvents="all">
+                  <rect
+                    x={xPx}
+                    y={yPx}
+                    width={sizePx}
+                    height={sizePx}
+                    fill="#ffffff"
+                    stroke="#333333"
+                    strokeWidth={1}
+                    style={{ cursor: h.cursor }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      const svg = (e.currentTarget as SVGGraphicsElement).ownerSVGElement;
+                      let startPt = { x: h.p.x, y: h.p.y };
+                      if (svg) {
+                        const pt = svg.createSVGPoint();
+                        pt.x = e.clientX;
+                        pt.y = e.clientY;
+                        const ctm = svg.getScreenCTM();
+                        const svgPt = ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
+                        startPt = { x: svgPt.x / scaleX, y: (boardPxHeight - svgPt.y) / scaleY };
+                      }
+                      resizingRef.current = { id, handle: h.name, startShape: { ...s }, startPointer: startPt };
+                      // prevent interfering with drag
+                      setDraggingId(null);
+                      setDragOffset(null);
+                      gestureHistoryPushedRef.current = false;
+                      setHoverHandle(null);
+                    }}
+                    onMouseEnter={() => setHoverHandle(h.name)}
+                    onMouseLeave={() => setHoverHandle((curr) => (curr === h.name ? null : curr))}
+                  />
+                  {/* Hover glyph: draw oriented line using true worldDir (continuous, unsnapped) */}
+                  {hoverHandle === h.name ? (
+                    <line
+                      x1={p1Px.x}
+                      y1={p1Px.y}
+                      x2={p2Px.x}
+                      y2={p2Px.y}
+                      stroke="#666666"
+                      strokeWidth={2}
+                      pointerEvents="none"
+                    />
+                  ) : null}
+                </g>
               );
             })}
           </g>

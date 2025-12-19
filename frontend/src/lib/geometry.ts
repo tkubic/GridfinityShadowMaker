@@ -56,7 +56,9 @@ export function getWorldCorners(s: ToolShape) {
         { x: -halfW, y: halfH },
       ];
       const deg = s.rotateDeg ?? 0;
-      const r = (deg * Math.PI) / 180.0;
+      // SVG rotates clockwise for positive angles (y-down). Use -deg so corners
+      // match the on-canvas orientation seen by the user.
+      const r = (-deg * Math.PI) / 180.0;
       const cosr = Math.cos(r);
       const sinr = Math.sin(r);
       return local.map((p) => {
@@ -111,7 +113,8 @@ export function getWorldCorners(s: ToolShape) {
     { x: -halfW, y: halfH },
   ];
   const deg = s.rotateDeg ?? 0;
-  const r = (deg * Math.PI) / 180.0;
+  // Match SVG's clockwise rotation for positive angles (y-down) by negating here.
+  const r = (-deg * Math.PI) / 180.0;
   const cosr = Math.cos(r);
   const sinr = Math.sin(r);
   return local.map((p) => {
