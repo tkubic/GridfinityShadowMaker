@@ -281,6 +281,12 @@ export default function Canvas({
 
   // resizing ref holds the active resize interaction
   const [hoverHandle, setHoverHandle] = React.useState<string | null>(null);
+  const rotatingRef = React.useRef<{
+    id: string | null;
+    startAngleRad: number;
+    startRotationDeg: number;
+    center: { x: number; y: number } | null;
+  }>({ id: null, startAngleRad: 0, startRotationDeg: 0, center: null });
   const resizingRef = React.useRef<{
     id: string | null;
     handle: string | null;
@@ -371,11 +377,48 @@ export default function Canvas({
     setDragOffset(null);
     groupOffsetsRef.current = {};
     resizingRef.current = { id: null, handle: null };
+    rotatingRef.current = { id: null, startAngleRad: 0, startRotationDeg: 0, center: null };
     gestureHistoryPushedRef.current = false;
   }
 
+  // Normalize angle to [-pi, pi] to avoid sudden wrap jumps
+  const normalizeAngleRad = (a: number) => {
+    let ang = a;
+    while (ang > Math.PI) ang -= 2 * Math.PI;
+    while (ang < -Math.PI) ang += 2 * Math.PI;
+    return ang;
+  };
+
   // combined mouse move (resize takes precedence)
+  function onMouseMoveRotate(e: React.MouseEvent<SVGSVGElement, MouseEvent>) {
+    const ref = rotatingRef.current;
+    if (!ref.id || !ref.center) return;
+    if (!gestureHistoryPushedRef.current) {
+      pushHistoryCheckpoint('rotate-gesture');
+      gestureHistoryPushedRef.current = true;
+    }
+    const pt = getSvgPoint(e); // world mm (y-up)
+    const ang = Math.atan2(pt.y - ref.center.y, pt.x - ref.center.x);
+    const deltaRad = normalizeAngleRad(ref.startAngleRad - ang);
+    const deltaDeg = (deltaRad * 180) / Math.PI;
+    const angleDegRaw = ref.startRotationDeg + deltaDeg; // smooth angle in degrees
+    const snapStep = 45;
+    const snapTolerance = 5;
+    let angleDeg = angleDegRaw;
+    if (!e.shiftKey) { // hold Shift to disable snapping
+      const nearest = Math.round(angleDegRaw / snapStep) * snapStep;
+      const diff = angleDegRaw - nearest;
+      angleDeg = Math.abs(diff) <= snapTolerance ? nearest : angleDegRaw;
+    }
+    const finalDeg = e.shiftKey ? Math.round(angleDeg * 10) / 10 : angleDeg;
+    updateShape(ref.id, { rotateDeg: finalDeg }, { skipHistory: true });
+  }
+
   function svgMouseMove(e: React.MouseEvent<SVGSVGElement, MouseEvent>) {
+    if (rotatingRef.current && rotatingRef.current.id) {
+      onMouseMoveRotate(e);
+      return;
+    }
     if (resizingRef.current && resizingRef.current.id) {
       onMouseMoveResize(e);
       return;
@@ -1176,10 +1219,6 @@ export default function Canvas({
         const id = selectedItems[0];
         const s = drawShapes.find((d) => d.id === id);
         if (!s) return null;
-        // don't show resize handles for DXF or text shapes
-        // - DXF shapes manage scale separately
-        // - text size is controlled by fontSize, not resize handles
-        if (s.type === 'dxf' || s.type === 'text') return null;
         const corners = getWorldCorners(s); // order: sw, se, ne, nw
         const sw = corners[0];
         const se = corners[1];
@@ -1238,66 +1277,119 @@ export default function Canvas({
           (() => { const world = rotateUsed(localDirs.w); return { name: 'w', p: w, dir: world, cursor: cursorForDirWorld(world.x, world.y) }; })(),
         ];
         const sizePx = 8;
+
+        const toPx = (p: { x: number; y: number }) => ({ x: p.x * scaleX, y: boardPxHeight - p.y * scaleY });
+
+        // rotation handle: position above the top edge in local frame, offset in screen px
+        const center = { x: s.x ?? 0, y: s.y ?? 0 };
+        const topMid = n;
+        const topDirScreen = { x: (topMid.x - center.x) * scaleX, y: (topMid.y - center.y) * -scaleY };
+        const topLen = Math.hypot(topDirScreen.x, topDirScreen.y) || 1;
+        const topNorm = { x: topDirScreen.x / topLen, y: topDirScreen.y / topLen };
+        const offsetPx = 20;
+        const handleScreen = { x: topMid.x * scaleX + topNorm.x * offsetPx, y: boardPxHeight - topMid.y * scaleY + topNorm.y * offsetPx };
+
+        const rotationHandle = (
+          <g pointerEvents="all">
+            <line x1={topMid.x * scaleX} y1={boardPxHeight - topMid.y * scaleY} x2={handleScreen.x} y2={handleScreen.y} stroke="#666" strokeWidth={1} pointerEvents="none" />
+            <circle
+              cx={handleScreen.x}
+              cy={handleScreen.y}
+              r={6}
+              fill="#ffffff"
+              stroke="#333333"
+              strokeWidth={1}
+              style={{ cursor: 'grab' }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                const svgEl = (e.currentTarget as SVGGraphicsElement).ownerSVGElement;
+                let startPt = { x: center.x, y: center.y };
+                if (svgEl) {
+                  const pt = svgEl.createSVGPoint();
+                  pt.x = e.clientX;
+                  pt.y = e.clientY;
+                  const ctm = svgEl.getScreenCTM();
+                  const svgPt = ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
+                  startPt = { x: svgPt.x / scaleX, y: (boardPxHeight - svgPt.y) / scaleY };
+                }
+                const startAng = Math.atan2(startPt.y - center.y, startPt.x - center.x);
+                rotatingRef.current = {
+                  id,
+                  startAngleRad: startAng,
+                  startRotationDeg: s.rotateDeg ?? 0,
+                  center,
+                };
+                setDraggingId(null);
+                setDragOffset(null);
+                resizingRef.current = { id: null, handle: null };
+                gestureHistoryPushedRef.current = false;
+              }}
+            />
+          </g>
+        );
+
         return (
           <g pointerEvents="all">
-            {handles.map((h) => {
-              const xPx = h.p.x * scaleX - sizePx / 2;
-              const yPx = boardPxHeight - h.p.y * scaleY - sizePx / 2;
-              // Compute endpoints in world space using true world dir, then project to px
-              const halfLenWorld = (sizePx * 0.4) / Math.max(scaleX, scaleY);
-              const p1World = { x: h.p.x + h.dir.x * halfLenWorld, y: h.p.y + h.dir.y * halfLenWorld };
-              const p2World = { x: h.p.x - h.dir.x * halfLenWorld, y: h.p.y - h.dir.y * halfLenWorld };
-              const toPx = (p: { x: number; y: number }) => ({ x: p.x * scaleX, y: boardPxHeight - p.y * scaleY });
-              const p1Px = toPx(p1World);
-              const p2Px = toPx(p2World);
-              return (
-                <g key={h.name} pointerEvents="all">
-                  <rect
-                    x={xPx}
-                    y={yPx}
-                    width={sizePx}
-                    height={sizePx}
-                    fill="#ffffff"
-                    stroke="#333333"
-                    strokeWidth={1}
-                    style={{ cursor: h.cursor }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      const svg = (e.currentTarget as SVGGraphicsElement).ownerSVGElement;
-                      let startPt = { x: h.p.x, y: h.p.y };
-                      if (svg) {
-                        const pt = svg.createSVGPoint();
-                        pt.x = e.clientX;
-                        pt.y = e.clientY;
-                        const ctm = svg.getScreenCTM();
-                        const svgPt = ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
-                        startPt = { x: svgPt.x / scaleX, y: (boardPxHeight - svgPt.y) / scaleY };
-                      }
-                      resizingRef.current = { id, handle: h.name, startShape: { ...s }, startPointer: startPt };
-                      // prevent interfering with drag
-                      setDraggingId(null);
-                      setDragOffset(null);
-                      gestureHistoryPushedRef.current = false;
-                      setHoverHandle(null);
-                    }}
-                    onMouseEnter={() => setHoverHandle(h.name)}
-                    onMouseLeave={() => setHoverHandle((curr) => (curr === h.name ? null : curr))}
-                  />
-                  {/* Hover glyph: draw oriented line using true worldDir (continuous, unsnapped) */}
-                  {hoverHandle === h.name ? (
-                    <line
-                      x1={p1Px.x}
-                      y1={p1Px.y}
-                      x2={p2Px.x}
-                      y2={p2Px.y}
-                      stroke="#666666"
-                      strokeWidth={2}
-                      pointerEvents="none"
-                    />
-                  ) : null}
-                </g>
-              );
-            })}
+            {s.type !== 'dxf' && s.type !== 'text'
+              ? handles.map((h) => {
+                  const xPx = h.p.x * scaleX - sizePx / 2;
+                  const yPx = boardPxHeight - h.p.y * scaleY - sizePx / 2;
+                  // Compute endpoints in world space using true world dir, then project to px
+                  const halfLenWorld = (sizePx * 0.4) / Math.max(scaleX, scaleY);
+                  const p1World = { x: h.p.x + h.dir.x * halfLenWorld, y: h.p.y + h.dir.y * halfLenWorld };
+                  const p2World = { x: h.p.x - h.dir.x * halfLenWorld, y: h.p.y - h.dir.y * halfLenWorld };
+                  const p1Px = toPx(p1World);
+                  const p2Px = toPx(p2World);
+                  return (
+                    <g key={h.name} pointerEvents="all">
+                      <rect
+                        x={xPx}
+                        y={yPx}
+                        width={sizePx}
+                        height={sizePx}
+                        fill="#ffffff"
+                        stroke="#333333"
+                        strokeWidth={1}
+                        style={{ cursor: h.cursor }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const svg = (e.currentTarget as SVGGraphicsElement).ownerSVGElement;
+                          let startPt = { x: h.p.x, y: h.p.y };
+                          if (svg) {
+                            const pt = svg.createSVGPoint();
+                            pt.x = e.clientX;
+                            pt.y = e.clientY;
+                            const ctm = svg.getScreenCTM();
+                            const svgPt = ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
+                            startPt = { x: svgPt.x / scaleX, y: (boardPxHeight - svgPt.y) / scaleY };
+                          }
+                          resizingRef.current = { id, handle: h.name, startShape: { ...s }, startPointer: startPt };
+                          // prevent interfering with drag
+                          setDraggingId(null);
+                          setDragOffset(null);
+                          gestureHistoryPushedRef.current = false;
+                          setHoverHandle(null);
+                        }}
+                        onMouseEnter={() => setHoverHandle(h.name)}
+                        onMouseLeave={() => setHoverHandle((curr) => (curr === h.name ? null : curr))}
+                      />
+                      {/* Hover glyph: draw oriented line using true worldDir (continuous, unsnapped) */}
+                      {hoverHandle === h.name ? (
+                        <line
+                          x1={p1Px.x}
+                          y1={p1Px.y}
+                          x2={p2Px.x}
+                          y2={p2Px.y}
+                          stroke="#666666"
+                          strokeWidth={2}
+                          pointerEvents="none"
+                        />
+                      ) : null}
+                    </g>
+                  );
+                })
+              : null}
+            {rotationHandle}
           </g>
         );
       })() : null}
