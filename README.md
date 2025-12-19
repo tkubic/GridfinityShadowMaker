@@ -1,181 +1,198 @@
 ﻿# Gridfinity Shadow Maker
 
-**Gridfinity Shadow Maker (GSM)** is an easy-to-use, open-source tool that turns **photos of your tools** into clean, printable **Gridfinity shadow boards**.  
-You don’t need CAD experience — just take a picture, let the program automatically trace the outline, arrange your layout, export the STL, color it in your slicer, and print. The entire workflow is designed so you can go from **tool in hand to printing in under five minutes.**
+**Gridfinity Shadow Maker (GSM)** is an easy-to-use, open-source tool that turns **photos of your tools** into clean, printable **Gridfinity shadow boards**.
 
-Created to support **industrial 5S/Standardize programs** and high-reliability tool control, while still being accessible and helpful for home makers and hobbyists who appreciate organized tool storage.
+No CAD experience is required. Take a photo, let the program automatically trace the outline, arrange your layout, export an STL, apply color in your slicer, and print.  
+The entire workflow is designed so you can go from **tool in hand to printing in under five minutes**.
+
+GSM was created to support **industrial 5S / Standardize programs** and high-reliability tool control, while remaining approachable for home makers and hobbyists who value organized tool storage.
 
 ---
 
 ## ⭐ Highlights
 
-- **Automatically trace objects** from photos with adjustable thresholding and filters  
-- **Import DXF files**, draw rectangles/circles, and add text on a 2D canvas  
-- **Arrange, rotate, resize, and set cut depths** per object  
-- **Generate STL and DXF** outputs for 3D printing or CAD  
-- Built-in **3D viewer** for previewing your layout  
-- Save & share whole projects as a single **`.gsm` file**   
+- Automatically trace objects from photos with adjustable thresholding and offsets  
+- Import DXF files, draw rectangles and circles, and add text on a 2D canvas  
+- Arrange, rotate, resize, and set cut depths per object  
+- Generate STL and DXF outputs for 3D printing or CAD workflows  
+- Built-in 3D viewer for previewing the final model  
+- Save and share entire projects as a single `.gsm` file  
 
 ---
 
-# 🟢 Installation (Windows Only)
+## 📸 Screenshots & Demo
+
+Below is a demo video — click the thumbnail to open the YouTube demo.
+
+[![Watch the Gridfinity Shadow Maker demo](https://img.youtube.com/vi/Aso7XpVL_yk/maxresdefault.jpg)](https://youtu.be/Aso7XpVL_yk)
+
+<!-- Screenshot thumbnail grid -->
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="assets/images/1%20GSM%20Server%20Dashboard.png" width="220" alt="GSM Server Dashboard">
+    </td>
+    <td align="center">
+      <img src="assets/images/2%20Trace%20Object.png" width="220" alt="Trace Object">
+    </td>
+  </tr>
+
+  <tr>
+    <td align="center" colspan="2">
+      <img src="assets/images/3%202D%20Canvas.png" width="460" alt="2D Canvas">
+    </td>
+  </tr>
+
+  <tr>
+    <td align="center">
+      <img src="assets/images/4%203D%20Viewer.png" width="220" alt="3D Viewer">
+    </td>
+    <td align="center">
+      <img src="assets/images/5%20orcastudio%20example.png" width="220" alt="OrcaSlicer example">
+    </td>
+  </tr>
+</table>
+
+
+---
+
+## 🟢 Installation (Windows Only)
 
 GSM is designed so **non-technical users can install it easily**.
 
 ### ✔ You only need to install:
-1. **Python 3.13** (official python.org installer recommended; choose 64‑bit and select *Add to PATH*)
-    - version 3.14 has been giving issues and not currently recommended  
-3. **OpenSCAD Nightly**  
-4. Then run the **setup.ps1** script in PowerShell
+1. **Python 3.13** (64-bit, Add to PATH)  
+   - Python 3.14+ is currently not recommended  
+2. **OpenSCAD Nightly Build**  
+3. Run the provided **setup.ps1** script  
 
 ---
 
 ## 1) Install Python 3.13
 
-Download version 3.13 from python.org and make sure to select **Add to PATH**.
+Download Python 3.13 from https://www.python.org/downloads/ and ensure **Add to PATH** is selected.
 
-Verify the install in a command prompt or PowerShell:
+Verify the installation:
 
 ```powershell
 python --version
 pip --version
 ```
 
-> If "python not recognized" appears, close PowerShell and reopen — PATH updates only apply to new shells.  
-
 ---
 
 ## 2) Install OpenSCAD Nightly
 
-Download the latest **nightly build**:  
+Download the latest nightly build from:  
 https://openscad.org/downloads.html#snapshots
 
-You **must** install the nightly version.  
-The 2021 “stable” build only supports extremely slow CGAL rendering and will not work well with GSM's fast manifold pipeline.
-
+The nightly build is **required**.  
+The older stable release relies on CGAL-only rendering, which is significantly slower and not suitable for GSM’s fast manifold-based workflow.
 
 ---
 
 ## 3) Run the Setup Script
 
-Inside the `scripts` folder, right‑click **setup.ps1** → *Run with PowerShell*.  
-If Windows SmartScreen blocks it, click **More info → Run anyway**.
+Inside the `scripts` folder, right-click **setup.ps1** and select **Run with PowerShell**.
 
-The script will:
-
+The setup script will:
 - Install Python dependencies  
-- Install Node.js automatically (if missing)  
-- Install all frontend dependencies (`npm install` inside `frontend/`)  
-
-> If a black window opens and closes you may have an execution policy issue. Open a new powershell by right-clicking on PowerShell and select Run as Administrator.
-> Then run the following command:
-
-```powershell
-Set-ExecutionPolicy RemoteSigned -Scope LocalMachine
-```
-
-> This changes the execution policy for all users on the machine, but be aware that it requires admin rights and could have wider implications.
+- Automatically install Node.js if missing  
+- Install all frontend dependencies  
 
 ---
 
 ## 4) Launch Gridfinity Shadow Maker
 
-Double-click **Launch GSM Server.py** from the root folder.  
-If needed, right-click → *Open with Python*.
+Double-click **Launch GSM Server.py** in the root folder  
+(or right-click → Open with Python).
 
-The two dashboard windows display frontend and backend server logs and status.
-
-Click **Launch App** to open GSM in your browser.
+Click **Launch App** to open GSM in your web browser.
 
 ---
 
-# 🚀 Using Gridfinity Shadow Maker
+## 🚀 Using Gridfinity Shadow Maker
 
-## Step 1 — Take & Prepare Photos
-
-- Place tools on a **lightboard or bright contrasting background**  
-- Use the included **3-inch scaling token** (printable STL in repo root)  
-- Crop images so **all four borders are white** — this helps the tracer detect edges cleanly  
-- Optional but helpful: fill tool shapes with black in MS Paint to enhance contrast  
-
-Example photos are included in `/examples`.
-
-### Web capture + edit (Trace tab)
-- In the Trace tab, use **Capture photo** to stream your webcam. If `raw photos/calibration_files/calibration_data.pkl` or `.json` is present, the preview auto-undistorts using that calibration.  
-- Type a name and click **Capture & Save**; files land in the `projects/` folder with a leading `_` (raw) just like the desktop flow.  
-- Click **Edit** next to a photo to open the in-app editor (crop or black brush masking) and save back to the project folder (underscore removed on first edit).  
-- Use **Load Image** to send the edited photo through tracing; processed images still appear in the preview pane and can be transferred to the canvas.
+Gridfinity Shadow Maker is designed to follow a simple, linear workflow:
+capture → trace → layout → generate → print.
 
 ---
 
-## Step 2 — Trace the Object
+### Step 1 — Capture a Photo
 
-1. Go to the **Trace Object** tab  
-2. Click **Load Image** and select your photo  
-3. Adjust:
-   - Threshold  
-   - Offset  
-   - Token size  
-   - Resolution  
-4. Click **Process Image Again**, if needed, to regenerate the outline
-   - Repeat adjustments as needed.
-5. Once ready, click **Transfer to Canvas** to move the traces onto your canvas.
+1. Open the **Trace Object** tab  
+2. Select your camera from the drop-down menu  
+3. Place your tool on a light box or high-contrast background  
+4. Include the scaling token in the frame (used for accurate sizing)  
+5. Name your file and click **Capture Photo**
 
+Captured photos are saved to your project and are ready for editing.
 
 ---
 
-## Step 3 — Build Your Layout on the 2D Canvas
+### Step 2 — Edit the Photo
 
-- Import **DXF** files  
-- Draw **Rectangles**, **Circles**, and **Text**  
-- **Move, rotate, scale** any item  
-- Set **cut depth** per object  
-- Add **blockers** to create islands and stepped pockets  
-- Use the **Properties Panel** to fine‑tune rotation, scale, extrusion, and depth  
+After capturing the image:
 
-Your project saves when you click **Save** or when you **Generate STL**, default save location is the projects folder.
+1. Click **Edit** next to the photo  
+2. Crop the image so all four borders are white  
+3. Use the brush tool to clean up unwanted areas  
+4. Optional: use rectangle or ellipse tools for quick masking  
+5. Save the edited image
 
----
-
-## Step 4 — Generate the Final STL
-
-1. Click **Generate STL**  
-2. Inspect the 3D preview  
-3. Export the STL  
-4. Open in your slicer → color → slice → print  
+Clean, high-contrast images produce the best tracing results.
 
 ---
 
-# 🛠 Troubleshooting
+### Step 3 — Trace the Object
 
-### Python not found
-Close PowerShell → reopen → run:
+1. Load the edited photo into the tracer  
+2. Adjust the **threshold** and trace settings as needed  
+3. Reprocess until the outline looks correct  
+4. Click **Transfer to Canvas**
 
-```powershell
-python --version
-```
-
-If still missing, reinstall from python.org and ensure **Add to PATH** is selected.
-
-### OpenSCAD not found
-Add the nightly installation folder to PATH or reopen PowerShell.
-
-### Setup script errors
-Re-run:
-
-.\scripts\setup.ps1
+The traced shape is added to the 2D canvas and scaled automatically.
 
 ---
 
-# 👨‍💻 Developer Notes
+### Step 4 — Build the Shadow Board Layout
 
-- **Frontend:** `frontend/` (React + TypeScript + Vite)  
-- **Backend:** `backend/` (Node + Express)  
-- **Image Processing:** `src/processing.py` (Python, OpenCV, Pillow)  
-- **SCAD Generation:** `src/scadgen/`  
-- Backend STL export uses **OpenSCAD Manifold Mode** (requires nightly build)
+On the canvas, you can:
 
-Contributions welcome!  
-See `LICENSE` for details.
+- Add **text**  
+- Add **basic shapes**  
+- Import **DXF files**  
+- Move, rotate, and scale items  
+- Add **finger slots** or cutouts  
+- Adjust **cut depth** for each shape  
+
+This is where the final layout of your shadow board is defined.
 
 ---
+
+### Step 5 — Generate the 3D Model
+
+1. Adjust cut depths as needed  
+2. Click **Generate STL**  
+3. Review the result in the built-in 3D viewer  
+4. Download the STL when satisfied
+
+---
+
+### Step 6 — Slice and Print
+
+1. Open the STL in your preferred slicer  
+2. Apply color to text and shadow cutouts  
+3. Slice and print
+
+Your custom Gridfinity shadow board is complete.
+
+
+## 👨‍💻 Developer Notes
+
+- Frontend: React + TypeScript + Vite  
+- Backend: Node.js + Express  
+- Image processing: Python + OpenCV  
+- STL export uses OpenSCAD Manifold Mode  
+
+Contributions welcome.
