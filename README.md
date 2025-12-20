@@ -196,3 +196,5 @@ Your custom Gridfinity shadow board is complete.
 - STL export uses OpenSCAD Manifold Mode  
 
 Contributions welcome.
+
+For agent-focused and automation guidance (endpoints, SSE, setup for programmatic access), see [AGENTS.md](AGENTS.md).
