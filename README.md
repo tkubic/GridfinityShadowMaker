@@ -100,6 +100,15 @@ The setup script will:
 - Automatically install Node.js if missing  
 - Install all frontend dependencies  
 
+> If a black window opens and closes you may have an execution policy issue. Open a new powershell by right-clicking on PowerShell and select Run as Administrator.
+> Then run the following command:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope LocalMachine
+```
+
+> This changes the execution policy for all users on the machine, but be aware that it requires admin rights and could have wider implications.
+
 ---
 
 ## 4) Launch Gridfinity Shadow Maker
