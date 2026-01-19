@@ -58,6 +58,9 @@ export type ToolShape = {
   sectionWidths?: [number, number];
   // Rotation angle for section cut orientation, in degrees
   sectionRotation?: number;
+  // Optional corner radius for rectangle shapes
+  cornerRadiusEnabled?: boolean;
+  cornerRadiusMM?: number;
 };
 
 export type Project = {

@@ -582,6 +582,9 @@ export default function Canvas({
           const xPx = cx - wPx / 2;
           const yPx = cy - hPx / 2;
           const rotDeg = shape.rotateDeg ?? 0;
+          const avgScale = (scaleX + scaleY) / 2;
+          const cornerRadiusPxRaw = (shape.cornerRadiusEnabled ? (shape.cornerRadiusMM ?? 0) : 0) * avgScale;
+          const cornerRadiusPx = Math.max(0, Math.min(cornerRadiusPxRaw, wPx / 2, hPx / 2));
 
           // Section visualization: render 3 vertical strip zones when splitToSections is enabled
           // This matches OpenSCAD's three_section_shape which divides into left/center/right strips
@@ -616,14 +619,16 @@ export default function Canvas({
               <g key={shape.id} onMouseDown={startDragFor} transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}>
                 <defs>
                   <clipPath id={clipId}>
-                    <rect
-                      x={xPx}
-                      y={yPx}
-                      width={wPx}
-                      height={hPx}
-                      transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
-                    />
-                  </clipPath>
+                      <rect
+                        x={xPx}
+                        y={yPx}
+                        width={wPx}
+                        height={hPx}
+                        rx={cornerRadiusPx}
+                        ry={cornerRadiusPx}
+                        transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
+                      />
+                    </clipPath>
                 </defs>
                 <g clipPath={`url(#${clipId})`} transform={rotDeg ? `rotate(${-rotDeg} ${cx} ${cy})` : undefined}>
                   {leftPxWidth > 0 && (
@@ -671,6 +676,8 @@ export default function Canvas({
                     y={yPx}
                     width={wPx}
                     height={hPx}
+                    rx={cornerRadiusPx}
+                    ry={cornerRadiusPx}
                     fill="none"
                     stroke="#990000"
                     strokeOpacity={0.6}
@@ -685,6 +692,8 @@ export default function Canvas({
                     y={yPx}
                     width={wPx}
                     height={hPx}
+                    rx={cornerRadiusPx}
+                    ry={cornerRadiusPx}
                     fill="none"
                     stroke="#ffff66"
                     strokeWidth={3}
@@ -709,6 +718,8 @@ export default function Canvas({
                   y={yPx}
                   width={wPx}
                   height={hPx}
+                  rx={cornerRadiusPx}
+                  ry={cornerRadiusPx}
                   transform={rotDeg ? `rotate(${rotDeg} ${cx} ${cy})` : undefined}
                   fill={fillColorFor(shape)}
                   stroke={strokeColor}

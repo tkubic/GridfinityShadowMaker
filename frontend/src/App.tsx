@@ -688,42 +688,20 @@ function App() {
 
   function saveProjectToFile() {
     try {
-      // prompt the user for a filename (default to project.name)
-      const suggested = project.name || "project";
-      const fnameRaw = window.prompt("Save project as", suggested);
-      if (!fnameRaw) return; // user cancelled
-      const safeName = fnameRaw.replace(/[^a-z0-9-_ ]/gi, "_").trim() || suggested;
+      // Download .gsm directly into the browser downloads folder (no prompt)
+      const safeName = (project.name || 'project').replace(/[^a-z0-9-_ ]/gi, '_').trim() || 'project';
       const gsmName = `${safeName}.gsm`;
-
-      // Try to save into the project folder on the server. If that fails, fall back to client download.
-      const payload = { projectName: project.name || suggested, gsmName, project };
-      fetch('http://localhost:5000/save-project', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-        .then(r => r.json())
-        .then(j => {
-          if (j && j.ok) {
-            alert('Project saved to project folder: ' + j.path);
-            return;
-          }
-          throw new Error((j && j.error) || 'save failed');
-        })
-        .catch(() => {
-          // fallback: download as .gsm locally
-          const data = JSON.stringify(project, null, 2);
-          const blob = new Blob([data], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = gsmName;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          alert('Saved locally as ' + gsmName);
-        });
+      const data = JSON.stringify(project, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = gsmName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      alert('Saved locally as ' + gsmName);
     } catch (err) {
       console.error("Failed to save project:", err);
     }
@@ -925,13 +903,40 @@ function App() {
           const h = s.heightMM || 0;
           const halfW = w / 2;
           const halfH = h / 2;
-          const corners = [
-            { x: -halfW, y: -halfH },
-            { x: halfW, y: -halfH },
-            { x: halfW, y: halfH },
-            { x: -halfW, y: halfH },
-          ].map((p) => rotatePoint(p.x, p.y, -rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
-          polylines.push(corners);
+          const radius = (s.cornerRadiusEnabled ? (s.cornerRadiusMM || 0) : 0);
+          if (radius > 0) {
+            // Generate rounded rectangle as a single closed polyline by approximating
+            // each corner with a small arc composed of segments.
+            const r = Math.min(radius, halfW, halfH);
+            const segPerCorner = 8; // smoothness of quarter-circle
+            const pts: Array<{ x: number; y: number }> = [];
+            // corners centers (bottom-left, bottom-right, top-right, top-left)
+            const cornersLocal = [
+              { cx: -halfW + r, cy: -halfH + r, start: Math.PI, end: 1.5 * Math.PI },
+              { cx: halfW - r, cy: -halfH + r, start: 1.5 * Math.PI, end: 2 * Math.PI },
+              { cx: halfW - r, cy: halfH - r, start: 0, end: 0.5 * Math.PI },
+              { cx: -halfW + r, cy: halfH - r, start: 0.5 * Math.PI, end: Math.PI },
+            ];
+            for (let ci = 0; ci < cornersLocal.length; ci++) {
+              const c = cornersLocal[ci];
+              for (let si = 0; si < segPerCorner; si++) {
+                const t = c.start + ((si / segPerCorner) * (c.end - c.start));
+                const px = c.cx + r * Math.cos(t);
+                const py = c.cy + r * Math.sin(t);
+                const rpt = rotatePoint(px, py, -rot);
+                pts.push({ x: rpt.x + cx, y: rpt.y + cy });
+              }
+            }
+            polylines.push(pts);
+          } else {
+            const corners = [
+              { x: -halfW, y: -halfH },
+              { x: halfW, y: -halfH },
+              { x: halfW, y: halfH },
+              { x: -halfW, y: halfH },
+            ].map((p) => rotatePoint(p.x, p.y, -rot)).map((p) => ({ x: p.x + cx, y: p.y + cy }));
+            polylines.push(corners);
+          }
         } else if (s.type === 'oval') {
           const w = s.widthMM || 20;
           const h = s.heightMM || 20;
@@ -1110,32 +1115,59 @@ function App() {
 
         if (polylines.length) {
           items.push({
-            name: s.name || s.id,
-            type: s.type || 'poly',
-            cutType: s.cutType || null,
-            x: s.x || 0,
-            y: s.y || 0,
-            rotateDeg: s.rotateDeg || 0,
-            scale: s.scale || 1,
-            depthMM: s.depthMM || 0,
-            widthMM: s.widthMM || 0,
-            heightMM: s.heightMM || 0,
-            polylines,
-            posXYRot: [0, 0, 0],
-          });
+              name: s.name || s.id,
+              type: s.type || 'poly',
+              cutType: s.cutType || null,
+              x: s.x || 0,
+              y: s.y || 0,
+              rotateDeg: s.rotateDeg || 0,
+              scale: s.scale || 1,
+              depthMM: s.depthMM || 0,
+              widthMM: s.widthMM || 0,
+              heightMM: s.heightMM || 0,
+              cornerRadiusEnabled: s.cornerRadiusEnabled ?? false,
+              cornerRadiusMM: s.cornerRadiusMM ?? 0,
+              polylines,
+              posXYRot: [0, 0, 0],
+            });
         }
       }
 
       // Include full project (with `board`) so server preserves UI values
       const payload = { projectName: project.name, project: project, items };
       const r = await fetch('http://localhost:5000/export-dxfs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const j = await r.json();
+      const j = await r.json().catch(() => null);
       if (!r.ok) {
         alert('Export DXFs failed: ' + (j && j.error ? j.error : r.statusText));
         return false;
       }
       if (j && j.ok) {
-        if (!silent) alert('DXF files written to project processing_output/');
+        const dxfFiles = Array.isArray(j.dxfFiles) ? j.dxfFiles : [];
+        if (!silent) {
+          if (dxfFiles.length) alert('DXF files written and will be downloaded to your Downloads folder');
+          else alert('DXF files written to project processing_output/');
+        }
+        // If server provided DXF filenames, download each to browser downloads folder
+        if (dxfFiles.length) {
+          for (const fname of dxfFiles) {
+            try {
+              const resp = await fetch('/api/project-output?project=' + encodeURIComponent(project.name || 'project') + '&file=' + encodeURIComponent(fname));
+              if (!resp.ok) {
+                console.warn('Failed to download DXF', fname, resp.status);
+                continue;
+              }
+              const blob = await resp.blob();
+              const a = document.createElement('a');
+              const url = URL.createObjectURL(blob);
+              a.href = url;
+              a.download = fname;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            } catch (e) { console.warn('download DXF failed', fname, e); }
+          }
+        }
       } else {
         if (!silent) alert('Export DXFs completed with unknown result; check server logs.');
       }

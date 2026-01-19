@@ -1424,10 +1424,17 @@ app.post('/export-dxfs', async (req, res) => {
         }
       } catch (e) { console.warn('cleanup failed', e); }
 
-      if (code === 0) {
-        return res.json({ ok: true, results });
+      try {
+        const outFilesFinal = fs.existsSync(out) ? fs.readdirSync(out) : [];
+        const dxfFiles = outFilesFinal.filter(f => f.toLowerCase().endsWith('.dxf'));
+        if (code === 0) {
+          return res.json({ ok: true, results, dxfFiles });
+        }
+        return res.status(500).json({ error: 'python helper failed', code, dxfFiles });
+      } catch (e) {
+        if (code === 0) return res.json({ ok: true, results });
+        return res.status(500).json({ error: 'python helper failed', code });
       }
-      return res.status(500).json({ error: 'python helper failed', code });
     });
     py.on('error', (err) => {
       console.error('python spawn error', err);
@@ -1644,6 +1651,24 @@ app.post('/export-scad', (req, res) => {
   } catch (err) {
     console.error('export-scad failed', err);
     return res.status(500).json({ error: 'export-scad failed', detail: String(err) });
+  }
+});
+
+// Serve files from a project's processing_output folder (e.g., DXF/STL)
+app.get('/api/project-output', (req, res) => {
+  try {
+    const rawProject = req.query && req.query.project ? String(req.query.project) : 'project';
+    const projectName = sanitizeProjectName(Array.isArray(rawProject) ? rawProject[0] : rawProject);
+    const fileName = req.query && req.query.file ? String(req.query.file) : null;
+    if (!fileName) return res.status(400).json({ error: 'missing_file' });
+    const safeFile = path.basename(fileName);
+    const projectFolder = resolveProjectFolder(projectName);
+    const target = path.join(projectFolder, 'processing_output', safeFile);
+    if (!fs.existsSync(target)) return res.status(404).json({ error: 'not_found' });
+    return res.sendFile(target);
+  } catch (e) {
+    console.error('project-output failed', e);
+    return res.status(500).json({ error: 'project_output_failed', detail: String(e) });
   }
 });
 

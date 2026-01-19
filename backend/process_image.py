@@ -135,17 +135,79 @@ def do_export_dxfs(export_dir, projectdir=None):
                             # write DXF using ezdxf for best compatibility
                             doc = ezdxf.new()
                             msp = doc.modelspace()
-                            for poly in polylines:
-                                pts = []
-                                for p in poly:
-                                    # expect {x,y} in mm
-                                    x = float(p.get('x', 0))
-                                    y = float(p.get('y', 0))
-                                    pts.append((x, y))
-                                if pts and pts[0] != pts[-1]:
-                                    pts.append(pts[0])
-                                if pts:
-                                    msp.add_lwpolyline(pts)
+                            # If the source JSON describes a rounded rectangle, write ARC and LINE entities
+                            shape_type = data.get('type')
+                            corner_radius = float(data.get('cornerRadiusMM', 0) or 0)
+                            # geometry center/rotation
+                            cx = float(data.get('x', 0) or 0)
+                            cy = float(data.get('y', 0) or 0)
+                            rot = float(data.get('rotateDeg', 0) or 0)
+
+                            def rotate_point(px, py, deg):
+                                import math
+                                r = math.radians(deg)
+                                cosr = math.cos(r)
+                                sinr = math.sin(r)
+                                return (px * cosr - py * sinr, px * sinr + py * cosr)
+
+                            corner_enabled = bool(data.get('cornerRadiusEnabled'))
+                            if shape_type == 'rect' and corner_enabled and corner_radius > 0 and float(data.get('widthMM', 0) or 0) > 0 and float(data.get('heightMM', 0) or 0) > 0:
+                                w = float(data.get('widthMM', 0) or 0)
+                                h = float(data.get('heightMM', 0) or 0)
+                                halfW = w / 2.0
+                                halfH = h / 2.0
+                                r = min(corner_radius, halfW, halfH)
+                                # corner centers in local coordinates (centered at 0,0)
+                                corners = [
+                                    (-halfW + r, -halfH + r, 180.0, 270.0),
+                                    (halfW - r, -halfH + r, 270.0, 360.0),
+                                    (halfW - r, halfH - r, 0.0, 90.0),
+                                    (-halfW + r, halfH - r, 90.0, 180.0),
+                                ]
+                                import math
+                                # For each corner add an ARC; for each edge add a LINE between adjacent arc endpoints
+                                arc_endpoints = []
+                                for (ccx, ccy, a0, a1) in corners:
+                                    # rotate center then translate
+                                    rcx, rcy = rotate_point(ccx, ccy, -rot)
+                                    rcx += cx; rcy += cy
+                                    # compute start/end points on the arc (angles in degrees, CCW)
+                                    sa = a0 - rot
+                                    ea = a1 - rot
+                                    # start point
+                                    sx = rcx + r * math.cos(math.radians(sa))
+                                    sy = rcy + r * math.sin(math.radians(sa))
+                                    ex = rcx + r * math.cos(math.radians(ea))
+                                    ey = rcy + r * math.sin(math.radians(ea))
+                                    arc_endpoints.append(((sx, sy), (ex, ey), (rcx, rcy), sa, ea))
+
+                                # Create lines between arc endpoints (use end of previous arc to start of next)
+                                num = len(arc_endpoints)
+                                for i in range(num):
+                                    prev = arc_endpoints[i]
+                                    nxt = arc_endpoints[(i + 1) % num]
+                                    # line from prev[1] (end) to nxt[0] (start)
+                                    x1, y1 = prev[1]
+                                    x2, y2 = nxt[0]
+                                    msp.add_line((x1, y1), (x2, y2))
+                                    # add the arc itself (center, radius, start angle, end angle)
+                                    cx_arc, cy_arc = prev[2]
+                                    sa = prev[3]
+                                    ea = prev[4]
+                                    # ezdxf expects start/end angles in degrees CCW
+                                    msp.add_arc((cx_arc, cy_arc), r, sa, ea)
+                            else:
+                                for poly in polylines:
+                                    pts = []
+                                    for p in poly:
+                                        # expect {x,y} in mm
+                                        x = float(p.get('x', 0))
+                                        y = float(p.get('y', 0))
+                                        pts.append((x, y))
+                                    if pts and pts[0] != pts[-1]:
+                                        pts.append(pts[0])
+                                    if pts:
+                                        msp.add_lwpolyline(pts)
                             doc.saveas(outpath)
                             print('Wrote DXF from polyjson (ezdxf):', outpath)
                         else:

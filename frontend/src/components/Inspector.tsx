@@ -370,7 +370,7 @@ export default function Inspector({
           <h3>Board Size</h3>
           <div className="board-controls">
             <div className="field">
-              <label>Width (units)</label>
+              <label>{`Width (units) - ${Math.round((board.gridX || 0) * (board.cellSizeMM || 0))}mm`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -384,7 +384,7 @@ export default function Inspector({
               />
             </div>
             <div className="field">
-              <label>Depth (units)</label>
+              <label>{`Depth (units) - ${Math.round((board.gridY || 0) * (board.cellSizeMM || 0))}mm`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -401,7 +401,7 @@ export default function Inspector({
               {/* Cell size intentionally hidden in inspector per request */}
             </div>
             <div className="field">
-              <label>Height (7mm units)</label>
+              <label>{`Height (7mm units) - ${Math.round((board.height7Units || 0) * 7)}mm`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -488,6 +488,47 @@ export default function Inspector({
               <option value="dxf">DXF</option>
             </select>
           </div>
+
+          {selectedShape.type === "rect" && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div className="field" style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  id="cornerRadiusEnabled"
+                  checked={selectedShape.cornerRadiusEnabled ?? false}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    if (enabled) {
+                      updateShape(selectedShape.id, { cornerRadiusEnabled: true, cornerRadiusMM: selectedShape.cornerRadiusMM ?? 2 });
+                      setEditFields({ ...editFields, cornerRadius: (selectedShape.cornerRadiusMM ?? 2).toFixed(1) });
+                    } else {
+                      updateShape(selectedShape.id, { cornerRadiusEnabled: false });
+                      setEditFields({ ...editFields, cornerRadius: undefined });
+                    }
+                  }}
+                  style={{ width: 'auto', margin: 0 }}
+                />
+                <label htmlFor="cornerRadiusEnabled" style={{ marginBottom: 0 }}>Corner Radius</label>
+              </div>
+
+              <div className="field" style={{ flex: 1, minWidth: 0 }}>
+                <label>radius (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  disabled={!(selectedShape.cornerRadiusEnabled ?? false)}
+                  {...buildNumberField({
+                    editKey: 'cornerRadius',
+                    getValue: () => selectedShape.cornerRadiusMM ?? 2,
+                    format: (n) => n.toFixed(1),
+                    transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { cornerRadiusMM: n }); },
+                  })}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="field">
             <label>Extrude Type</label>
