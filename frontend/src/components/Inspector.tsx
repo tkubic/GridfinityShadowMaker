@@ -26,6 +26,7 @@ interface InspectorProps {
   transferPolylines?: () => void;
   hasPendingPolylines?: boolean;
   editingActive?: boolean;
+  unitsMode?: "mm" | "inches";
   // Actions handed down from App
   exportDxfs?: () => void;
   generateScad?: () => void;
@@ -53,6 +54,7 @@ export default function Inspector({
   editorControls = null,
   exportDxfs,
   generateScad,
+  unitsMode = "inches",
 }: InspectorProps) {
   // Limit the inspector to two known font files for now: Verdana and ARLRDBD (Arial Rounded MT Bold)
   const [availableFonts] = React.useState<string[] | null>([
@@ -81,6 +83,17 @@ export default function Inspector({
   }, [selectedShape, setEditFields]);
   // Keep track of which inspector field (if any) the user is actively editing.
   const [focusedField, setFocusedField] = React.useState<string | null>(null);
+
+  const useInches = unitsMode === "inches";
+  const unitLabel = useInches ? "inches" : "mm";
+  const toDisplay = (mm: number) => (useInches ? mm / 25.4 : mm);
+  const fromDisplay = (val: number) => (useInches ? val * 25.4 : val);
+  const formatDisplay = (n: number, decimals = 1) => (useInches ? n.toFixed(3) : n.toFixed(decimals));
+  const formatBoardLabel = (mm: number) => {
+    if (useInches) return `${(mm / 25.4).toFixed(2)} inches`;
+    return `${Math.round(mm)}mm`;
+  };
+  const unitSizeLabel = useInches ? `${(board.cellSizeMM / 25.4).toFixed(3)} inches` : `${board.cellSizeMM} mm`;
 
   const isStepperInput = (native?: InputEvent) => {
     if (!native) return false;
@@ -370,7 +383,7 @@ export default function Inspector({
           <h3>Board Size</h3>
           <div className="board-controls">
             <div className="field">
-              <label>{`Width (units) - ${Math.round((board.gridX || 0) * (board.cellSizeMM || 0))}mm`}</label>
+              <label>{`Width (units) - ${formatBoardLabel((board.gridX || 0) * (board.cellSizeMM || 0))}`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -384,7 +397,7 @@ export default function Inspector({
               />
             </div>
             <div className="field">
-              <label>{`Depth (units) - ${Math.round((board.gridY || 0) * (board.cellSizeMM || 0))}mm`}</label>
+              <label>{`Depth (units) - ${formatBoardLabel((board.gridY || 0) * (board.cellSizeMM || 0))}`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -401,7 +414,7 @@ export default function Inspector({
               {/* Cell size intentionally hidden in inspector per request */}
             </div>
             <div className="field">
-              <label>{`Height (7mm units) - ${Math.round((board.height7Units || 0) * 7)}mm`}</label>
+              <label>{`Height (7mm units) - ${formatBoardLabel((board.height7Units || 0) * 7)}`}</label>
               <input
                 type="number"
                 step={0.1}
@@ -425,17 +438,17 @@ export default function Inspector({
             </div>
             {(board.chamferEnabled ?? true) && (
               <div className="field">
-                <label>Chamfer Height (mm)</label>
+                <label>{`Chamfer Height (${unitLabel})`}</label>
                 <input
                   type="number"
                   step={0.1}
                   min={0}
-                  value={board.chamferHeight ?? 2}
-                  onChange={(e) => updateBoard({ chamferHeight: Math.max(0, parseFloat(e.target.value) || 0) })}
+                  value={toDisplay(board.chamferHeight ?? 2)}
+                  onChange={(e) => updateBoard({ chamferHeight: Math.max(0, fromDisplay(parseFloat(e.target.value) || 0)) })}
                 />
               </div>
             )}
-            <small>1 unit = {board.cellSizeMM} mm</small>
+            <small>1 unit = {unitSizeLabel}</small>
           </div>
         </>
       )}
@@ -500,7 +513,8 @@ export default function Inspector({
                     const enabled = e.target.checked;
                     if (enabled) {
                       updateShape(selectedShape.id, { cornerRadiusEnabled: true, cornerRadiusMM: selectedShape.cornerRadiusMM ?? 2 });
-                      setEditFields({ ...editFields, cornerRadius: (selectedShape.cornerRadiusMM ?? 2).toFixed(1) });
+                      const displayRadius = toDisplay(selectedShape.cornerRadiusMM ?? 2);
+                      setEditFields({ ...editFields, cornerRadius: formatDisplay(displayRadius, 1) });
                     } else {
                       updateShape(selectedShape.id, { cornerRadiusEnabled: false });
                       setEditFields({ ...editFields, cornerRadius: undefined });
@@ -512,7 +526,7 @@ export default function Inspector({
               </div>
 
               <div className="field" style={{ flex: 1, minWidth: 0 }}>
-                <label>radius (mm)</label>
+                <label>{`radius (${unitLabel})`}</label>
                 <input
                   type="number"
                   step="0.1"
@@ -520,10 +534,10 @@ export default function Inspector({
                   disabled={!(selectedShape.cornerRadiusEnabled ?? false)}
                   {...buildNumberField({
                     editKey: 'cornerRadius',
-                    getValue: () => selectedShape.cornerRadiusMM ?? 2,
-                    format: (n) => n.toFixed(1),
+                    getValue: () => toDisplay(selectedShape.cornerRadiusMM ?? 2),
+                    format: (n) => formatDisplay(n, 1),
                     transform: (n) => Math.max(0, Math.round(n * 10) / 10),
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { cornerRadiusMM: n }); },
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { cornerRadiusMM: fromDisplay(n) }); },
                   })}
                 />
               </div>
@@ -674,31 +688,31 @@ export default function Inspector({
               </div>
 
               <div className="field">
-                <label>Font size (mm)</label>
+                <label>{`Font size (${unitLabel})`}</label>
                 <input
                   type="number"
                   step="0.1"
                   {...buildNumberField({
                     editKey: 'fontSize',
-                    getValue: () => selectedShape.fontSizeMM ?? 15,
-                    format: (n) => n.toFixed(1),
+                    getValue: () => toDisplay(selectedShape.fontSizeMM ?? 15),
+                    format: (n) => formatDisplay(n, 1),
                     transform: (n) => Math.round(n * 10) / 10,
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { fontSizeMM: n }); },
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { fontSizeMM: fromDisplay(n) }); },
                   })}
                 />
               </div>
 
               <div className="field">
-                <label>Depth (mm)</label>
+                <label>{`Depth (${unitLabel})`}</label>
                 <input
                   type="number"
                   step="0.1"
                   {...buildNumberField({
                     editKey: 'depth',
-                    getValue: () => selectedShape.depthMM ?? 0.6,
-                    format: (n) => n.toFixed(1),
+                    getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
+                    format: (n) => formatDisplay(n, 1),
                     transform: (n) => Math.round(n * 10) / 10,
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
@@ -750,7 +764,7 @@ export default function Inspector({
                   {selectedShape.splitToSections && (
                     <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
                       <div className="field">
-                        <label>Section Depths (mm)</label>
+                        <label>{`Section Depths (${unitLabel})`}</label>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             type="number"
@@ -758,13 +772,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth0',
-                              getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[0] ?? 20),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[0] = n;
+                                depths[0] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -777,13 +791,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth1',
-                              getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[1] ?? 15),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[1] = n;
+                                depths[1] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -796,13 +810,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth2',
-                              getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[2] ?? 10),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[2] = n;
+                                depths[2] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -814,7 +828,7 @@ export default function Inspector({
                       </div>
 
                       <div className="field">
-                        <label>Center Island / Offset (mm)</label>
+                        <label>{`Center Island / Offset (${unitLabel})`}</label>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             type="number"
@@ -822,18 +836,18 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionWidth0',
-                              getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                              getValue: () => toDisplay(selectedShape.sectionWidths?.[0] ?? 20),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[0] = n;
+                                widths[0] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               },
                             })}
                             style={{ width: '100%' }}
-                            title="Center island width (mm)"
+                            title={`Center island width (${unitLabel})`}
                           />
                           <input
                             type="number"
@@ -841,17 +855,17 @@ export default function Inspector({
                             min="-9999"
                             {...buildNumberField({
                               editKey: 'sectionWidth1',
-                              getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                              getValue: () => toDisplay(selectedShape.sectionWidths?.[1] ?? 0),
                               format: (n) => n.toString(),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[1] = n;
+                                widths[1] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               },
                             })}
                             style={{ width: '100%' }}
-                            title="Offset of center island from center (mm). Positive shifts right."
+                            title={`Offset of center island from center (${unitLabel}). Positive shifts right.`}
                           />
                         </div>
                         <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>
@@ -881,32 +895,32 @@ export default function Inspector({
 
           <div style={{ display: "flex", gap: 8 }}>
             <div className="field" style={{ flex: 1, minWidth: 0 }}>
-              <label>X (mm)</label>
+              <label>{`X (${unitLabel})`}</label>
               <input
                 type="number"
                 step="0.1"
                 {...buildNumberField({
                   editKey: 'x',
-                  getValue: () => selectedShape.x ?? 0,
-                  format: (n) => n.toFixed(1),
+                  getValue: () => toDisplay(selectedShape.x ?? 0),
+                  format: (n) => formatDisplay(n, 1),
                   transform: (n) => Math.round(n * 10) / 10,
-                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { x: n }); },
+                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { x: fromDisplay(n) }); },
                 })}
                 style={{ width: "100%" }}
               />
             </div>
 
             <div className="field" style={{ flex: 1, minWidth: 0 }}>
-              <label>Y (mm)</label>
+              <label>{`Y (${unitLabel})`}</label>
               <input
                 type="number"
                 step="0.1"
                 {...buildNumberField({
                   editKey: 'y',
-                  getValue: () => selectedShape.y ?? 0,
-                  format: (n) => n.toFixed(1),
+                  getValue: () => toDisplay(selectedShape.y ?? 0),
+                  format: (n) => formatDisplay(n, 1),
                   transform: (n) => Math.round(n * 10) / 10,
-                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { y: n }); },
+                  commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { y: fromDisplay(n) }); },
                 })}
                 style={{ width: "100%" }}
               />
@@ -947,16 +961,16 @@ export default function Inspector({
                 />
               </div>
               <div className="field">
-                <label>Depth (mm)</label>
+                <label>{`Depth (${unitLabel})`}</label>
                 <input
                   type="number"
                   step="0.1"
                   {...buildNumberField({
                     editKey: 'depth',
-                    getValue: () => selectedShape.depthMM ?? 0.6,
-                    format: (n) => n.toFixed(1),
+                    getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
+                    format: (n) => formatDisplay(n, 1),
                     transform: (n) => Math.round(n * 10) / 10,
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                       style={{ width: "100%" }}
                     disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
@@ -993,7 +1007,7 @@ export default function Inspector({
                   {selectedShape.splitToSections && (
                     <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
                       <div className="field">
-                        <label>Section Depths (mm)</label>
+                        <label>{`Section Depths (${unitLabel})`}</label>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             type="number"
@@ -1001,13 +1015,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth0',
-                              getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[0] ?? 20),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[0] = n;
+                                depths[0] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -1020,13 +1034,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth1',
-                              getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[1] ?? 15),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[1] = n;
+                                depths[1] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -1039,13 +1053,13 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionDepth2',
-                              getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                              getValue: () => toDisplay(selectedShape.sectionDepths?.[2] ?? 10),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                depths[2] = n;
+                                depths[2] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionDepths: depths });
                               },
                             })}
@@ -1057,7 +1071,7 @@ export default function Inspector({
                       </div>
 
                       <div className="field">
-                        <label>Center Island / Offset (mm)</label>
+                        <label>{`Center Island / Offset (${unitLabel})`}</label>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <input
                             type="number"
@@ -1065,18 +1079,18 @@ export default function Inspector({
                             min="0"
                             {...buildNumberField({
                               editKey: 'sectionWidth0',
-                              getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                              getValue: () => toDisplay(selectedShape.sectionWidths?.[0] ?? 20),
                               format: (n) => n.toString(),
                               transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[0] = n;
+                                widths[0] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               },
                             })}
                             style={{ width: '100%' }}
-                            title="Center island width (mm)"
+                            title={`Center island width (${unitLabel})`}
                           />
                           <input
                             type="number"
@@ -1084,17 +1098,17 @@ export default function Inspector({
                             min="-9999"
                             {...buildNumberField({
                               editKey: 'sectionWidth1',
-                              getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                              getValue: () => toDisplay(selectedShape.sectionWidths?.[1] ?? 0),
                               format: (n) => n.toString(),
                               commitValue: (n) => {
                                 if (!selectedShape) return;
                                 const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                widths[1] = n;
+                                widths[1] = fromDisplay(n);
                                 updateShape(selectedShape.id, { sectionWidths: widths });
                               },
                             })}
                             style={{ width: '100%' }}
-                            title="Offset of center island from center (mm). Positive shifts right."
+                            title={`Offset of center island from center (${unitLabel}). Positive shifts right.`}
                           />
                         </div>
                         <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>
@@ -1126,31 +1140,31 @@ export default function Inspector({
                 <>
                   <div style={{ display: "flex", gap: 8 }}>
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Width (mm)</label>
+                      <label>{`Width (${unitLabel})`}</label>
                       <input
                         type="number"
                         step="0.1"
                         {...buildNumberField({
                           editKey: 'width',
-                          getValue: () => selectedShape.widthMM ?? 0,
-                          format: (n) => n.toFixed(1),
+                          getValue: () => toDisplay(selectedShape.widthMM ?? 0),
+                          format: (n) => formatDisplay(n, 1),
                           transform: (n) => Math.max(0, Math.round(n * 10) / 10),
-                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { widthMM: n }); },
+                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { widthMM: fromDisplay(n) }); },
                         })}
                       />
                     </div>
 
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Height (mm)</label>
+                      <label>{`Height (${unitLabel})`}</label>
                       <input
                         type="number"
                         step="0.1"
                         {...buildNumberField({
                           editKey: 'height',
-                          getValue: () => selectedShape.heightMM ?? 0,
-                          format: (n) => n.toFixed(1),
+                          getValue: () => toDisplay(selectedShape.heightMM ?? 0),
+                          format: (n) => formatDisplay(n, 1),
                           transform: (n) => Math.max(0, Math.round(n * 10) / 10),
-                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { heightMM: n }); },
+                          commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { heightMM: fromDisplay(n) }); },
                         })}
                       />
                     </div>
@@ -1193,16 +1207,16 @@ export default function Inspector({
                 />
               </div>
               <div className="field">
-                <label>Depth (mm)</label>
+                <label>{`Depth (${unitLabel})`}</label>
                 <input
                   type="number"
                   step="0.1"
                   {...buildNumberField({
                     editKey: 'depth',
-                    getValue: () => selectedShape.depthMM ?? 0.6,
-                    format: (n) => n.toFixed(1),
+                    getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
+                    format: (n) => formatDisplay(n, 1),
                     transform: (n) => Math.round(n * 10) / 10,
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: n }); },
+                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                   style={{ width: "100%" }}
                   disabled={(selectedShape.cutType ?? "Cut") === "Blocker" || (selectedShape.splitToSections ?? false)}
@@ -1241,7 +1255,7 @@ export default function Inspector({
                     <>
                       <div style={{ marginTop: 8, paddingLeft: 8, borderLeft: '2px solid rgba(255,255,255,0.1)' }}>
                         <div className="field">
-                          <label>Section Depths (mm)</label>
+                          <label>{`Section Depths (${unitLabel})`}</label>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <input
                               type="number"
@@ -1249,13 +1263,13 @@ export default function Inspector({
                               min="0"
                               {...buildNumberField({
                                 editKey: 'sectionDepth0',
-                                getValue: () => selectedShape.sectionDepths?.[0] ?? 20,
+                                getValue: () => toDisplay(selectedShape.sectionDepths?.[0] ?? 20),
                                 format: (n) => n.toString(),
                                 transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                                 commitValue: (n) => {
                                   if (!selectedShape) return;
                                   const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                  depths[0] = n;
+                                  depths[0] = fromDisplay(n);
                                   updateShape(selectedShape.id, { sectionDepths: depths });
                                 },
                               })}
@@ -1268,13 +1282,13 @@ export default function Inspector({
                               min="0"
                               {...buildNumberField({
                                 editKey: 'sectionDepth1',
-                                getValue: () => selectedShape.sectionDepths?.[1] ?? 15,
+                                getValue: () => toDisplay(selectedShape.sectionDepths?.[1] ?? 15),
                                 format: (n) => n.toString(),
                                 transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                                 commitValue: (n) => {
                                   if (!selectedShape) return;
                                   const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                  depths[1] = n;
+                                  depths[1] = fromDisplay(n);
                                   updateShape(selectedShape.id, { sectionDepths: depths });
                                 },
                               })}
@@ -1287,13 +1301,13 @@ export default function Inspector({
                               min="0"
                               {...buildNumberField({
                                 editKey: 'sectionDepth2',
-                                getValue: () => selectedShape.sectionDepths?.[2] ?? 10,
+                                getValue: () => toDisplay(selectedShape.sectionDepths?.[2] ?? 10),
                                 format: (n) => n.toString(),
                                 transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                                 commitValue: (n) => {
                                   if (!selectedShape) return;
                                   const depths = [...(selectedShape.sectionDepths ?? [20, 15, 10])] as [number, number, number];
-                                  depths[2] = n;
+                                  depths[2] = fromDisplay(n);
                                   updateShape(selectedShape.id, { sectionDepths: depths });
                                 },
                               })}
@@ -1305,7 +1319,7 @@ export default function Inspector({
                         </div>
 
                         <div className="field">
-                          <label>Center Island / Offset (mm)</label>
+                          <label>{`Center Island / Offset (${unitLabel})`}</label>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <input
                               type="number"
@@ -1313,18 +1327,18 @@ export default function Inspector({
                               min="0"
                               {...buildNumberField({
                                 editKey: 'sectionWidth0',
-                                getValue: () => selectedShape.sectionWidths?.[0] ?? 20,
+                                getValue: () => toDisplay(selectedShape.sectionWidths?.[0] ?? 20),
                                 format: (n) => n.toString(),
                                 transform: (n) => Math.max(0, Math.round(n * 10) / 10),
                                 commitValue: (n) => {
                                   if (!selectedShape) return;
                                   const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                  widths[0] = n;
+                                  widths[0] = fromDisplay(n);
                                   updateShape(selectedShape.id, { sectionWidths: widths });
                                 },
                               })}
                               style={{ width: '100%' }}
-                              title="Center island width (mm)"
+                              title={`Center island width (${unitLabel})`}
                             />
                             <input
                               type="number"
@@ -1332,17 +1346,17 @@ export default function Inspector({
                               min="-9999"
                               {...buildNumberField({
                                 editKey: 'sectionWidth1',
-                                getValue: () => selectedShape.sectionWidths?.[1] ?? 0,
+                                getValue: () => toDisplay(selectedShape.sectionWidths?.[1] ?? 0),
                                 format: (n) => n.toString(),
                                 commitValue: (n) => {
                                   if (!selectedShape) return;
                                   const widths = [...(selectedShape.sectionWidths ?? [20, 0])] as [number, number];
-                                  widths[1] = n;
+                                  widths[1] = fromDisplay(n);
                                   updateShape(selectedShape.id, { sectionWidths: widths });
                                 },
                               })}
                               style={{ width: '100%' }}
-                              title="Offset of center island from center (mm). Positive shifts right."
+                              title={`Offset of center island from center (${unitLabel}). Positive shifts right.`}
                             />
                           </div>
                           <small style={{ color: '#888', fontSize: '0.75rem' }}>Center island width, then offset from center</small>

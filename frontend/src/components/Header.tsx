@@ -13,9 +13,11 @@ type Props = {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  unitsMode: "mm" | "inches";
+  onUnitsChange: (mode: "mm" | "inches") => void;
 };
 
-export default function Header({ projectName, onRename, onSave, onLoadClick, activeTab, setActiveTab, onUndo, onRedo, canUndo, canRedo }: Props) {
+export default function Header({ projectName, onRename, onSave, onLoadClick, activeTab, setActiveTab, onUndo, onRedo, canUndo, canRedo, unitsMode, onUnitsChange }: Props) {
   const [draft, setDraft] = useState(projectName);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -81,6 +83,30 @@ export default function Header({ projectName, onRename, onSave, onLoadClick, act
             </button>
           </div>
         </div>
+      </div>
+
+      <div style={{ flex: "0 1 auto", display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
+        <div style={{ fontSize: 12, color: "#333" }}>Units</div>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={unitsMode === "mm"}
+            onChange={(e) => {
+              if (e.target.checked) onUnitsChange("mm");
+            }}
+          />
+          mm
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <input
+            type="checkbox"
+            checked={unitsMode === "inches"}
+            onChange={(e) => {
+              if (e.target.checked) onUnitsChange("inches");
+            }}
+          />
+          inches
+        </label>
       </div>
 
       <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center" }}>

@@ -50,6 +50,7 @@ function App() {
   const [shapeCounter, setShapeCounter] = useState<number>(0);
   // local edit fields for inspector inputs (allow typing before commit)
   const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [unitsMode, setUnitsMode] = useState<"mm" | "inches">("inches");
 
   // Active tab (trace / canvas / render)
   const [activeTab, setActiveTab] = useState<"trace" | "canvas" | "render">("canvas");
@@ -70,6 +71,10 @@ function App() {
   React.useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   React.useEffect(() => { undoStackRef.current = undoStack; }, [undoStack]);
   React.useEffect(() => { redoStackRef.current = redoStack; }, [redoStack]);
+
+  React.useEffect(() => {
+    setEditFields({});
+  }, [unitsMode]);
 
   const { board, shapes } = project;
 
@@ -836,7 +841,7 @@ function App() {
   }
 
   // Export DXFs using the server endpoint. Extracted so Inspector can call it.
-  async function exportDxfs(silent = false) {
+  async function exportDxfs(silent = false, allowDownload = true) {
     try {
       const items: Array<Record<string, unknown>> = [];
       function rotatePoint(px: number, py: number, deg: number) {
@@ -1148,7 +1153,7 @@ function App() {
           else alert('DXF files written to project processing_output/');
         }
         // If server provided DXF filenames, download each to browser downloads folder
-        if (dxfFiles.length) {
+        if (allowDownload && dxfFiles.length) {
           for (const fname of dxfFiles) {
             try {
               const resp = await fetch('/api/project-output?project=' + encodeURIComponent(project.name || 'project') + '&file=' + encodeURIComponent(fname));
@@ -1186,7 +1191,7 @@ function App() {
       // switch to the Render tab so the user sees the 3D preview
       setActiveTab('render');
       // Ensure DXFs are exported first and completed (server writes GSM files used by SCAD generation)
-      const exported = await exportDxfs(true);
+      const exported = await exportDxfs(true, false);
       if (exported === false) {
         // export failed or user was alerted; abort SCAD generation
         return;
@@ -1504,6 +1509,12 @@ function App() {
       ? null
       : shapes.find((s) => s.id === selectedItem) || null;
 
+  const toDisplayLength = (mm: number) => (unitsMode === "inches" ? mm / 25.4 : mm);
+  const formatLengthField = (mm: number, decimals = 1, preferFixed = true) => {
+    if (unitsMode === "inches") return toDisplayLength(mm).toFixed(3);
+    return preferFixed ? mm.toFixed(decimals) : mm.toString();
+  };
+
   // Helper to select an item and initialize buffered edit fields
   // `append` toggles membership for multi-select (ctrl/meta click)
   function selectItem(id: "board" | string, append = false) {
@@ -1530,33 +1541,36 @@ function App() {
     // determine depth edit field based on cutType/type
     const cut = s.cutType ?? (s.type === "text" ? "Raised" : "Cut");
     let depthField: string | undefined;
+    let depthValueMM: number | undefined;
     if (cut === "Blocker") {
       const boardUnits = board.height7Units ?? 6;
-      const blockerDepth = Math.max(0, boardUnits - 1) * 7;
-      depthField = blockerDepth.toFixed(1);
+      depthValueMM = Math.max(0, boardUnits - 1) * 7;
     } else if (s.depthMM !== undefined && s.depthMM !== null) {
-      depthField = s.depthMM.toFixed(1);
+      depthValueMM = s.depthMM;
     } else if (cut === "Cut") {
-      depthField = (15).toFixed(1);
+      depthValueMM = 15;
     } else if (cut === "Raised") {
-      depthField = (0.6).toFixed(1);
+      depthValueMM = 0.6;
     } else if (s.type === "text") {
-      depthField = (0.6).toFixed(1);
+      depthValueMM = 0.6;
     } else {
-      depthField = (0.6).toFixed(1);
+      depthValueMM = 0.6;
+    }
+    if (depthValueMM !== undefined) {
+      depthField = formatLengthField(depthValueMM, 1, true);
     }
 
     const baseFields: Record<string, string> = {
-      x: (s.x ?? 0).toFixed(1),
-      y: (s.y ?? 0).toFixed(1),
+      x: formatLengthField(s.x ?? 0, 1, true),
+      y: formatLengthField(s.y ?? 0, 1, true),
       scale: ((s.scale ?? 1)).toFixed(1),
       rotate: ((s.rotateDeg ?? 0)).toFixed(1),
-      width: (s.widthMM ?? 0).toString(),
-      height: (s.heightMM ?? 0).toString(),
+      width: formatLengthField(s.widthMM ?? 0, 1, false),
+      height: formatLengthField(s.heightMM ?? 0, 1, false),
       // radius removed; oval uses width/height
       cutType: (s.cutType ?? (s.type === "text" ? "Raised" : "Cut")),
       font: s.fontName ?? "'Arial Rounded MT Bold', Arial, Helvetica, sans-serif",
-      fontSize: ((s.fontSizeMM ?? 15)).toFixed(1),
+      fontSize: formatLengthField(s.fontSizeMM ?? 15, 1, true),
       text: s.text ?? s.name,
       fontBold: s.fontBold ? "1" : "0",
       fontItalic: s.fontItalic ? "1" : "0",
@@ -1585,6 +1599,11 @@ function App() {
         onRedo={redo}
         canUndo={undoStack.length > 0}
         canRedo={redoStack.length > 0}
+        unitsMode={unitsMode}
+        onUnitsChange={(mode) => {
+          setUnitsMode(mode);
+          setEditFields({});
+        }}
       />
       <input ref={gsmInputRef} type="file" accept=".gsm,application/json" style={{ display: 'none' }} onChange={handleGsmFile} />
 
@@ -1662,6 +1681,7 @@ function App() {
           editorControls={editorControls}
           exportDxfs={exportDxfs}
           generateScad={generateScad}
+          unitsMode={unitsMode}
           processImageAgain={(params) => {
             // trigger re-processing using saved project image; send params as form data
             const fd = new FormData();
