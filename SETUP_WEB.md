@@ -1,9 +1,8 @@
 # Gridfinity Shadow Maker — Web + Python Setup (Quick Start)
 
-This project now includes a web front-end (React + TypeScript) and a lightweight Node.js backend (Express) that runs the existing Python image-processing code. This document explains how to set up and run the project locally on Windows for the first time. OpenSCAD instructions are intentionally omitted here.
+This project now includes a web front-end (React + TypeScript) and a lightweight Node.js backend (Express) that runs the existing Python image-processing code. This document explains how to set up and run the project locally. OpenSCAD instructions are intentionally omitted here.
 
 Prerequisites
-- Windows (instructions use PowerShell). Adjust for macOS/Linux as needed.
 - Node.js (v16+ recommended) and npm
 - Python 3.10+ (or your preferred 3.x), with pip
 
@@ -13,54 +12,27 @@ High-level components
 - `src/processing.py` — existing image-processing / DXF export code (Python)
 
 Quick checklist (copy/paste)
-1. Open a PowerShell and install Node/npm if you don't have it: https://nodejs.org/
-2. Create and activate a Python virtual environment (recommended):
+1. Install Node/npm if you don't have it: https://nodejs.org/
+2. Run the cross-platform setup script from the repo root:
 
-```powershell
-python -m venv .venv
-# activate the venv
-.\.venv\Scripts\Activate.ps1
+```bash
+python scripts/setup.py
 ```
 
-3. Install Python dependencies (in the activated venv)
+3. Start the backend server
 
-```powershell
-pip install --upgrade pip
-pip install opencv_python pillow ezdxf pyperclip numpy pyqt5
-# other utilities used by the desktop code (optional but recommended):
-pip install colorama fonttools iniconfig packaging pytest typing_extensions
-```
-
-Notes:
-- `pyqt5` is required only if you run the original desktop UI; the server-side Python runner uses `src.processing` and monkeypatches display functions, but PyQt may still be imported by `src.processing` in some flows.
-- Installing OpenCV (`opencv_python`) can be heavy; if it causes issues, consult the package docs or install a matching wheel for your Python version.
-
-4. Install frontend dependencies
-
-```powershell
-cd frontend
-npm install
-```
-
-5. Start the backend server
-
-Open a PowerShell in `backend/` and run (this kills any process using port 5000, then starts the server):
-
-```powershell
-$line=(netstat -ano | findstr :5000 | Select-Object -First 1); if ($line) { $found=($line -split '\s+')[-1]; Write-Host "Killing PID $found"; taskkill /PID $found /F } else { Write-Host "No process using port 5000" }; node server.js
+```bash
+node backend/server.js
 ```
 
 The server listens on `http://localhost:5000` by default and exposes endpoints used by the frontend:
 - `POST /process-image` — accepts an `image` file and optional `project`, `threshold`, `offset`, `token`, `resolution` form fields.
 - `POST /save-project` — saves a `.gsm` project file into the per-project folder (sent as JSON).
 
-6. Start the frontend dev server
+4. Start the frontend dev server
 
-Open a SECOND PowerShell in the project root (or `frontend`) and run:
-
-```powershell
-cd frontend
-npm run dev
+```bash
+npm --prefix frontend run dev
 ```
 
 Vite will show the local dev address (usually `http://localhost:5173`). Open that in your browser.
@@ -77,8 +49,8 @@ Where files are stored
 - Processing outputs are under `../<projectName>/processing_output`.
 
 Troubleshooting
-- Backend fails to start: ensure Node is installed and port 5000 is free. Use the PowerShell `netstat`/`taskkill` snippet above to clear the port.
-- Python errors during processing: ensure the activated Python environment has the required packages. Re-run `pip install` inside your venv.
+- Backend fails to start: ensure Node is installed and port 5000 is free.
+- Python errors during processing: run `python scripts/setup.py` to recreate `.venv` and install requirements.
 - DXF appears off-canvas: DXF coordinates are preserved exactly. If coordinates are outside your board bounds, either pan/zoom (not implemented) or import a DXF exported with coordinates relative to the desired board origin.
 
 Developer notes
@@ -96,16 +68,12 @@ If you want, I can:
 - Add this content into `README.md` (replacing or appending the current setup section), or
 - Commit this as a new `SETUP_WEB.md` file (already prepared). Which do you prefer?
 
-Additional Windows notes
------------------------
+Additional notes
+----------------
 - OpenSCAD CLI: when running headless renders the project prefers a CLI
-  binary such as `openscad.com` on Windows. If the backend returns an error
-  or opens the OpenSCAD GUI, try pointing the server at the CLI wrapper by
-  setting `OPENSCAD_BIN` to the full path, for example in PowerShell:
-
-```powershell
-$env:OPENSCAD_BIN = 'C:\Program Files\OpenSCAD\openscad.com'
-```
+  binary such as `openscad.com` on Windows or `OpenSCAD` on macOS. If the
+  backend returns an error or opens the OpenSCAD GUI, set `OPENSCAD_BIN`
+  to the full path for your platform.
 
 - Developer dashboard: `tools/dev_dashboard.py` provides a small Tk UI to
   start/stop the frontend and backend, view logs, and launch the browser.

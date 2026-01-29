@@ -58,16 +58,15 @@ curl "http://localhost:5000/api/render/output-stl?project=example" -o example.st
 - `src/processing.py` — image processing, tracing, DXF export, writing assets to per-project folders and `assets/`.
 - `Launch GSM Server.py` — single-file GUI launcher (Tk) to start/stop frontend + backend and show logs; has logic to hide console (relaunch under `pythonw.exe`), kill processes on ports, and capture stdout/stderr.
 - `tools/dev_dashboard.py` — alternate dashboard implementation (Tk) used for development.
-- `scripts/setup.ps1` — PowerShell setup helper: creates `.venv`, installs Python packages from `requirements.txt` (when present) using the venv Python, and runs `npm install` in `frontend/`.
+- `scripts/setup.py` — cross-platform setup helper: creates `.venv`, installs Python packages from `requirements.txt` using the venv Python, and runs `npm install` in `frontend/` and `backend/`.
 - `README.md` — human-facing quickstart and details.
 
 ## Setup / Run Commands (Windows + manual)
 
-### Full setup (Windows PowerShell)
+### Full setup (cross-platform)
 
-```powershell
-\.\tools\setup.ps1
-# (or .\tests\scripts\setup.ps1 depending on location)
+```bash
+python scripts/setup.py
 ```
 
 - The setup script creates `.venv`, installs packages, and runs `npm install`.
@@ -82,7 +81,7 @@ curl "http://localhost:5000/api/render/output-stl?project=example" -o example.st
 - Prefer headless OpenSCAD CLI (`openscad.com`) to avoid opening a GUI and blocking the process. `OPENSCAD_BIN` environment variable is honored for explicit override.
 - Project state is saved to per-project folders; `.gsm` single-file project format contains all assets and geometry to reload a project.
 - The frontend uses functional state updates for shape edits to reduce clobbering during multi-shape operations.
-- Windows environment specifics: PowerShell-based `setup.ps1` and `openscad-cli.bat` exist; the launcher manages console visibility with `pythonw.exe` relaunch and uses `CREATE_NO_WINDOW` to avoid showing child consoles.
+- Windows environment specifics: `openscad-cli.bat` exists; the launcher keeps the console visible to show errors.
 
 ## Testing & Debugging
 - If Vite chooses a different port, check launcher logs for the actual `Local` URL printed by Vite (e.g., 5173 → 5181).
@@ -105,8 +104,8 @@ curl "http://localhost:5000/api/render/output-stl?project=example" -o example.st
   - `backend/server.js`
   - `src/processing.py`
   - `Launch GSM Server.py`
-  - `scripts/setup.ps1`
+  - `scripts/setup.py`
 
 - Contacts / context notes:
   - Author: repository owner (repository owner)
-  - Development preference: Windows + PowerShell, but the stack runs on Linux/macOS with small adjustments.
+  - Development preference: Windows, but the stack runs on Linux/macOS with small adjustments.

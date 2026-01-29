@@ -226,6 +226,43 @@ function findPythonCmd(repoRoot) {
   return null;
 }
 
+const REQUIRED_PY_MODULES = ['cv2', 'numpy', 'ezdxf', 'pyperclip', 'PIL', 'PyQt5'];
+
+function checkPythonModules(python, modules = REQUIRED_PY_MODULES) {
+  try {
+    const modulesJson = JSON.stringify(modules).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const script = [
+      'import importlib, json, sys',
+      `mods = json.loads('${modulesJson}')`,
+      'missing = []',
+      'for m in mods:',
+      '    try:',
+      '        importlib.import_module(m)',
+      '    except Exception as e:',
+      "        missing.append({'module': m, 'error': str(e)})",
+      'if missing:',
+      "    print(json.dumps({'missing': missing}))",
+      '    sys.exit(2)'
+    ].join('\n');
+    const sp = spawnSync(python.cmd, (python.args || []).concat(['-c', script]), { encoding: 'utf8' });
+    if (sp.status === 0) {
+      return { ok: true, missing: [] };
+    }
+    let missing = [];
+    try {
+      const parsed = JSON.parse(String(sp.stdout || '').trim() || '{}');
+      if (parsed && Array.isArray(parsed.missing)) missing = parsed.missing;
+    } catch (e) { /* ignore */ }
+    return {
+      ok: false,
+      missing,
+      detail: (sp.stderr || sp.stdout || '').trim()
+    };
+  } catch (e) {
+    return { ok: false, missing: [], detail: String(e) };
+  }
+}
+
 // Simple Server-Sent Events (SSE) clients registry for render notifications
 const sseClients = new Set();
 
@@ -844,6 +881,20 @@ app.post('/process-image', upload.single('image'), (req, res) => {
     return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
   }
 
+  const depCheck = checkPythonModules(python);
+  if (!depCheck.ok) {
+    const missingList = depCheck.missing && depCheck.missing.length
+      ? depCheck.missing.map(m => `${m.module}${m.error ? ` (${m.error})` : ''}`).join(', ')
+      : depCheck.detail || 'Unknown dependency error';
+    console.error('Missing Python dependencies:', missingList);
+    return res.status(500).json({
+      error: 'python_missing_deps',
+      message: 'Python dependencies are missing. Run scripts/setup.py to create .venv and install requirements.txt.',
+      missing: depCheck.missing,
+      detail: missingList
+    });
+  }
+
   const pyArgs = python.args.concat([path.join(__dirname, 'process_image.py'), workInputPath, workingOutDir, '--projectdir', repoRoot]);
   if (projectFolder) {
     // Also tell the Python side where to put per-project outputs and where the
@@ -1410,7 +1461,20 @@ app.post('/export-dxfs', async (req, res) => {
       else console.log('No .poly.json files found in processing_output; Python export will have nothing to convert unless synthesis occurred.');
     } catch (e) { console.warn('Failed to list processing_output before export:', e); }
 
-    const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot]), { stdio: 'inherit' });
+      const depCheck = checkPythonModules(python);
+      if (!depCheck.ok) {
+        const missingList = depCheck.missing && depCheck.missing.length
+          ? depCheck.missing.map(m => `${m.module}${m.error ? ` (${m.error})` : ''}`).join(', ')
+          : depCheck.detail || 'Unknown dependency error';
+        console.error('Missing Python dependencies:', missingList);
+        return res.status(500).json({
+          error: 'python_missing_deps',
+          message: 'Python dependencies are missing. Run scripts/setup.py to create .venv and install requirements.txt.',
+          missing: depCheck.missing,
+          detail: missingList
+        });
+      }
+      const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--export-dxfs', out, '--projectdir', repoRoot]), { stdio: 'inherit' });
     py.on('close', (code) => {
       // Clean up any temporary per-shape JSON files so processing_output
       // only contains final DXF assets. This removes .poly.json and
@@ -1490,6 +1554,19 @@ app.post('/export-scad', (req, res) => {
       if (!python) {
         return res.status(500).json({ error: 'python_not_found', message: 'No Python interpreter found. Set GSM_PYTHON_EXE or install Python.' });
       }
+      const depCheck = checkPythonModules(python);
+      if (!depCheck.ok) {
+        const missingList = depCheck.missing && depCheck.missing.length
+          ? depCheck.missing.map(m => `${m.module}${m.error ? ` (${m.error})` : ''}`).join(', ')
+          : depCheck.detail || 'Unknown dependency error';
+        console.error('Missing Python dependencies:', missingList);
+        return res.status(500).json({
+          error: 'python_missing_deps',
+          message: 'Python dependencies are missing. Run scripts/setup.py to create .venv and install requirements.txt.',
+          missing: depCheck.missing,
+          detail: missingList
+        });
+      }
       const py = spawn(python.cmd, python.args.concat([path.join(__dirname, 'process_image.py'), '--generate-scad', projectFolder, '--projectname', projectName, '--projectdir', repoRoot]), { stdio: ['ignore', 'pipe', 'pipe'] });
       let outBuf = '';
       let errBuf = '';
@@ -1553,7 +1630,8 @@ app.post('/export-scad', (req, res) => {
               path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD', 'openscad.com'),
               path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD', 'openscad.exe'),
               path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD (Nightly)', 'openscad.com'),
-              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD (Nightly)', 'openscad.exe')
+              path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'OpenSCAD (Nightly)', 'openscad.exe'),
+              '/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD'
             ];
             let chosen = null;
             if (envBin && fs.existsSync(envBin)) {
@@ -1580,7 +1658,7 @@ app.post('/export-scad', (req, res) => {
               if (!chosen) {
                 return res.status(500).json({
                   error: 'openscad not found',
-                  detail: 'OpenSCAD CLI not found. Set environment variable OPENSCAD_BIN to the full path to openscad.com (Windows) or ensure `openscad.com`/`openscad.exe` is on PATH. Example (PowerShell): $env:OPENSCAD_BIN = "C:\\Program Files\\OpenSCAD\\openscad.com"'
+                  detail: 'OpenSCAD CLI not found. Set OPENSCAD_BIN to the full path (e.g., C:\\Program Files\\OpenSCAD\\openscad.com on Windows or /Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD on macOS), or ensure `openscad` is on PATH.'
                 });
               }
             }

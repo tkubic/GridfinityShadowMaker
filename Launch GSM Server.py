@@ -5,8 +5,7 @@ Single-file launcher that provides the same Dev Server Dashboard UI as the
 tools/dev_dashboard.py implementation but copied here so users can double-
 click this file without depending on the `tools/` package.
 
-Double-clicking this script will hide the console (Windows) and show only
-the GUI. Set `GSM_SHOW_CONSOLE=1` to keep the console visible.
+This launcher keeps the console visible so startup failures are obvious.
 """
 
 import subprocess
@@ -28,28 +27,20 @@ import webbrowser
 # - Frontend: run Vite dev in the `frontend` folder
 # - Backend: run the Node backend server from repo root
 DEFAULT_FRONTEND_CMD = r"npm --prefix frontend run dev"
-DEFAULT_BACKEND_CMD = r"node backend\\server.js"
+DEFAULT_BACKEND_CMD = r"node backend/server.js"
 
 # You can override by setting environment variables `GSM_FRONTEND_CMD` and `GSM_BACKEND_CMD`.
 FRONTEND_CMD = os.environ.get('GSM_FRONTEND_CMD', DEFAULT_FRONTEND_CMD)
 BACKEND_CMD = os.environ.get('GSM_BACKEND_CMD', DEFAULT_BACKEND_CMD)
 
-# Optional: PowerShell executable to wrap scripts (keeps compatibility)
-POWERSHELL_EXE = os.environ.get('GSM_POWERSHELL_EXE', 'powershell')
-
-
 # Helper to coerce a command string into a list for subprocess.Popen
 def make_command_list(cmd_str: str):
     """Return a list suitable for Popen depending on the string.
-    If cmd_str ends with .ps1 or .psm1 we wrap it with the PowerShell launcher.
     If it looks like a simple command (npm, node) we split it with shlex.
     """
     cs = cmd_str.strip()
     if not cs:
         return []
-    lower = cs.lower()
-    if lower.endswith('.ps1') or lower.endswith('.psm1'):
-        return [POWERSHELL_EXE, "-ExecutionPolicy", "Bypass", "-NoLogo", "-NoProfile", "-File", cs]
     # otherwise split by shell rules (works cross-platform)
     try:
         return shlex.split(cs, posix=(os.name != 'nt'))
@@ -69,27 +60,16 @@ def find_pids_by_port(port: int):
     pids = set()
     try:
         if os.name == 'nt':
-            # Try using PowerShell's Get-NetTCPConnection (more reliable)
-            try:
-                out = subprocess.check_output([
-                    'powershell', '-NoProfile', '-Command',
-                    f"Get-NetTCPConnection -LocalPort {port} -State Listen | Select-Object -ExpandProperty OwningProcess"
-                ], stderr=subprocess.DEVNULL, text=True)
-                for line in out.splitlines():
-                    line = line.strip()
-                    if line.isdigit():
-                        pids.add(int(line))
-            except Exception:
-                # Fallback to netstat parsing
-                cmd = 'netstat -ano -p tcp'
-                out = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True)
-                for line in out.splitlines():
-                    if f':{port} ' in line or f':{port}\r' in line or line.strip().endswith(f':{port}'):
-                        parts = line.split()
-                        if parts:
-                            pid = parts[-1]
-                            if pid.isdigit():
-                                pids.add(int(pid))
+            # Fallback to netstat parsing
+            cmd = 'netstat -ano -p tcp'
+            out = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True)
+            for line in out.splitlines():
+                if f':{port} ' in line or f':{port}\r' in line or line.strip().endswith(f':{port}'):
+                    parts = line.split()
+                    if parts:
+                        pid = parts[-1]
+                        if pid.isdigit():
+                            pids.add(int(pid))
         else:
             # Try lsof first
             try:
@@ -150,7 +130,7 @@ def kill_pids(pids, logger=None):
 
 
 class ProcessPanel:
-    def __init__(self, parent, title):
+    def __init__(self, parent, title, on_message=None):
         self.frame = ttk.Frame(parent)
         self.title_label = ttk.Label(self.frame, text=title, font=("Segoe UI", 10, "bold"))
         self.title_label.pack(anchor="w", padx=4, pady=(4, 0))
@@ -175,6 +155,7 @@ class ProcessPanel:
         self.stdout_thread = None
         self.stderr_thread = None
         self.queue = queue.Queue()
+        self.on_message = on_message
 
     def log(self, message: str):
         """Append text to the panel safely from the main thread."""
@@ -182,22 +163,19 @@ class ProcessPanel:
         self.text.insert("end", message)
         self.text.see("end")
         self.text.config(state="disabled")
+        try:
+            if os.environ.get('GSM_ECHO_LOGS', '1') == '1':
+                sys.stdout.write(message)
+                sys.stdout.flush()
+        except Exception:
+            pass
 
     def _reader_thread(self, stream, prefix=""):
         try:
-            # stream is opened in binary mode; read bytes and decode here.
-            for raw in iter(stream.readline, b''):
+            for raw in iter(stream.readline, ''):
                 if not raw:
                     break
-                # Attempt to decode as UTF-8 first
-                try:
-                    s = raw.decode('utf-8', errors='replace')
-                except Exception:
-                    try:
-                        s = raw.decode('cp1252', errors='replace')
-                    except Exception:
-                        s = raw.decode('utf-8', errors='replace')
-
+                s = str(raw)
                 # Heuristic: if decoded text contains mojibake sequences like
                 # 'â' or 'Ã' which often indicate the bytes were UTF-8 but
                 # previously decoded as cp1252, try to repair by round-tripping
@@ -205,12 +183,10 @@ class ProcessPanel:
                 if re.search(r'[\u00C2\u00E2\u00C3]', s):
                     try:
                         repaired = s.encode('cp1252', errors='replace').decode('utf-8', errors='replace')
-                        # If repaired seems better (fewer replacement chars), use it
                         if repaired.count('\ufffd') <= s.count('\ufffd'):
                             s = repaired
                     except Exception:
                         pass
-
                 self.queue.put(prefix + s)
         except Exception as e:
             try:
@@ -229,6 +205,19 @@ class ProcessPanel:
         )
         self.stdout_thread.start()
         self.stderr_thread.start()
+        threading.Thread(target=self._watch_process_exit, daemon=True).start()
+
+    def _watch_process_exit(self):
+        try:
+            if not self.process:
+                return
+            code = self.process.wait()
+            self.queue.put(f"[Process exited with code {code}]\n")
+        except Exception as e:
+            try:
+                self.queue.put(f"[Process exit watcher failed: {e}]\n")
+            except Exception:
+                pass
 
     def clear_logs(self):
         """Clear the text area contents."""
@@ -246,23 +235,17 @@ class ProcessPanel:
 
         creationflags = 0
         popen_kwargs = {
-            # Read binary and decode ourselves so we can robustly handle
-            # different encodings and recover from mojibake (UTF-8 vs CP1252 issues).
             'stdout': subprocess.PIPE,
             'stderr': subprocess.PIPE,
             'stdin': subprocess.DEVNULL,
             'bufsize': 1,
+            'text': True,
+            'encoding': 'utf-8',
+            'errors': 'replace',
             'cwd': REPO_ROOT,
         }
         if os.name == 'nt':
-            # Prevent console windows from popping up for child console apps
-            # when this dashboard is running without a console (pythonw).
             creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-            try:
-                creationflags |= subprocess.CREATE_NO_WINDOW
-            except Exception:
-                # Some Python builds may not define CREATE_NO_WINDOW; ignore
-                pass
             popen_kwargs['creationflags'] = creationflags
 
         try:
@@ -278,9 +261,9 @@ class ProcessPanel:
                 self.log(f"[Direct exec failed, retrying via shell: {cmd_str}]\n")
                 if os.name == 'nt':
                     # Use cmd.exe /c so PATH resolution behaves like a normal shell
-                    self.process = subprocess.Popen(cmd_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, bufsize=1, creationflags=creationflags, shell=True, cwd=REPO_ROOT)
+                    self.process = subprocess.Popen(cmd_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, bufsize=1, creationflags=creationflags, shell=True, cwd=REPO_ROOT, text=True, encoding='utf-8', errors='replace')
                 else:
-                    self.process = subprocess.Popen(cmd_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, bufsize=1, shell=True, cwd=REPO_ROOT)
+                    self.process = subprocess.Popen(cmd_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, bufsize=1, shell=True, cwd=REPO_ROOT, text=True, encoding='utf-8', errors='replace')
             except Exception as e2:
                 self.log(f"[Failed to start process via shell: {e2}]\n")
                 self.process = None
@@ -340,6 +323,14 @@ class ProcessPanel:
                 except Exception:
                     # If regex fails for any reason, fall back to raw message
                     pass
+                # Suppress known non-actionable Vite warning about baseline-browser-mapping data age
+                if 'baseline-browser-mapping' in msg:
+                    continue
+                try:
+                    if callable(self.on_message):
+                        self.on_message(msg)
+                except Exception:
+                    pass
                 self.log(msg)
         except queue.Empty:
             pass
@@ -349,6 +340,7 @@ class TerminalDashboardApp:
     def __init__(self, root):
         self.root = root
         root.title("GSM Server Dashboard")
+        self.frontend_url = None
 
         # Attempt to set the window icon to assets/GSM.ico if available
         try:
@@ -369,7 +361,7 @@ class TerminalDashboardApp:
         left_pane = ttk.PanedWindow(root, orient="vertical")
         left_pane.grid(row=0, column=0, rowspan=2, sticky="nsew")
 
-        self.frontend_panel = ProcessPanel(left_pane, "Frontend Server")
+        self.frontend_panel = ProcessPanel(left_pane, "Frontend Server", on_message=self._capture_frontend_url)
         self.backend_panel = ProcessPanel(left_pane, "Backend Server")
 
         left_pane.add(self.frontend_panel.frame, weight=1)
@@ -431,7 +423,7 @@ class TerminalDashboardApp:
         btn_launch = ttk.Button(right_frame, text="Launch App", command=self.launch_app)
         btn_launch.grid(row=4, column=0, sticky='sew', pady=(6, 4))
 
-        ttk.Label(right_frame, text="(Uses PowerShell scripts or commands)", font=("Segoe UI", 8)).grid(row=5, column=0, sticky='nw', pady=(6, 0))
+        ttk.Label(right_frame, text="(Commands run in console; logs shown here)", font=("Segoe UI", 8)).grid(row=5, column=0, sticky='nw', pady=(6, 0))
 
         # Poll queues
         self._schedule_queue_poll()
@@ -475,17 +467,6 @@ class TerminalDashboardApp:
         if not cmd_list:
             self.frontend_panel.log("[No frontend command configured]\n")
             return
-        # If this is a PowerShell script path and it doesn't exist, warn instead of starting
-        raw = FRONTEND_CMD.strip()
-        if raw.lower().endswith('.ps1') and not os.path.exists(raw):
-            # Resolve relative paths against the repo root
-            candidate = os.path.join(REPO_ROOT, raw)
-            if raw.lower().endswith('.ps1') and not os.path.exists(candidate):
-                self.frontend_panel.log(f"[PowerShell script not found: {raw}]\n")
-                self.frontend_panel.log("Set the environment variable GSM_FRONTEND_CMD to a valid script path or command.\n")
-                return
-            else:
-                cmd_list = make_command_list(candidate)
         self.frontend_panel.start_process(cmd_list)
 
     def stop_frontend(self):
@@ -508,15 +489,6 @@ class TerminalDashboardApp:
         if not cmd_list:
             self.backend_panel.log("[No backend command configured]\n")
             return
-        raw = BACKEND_CMD.strip()
-        if raw.lower().endswith('.ps1') and not os.path.exists(raw):
-            candidate = os.path.join(REPO_ROOT, raw)
-            if raw.lower().endswith('.ps1') and not os.path.exists(candidate):
-                self.backend_panel.log(f"[PowerShell script not found: {raw}]\n")
-                self.backend_panel.log("Set the environment variable GSM_BACKEND_CMD to a valid script path or command.\n")
-                return
-            else:
-                cmd_list = make_command_list(candidate)
         self.backend_panel.start_process(cmd_list)
 
     def restart_backend(self):
@@ -554,13 +526,21 @@ class TerminalDashboardApp:
             pass
 
     def launch_app(self):
-        url = os.environ.get('GSM_LAUNCH_URL', 'http://localhost:5173/')
+        url = self.frontend_url or os.environ.get('GSM_LAUNCH_URL', 'http://localhost:5173/')
         try:
             webbrowser.open(url)
             # Log to frontend panel to give feedback
             self.frontend_panel.log(f"[Opening browser: {url}]\n")
         except Exception as e:
             self.frontend_panel.log(f"[Failed to open browser: {e}]\n")
+
+    def _capture_frontend_url(self, msg: str):
+        try:
+            m = re.search(r'http://localhost:\d+/?', msg)
+            if m:
+                self.frontend_url = m.group(0)
+        except Exception:
+            pass
 
 
     def on_close(self):
@@ -570,52 +550,18 @@ class TerminalDashboardApp:
 
 
 def main():
-    # On Windows, prefer to run under pythonw (no console) when double-clicked.
-    # If we detect we're running under a console-backed python.exe and the
-    # user hasn't requested to keep the console, attempt to relaunch with
-    # pythonw.exe located next to the current interpreter. We set an env
-    # marker to avoid relaunch loops.
-    if sys.platform.startswith("win"):
-        try:
-            if os.environ.get('GSM_SHOW_CONSOLE', '') != '1' and os.environ.get('GSM_RELAUNCHED', '') != '1':
-                exe = sys.executable or ''
-                exe_lower = exe.lower()
-                # If we're already running under pythonw, skip relaunch.
-                if exe_lower.endswith('python.exe'):
-                    pythonw = os.path.join(os.path.dirname(exe), 'pythonw.exe')
-                    if os.path.exists(pythonw):
-                        # Relaunch using pythonw so no console window is created.
-                        new_env = os.environ.copy()
-                        new_env['GSM_RELAUNCHED'] = '1'
-                        try:
-                            subprocess.Popen([pythonw, os.path.abspath(__file__)] + sys.argv[1:], env=new_env, cwd=REPO_ROOT, close_fds=True)
-                            # Exit the console-backed process immediately.
-                            return
-                        except Exception:
-                            # Fall back to hiding the console below if relaunch fails.
-                            pass
-
-            # If we couldn't relaunch with pythonw, keep the old behaviour of
-            # hiding the console window via Win32 API (may still show briefly).
-            try:
-                import ctypes
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DevServerDashboard")
-            except Exception:
-                pass
-
-            try:
-                show_console = os.environ.get('GSM_SHOW_CONSOLE', '') == '1'
-                if not show_console:
-                    h = ctypes.windll.kernel32.GetConsoleWindow()
-                    if h:
-                        SW_HIDE = 0
-                        ctypes.windll.user32.ShowWindow(h, SW_HIDE)
-            except Exception:
-                pass
-        except Exception:
-            # If anything goes wrong here, don't prevent the GUI from starting.
-            pass
-
+    try:
+        venv_python = os.path.join(REPO_ROOT, '.venv', 'Scripts' if os.name == 'nt' else 'bin', 'python.exe' if os.name == 'nt' else 'python')
+        if os.path.exists(venv_python) and os.environ.get('GSM_VENV_RELAUNCHED', '') != '1':
+            current = os.path.abspath(sys.executable or '')
+            target = os.path.abspath(venv_python)
+            if current.lower() != target.lower():
+                new_env = os.environ.copy()
+                new_env['GSM_VENV_RELAUNCHED'] = '1'
+                subprocess.Popen([venv_python, os.path.abspath(__file__)] + sys.argv[1:], env=new_env, cwd=REPO_ROOT, close_fds=True)
+                return
+    except Exception:
+        pass
     root = tk.Tk()
     app = TerminalDashboardApp(root)
     root.geometry('1100x700')

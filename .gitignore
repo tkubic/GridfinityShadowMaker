@@ -75,3 +75,4 @@ raw photos/calibration_files/*.json
 # Ignore any .logs folders
 /.logs/
 **/.logs/
+/.venv

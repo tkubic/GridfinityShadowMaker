@@ -53,19 +53,34 @@ Below is a short demo video showing the full workflow:
 </table>
 ---
 
-## 🟢 Installation (Windows Only)
+## 🟢 Installation (Windows, macOS, Linux)
 
 GSM is designed so **non‑technical users can install it easily**.
 
 ### ✔ You only need to install:
-1. **Python 3.13** (64‑bit, *Add to PATH*)  
-   - Python 3.14+ is currently not recommended  
-2. **OpenSCAD Nightly Build**  
-3. Run the provided **setup.ps1** script  
+1. **Node.js + npm** (required before running setup)
+2. **Python 3.13** (64‑bit, *Add to PATH*)  
+  - Python 3.14+ is currently not recommended  
+3. **OpenSCAD Nightly Build**  
+4. Run the provided **setup.py** script  
 
 ---
 
-## 1) Install Python 3.13
+## 1) Install Node.js + npm
+
+Download Node.js LTS from:  
+https://nodejs.org/
+
+Verify:
+
+```bash
+node --version
+npm --version
+```
+
+---
+
+## 2) Install Python 3.13
 
 Download Python 3.13 from:  
 https://www.python.org/downloads/
@@ -74,14 +89,14 @@ Ensure **Add to PATH** is selected during installation.
 
 Verify:
 
-```powershell
+```bash
 python --version
 pip --version
 ```
 
 ---
 
-## 2) Install OpenSCAD Nightly
+## 3) Install OpenSCAD Nightly
 
 Download the latest nightly build from:  
 https://openscad.org/downloads.html#snapshots
@@ -91,30 +106,18 @@ The stable release relies on CGAL‑only rendering, which is significantly slowe
 
 ---
 
-## 3) Run the Setup Script
+## 4) Run the Setup Script
 
-Inside the `scripts` folder, right‑click **setup.ps1** and select **Run with PowerShell**.
-
-The setup script will:
-- Install Python dependencies  
-- Automatically install Node.js if missing  
-- Install all frontend dependencies  
-
-> If a black window opens and closes you may have an execution policy issue. Open a new powershell by right-clicking on PowerShell and select Run as Administrator.
-> Then run the following command:
-
-```powershell
-Set-ExecutionPolicy RemoteSigned -Scope LocalMachine
-```
-
-> This changes the execution policy for all users on the machine, but be aware that it requires admin rights and could have wider implications.
+Run scripts/setup.py. The setup script will:
+- Create a local `.venv` in the repo root  
+- Install Python dependencies from `requirements.txt`  
+- Install frontend and backend npm dependencies  
 
 ---
 
-## 4) Launch Gridfinity Shadow Maker
+## 5) Launch Gridfinity Shadow Maker
 
 Double‑click **Launch GSM Server.py** in the root folder  
-(or right‑click → *Open with Python*).
 
 Click **Launch App** to open GSM in your web browser.
 
