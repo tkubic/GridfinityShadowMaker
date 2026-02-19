@@ -89,6 +89,12 @@ export default function Inspector({
   const toDisplay = (mm: number) => (useInches ? mm / 25.4 : mm);
   const fromDisplay = (val: number) => (useInches ? val * 25.4 : val);
   const formatDisplay = (n: number, decimals = 1) => (useInches ? n.toFixed(3) : n.toFixed(decimals));
+  // Round values to the UI step: in mm we keep tenths (0.1), in inches use per-field step
+  const roundToStep = (n: number, stepDisplay: number) => {
+    if (!isFinite(stepDisplay) || stepDisplay <= 0) return n;
+    const factor = 1 / stepDisplay;
+    return Math.round(n * factor) / factor;
+  };
   const formatBoardLabel = (mm: number) => {
     if (useInches) return `${(mm / 25.4).toFixed(2)} inches`;
     return `${Math.round(mm)}mm`;
@@ -441,7 +447,7 @@ export default function Inspector({
                 <label>{`Chamfer Height (${unitLabel})`}</label>
                 <input
                   type="number"
-                  step={0.1}
+                  step={useInches ? 0.001 : 0.1}
                   min={0}
                   value={toDisplay(board.chamferHeight ?? 2)}
                   onChange={(e) => updateBoard({ chamferHeight: Math.max(0, fromDisplay(parseFloat(e.target.value) || 0)) })}
@@ -691,12 +697,12 @@ export default function Inspector({
                 <label>{`Font size (${unitLabel})`}</label>
                 <input
                   type="number"
-                  step="0.1"
+                  step={useInches ? 0.02 : 0.1}
                   {...buildNumberField({
                     editKey: 'fontSize',
                     getValue: () => toDisplay(selectedShape.fontSizeMM ?? 15),
                     format: (n) => formatDisplay(n, 1),
-                    transform: (n) => Math.round(n * 10) / 10,
+                    transform: (n) => roundToStep(n, useInches ? 0.02 : 0.1),
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { fontSizeMM: fromDisplay(n) }); },
                   })}
                 />
@@ -706,12 +712,12 @@ export default function Inspector({
                 <label>{`Depth (${unitLabel})`}</label>
                 <input
                   type="number"
-                  step="0.1"
+                  step={0.1}
                   {...buildNumberField({
                     editKey: 'depth',
                     getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
                     format: (n) => formatDisplay(n, 1),
-                    transform: (n) => Math.round(n * 10) / 10,
+                    transform: (n) => roundToStep(n, useInches ? 0.1 : 0.1),
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                   style={{ width: "100%" }}
@@ -896,14 +902,14 @@ export default function Inspector({
           <div style={{ display: "flex", gap: 8 }}>
             <div className="field" style={{ flex: 1, minWidth: 0 }}>
               <label>{`X (${unitLabel})`}</label>
-              <input
+                <input
                 type="number"
-                step="0.1"
+                step={useInches ? 0.05 : 0.1}
                 {...buildNumberField({
                   editKey: 'x',
                   getValue: () => toDisplay(selectedShape.x ?? 0),
                   format: (n) => formatDisplay(n, 1),
-                  transform: (n) => Math.round(n * 10) / 10,
+                  transform: (n) => roundToStep(n, useInches ? 0.05 : 0.1),
                   commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { x: fromDisplay(n) }); },
                 })}
                 style={{ width: "100%" }}
@@ -912,14 +918,14 @@ export default function Inspector({
 
             <div className="field" style={{ flex: 1, minWidth: 0 }}>
               <label>{`Y (${unitLabel})`}</label>
-              <input
+                <input
                 type="number"
-                step="0.1"
+                step={useInches ? 0.05 : 0.1}
                 {...buildNumberField({
                   editKey: 'y',
                   getValue: () => toDisplay(selectedShape.y ?? 0),
                   format: (n) => formatDisplay(n, 1),
-                  transform: (n) => Math.round(n * 10) / 10,
+                  transform: (n) => roundToStep(n, useInches ? 0.05 : 0.1),
                   commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { y: fromDisplay(n) }); },
                 })}
                 style={{ width: "100%" }}
@@ -964,12 +970,12 @@ export default function Inspector({
                 <label>{`Depth (${unitLabel})`}</label>
                 <input
                   type="number"
-                  step="0.1"
+                  step={useInches ? 0.001 : 0.1}
                   {...buildNumberField({
                     editKey: 'depth',
                     getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
                     format: (n) => formatDisplay(n, 1),
-                    transform: (n) => Math.round(n * 10) / 10,
+                    transform: (n) => roundForUnits(n, 1),
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                       style={{ width: "100%" }}
@@ -1143,12 +1149,12 @@ export default function Inspector({
                       <label>{`Width (${unitLabel})`}</label>
                       <input
                         type="number"
-                        step="0.1"
+                        step={useInches ? 0.05 : 0.1}
                         {...buildNumberField({
                           editKey: 'width',
                           getValue: () => toDisplay(selectedShape.widthMM ?? 0),
                           format: (n) => formatDisplay(n, 1),
-                          transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                          transform: (n) => Math.max(0, roundToStep(n, useInches ? 0.05 : 0.1)),
                           commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { widthMM: fromDisplay(n) }); },
                         })}
                       />
@@ -1158,12 +1164,12 @@ export default function Inspector({
                       <label>{`Height (${unitLabel})`}</label>
                       <input
                         type="number"
-                        step="0.1"
+                        step={useInches ? 0.05 : 0.1}
                         {...buildNumberField({
                           editKey: 'height',
                           getValue: () => toDisplay(selectedShape.heightMM ?? 0),
                           format: (n) => formatDisplay(n, 1),
-                          transform: (n) => Math.max(0, Math.round(n * 10) / 10),
+                          transform: (n) => Math.max(0, roundToStep(n, useInches ? 0.05 : 0.1)),
                           commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { heightMM: fromDisplay(n) }); },
                         })}
                       />
