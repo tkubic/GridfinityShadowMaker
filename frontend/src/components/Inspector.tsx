@@ -12,8 +12,8 @@ interface InspectorProps {
   board: BoardConfig;
   selectedItem: "board" | string;
   selectedShape: ToolShape | null;
-  editFields: Record<string, string>;
-  setEditFields: (f: Record<string, string>) => void;
+  editFields: Record<string, string | undefined>;
+  setEditFields: (f: Record<string, string | undefined> | ((prev: Record<string, string | undefined>) => Record<string, string | undefined>)) => void;
   commitEditField: (key: string) => void;
   updateShape: (id: string, partial: Partial<ToolShape>, opts?: { skipHistory?: boolean }) => void;
   updateBoard: (partial: Partial<BoardConfig>) => void;
@@ -30,7 +30,16 @@ interface InspectorProps {
   // Actions handed down from App
   exportDxfs?: () => void;
   generateScad?: () => void;
-  editorControls?: any;
+  editorControls?: {
+    getState?: () => { brushSize?: number; color?: string; mode?: string };
+    setBrushSize?: (n: number) => void;
+    setColor?: (s: string) => void;
+    setMode?: (s: string) => void;
+    cropSelection?: () => void;
+    deleteSelection?: () => void;
+    save?: () => void;
+    cancel?: () => void;
+  } | null;
 }
 
 export default function Inspector({
@@ -39,7 +48,7 @@ export default function Inspector({
   selectedShape,
   editFields,
   setEditFields,
-  commitEditField,
+  // commitEditField is provided by App but not used here
   updateShape,
   updateBoard,
   deleteShape,
@@ -311,7 +320,8 @@ export default function Inspector({
             <button className="action-text-button" onClick={() => editor?.deleteSelection?.()}>Delete</button>
             <button className="action-text-button" onClick={() => {
               try {
-                const live = (window as any).__editorControls || editor;
+                const win = (window as unknown) as { __editorControls?: typeof editor };
+                const live = win.__editorControls || editor;
                 live?.save?.();
               } catch (e) { console.error('Inspector.save error', e); }
             }}>Save</button>
@@ -975,7 +985,7 @@ export default function Inspector({
                     editKey: 'depth',
                     getValue: () => toDisplay(selectedShape.depthMM ?? 0.6),
                     format: (n) => formatDisplay(n, 1),
-                    transform: (n) => roundForUnits(n, 1),
+                    transform: (n) => roundToStep(n, useInches ? 0.1 : 0.1),
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { depthMM: fromDisplay(n) }); },
                   })}
                       style={{ width: "100%" }}
@@ -1407,7 +1417,7 @@ export default function Inspector({
                   // shape-local bounding-box center so the visual geometry is
                   // actually mirrored (not just translated). Otherwise fall
                   // back to mirroring by moving the shape center across board X.
-                  const sp: any = selectedShape as any;
+                  const sp = selectedShape as ToolShape & { dxfPaths?: Array<Array<{ x?: number | string; y?: number | string }>> };
                   if (sp.dxfPaths && Array.isArray(sp.dxfPaths) && sp.dxfPaths.length) {
                     // Collect all points to compute local bbox
                     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -1425,9 +1435,9 @@ export default function Inspector({
                     if (!isFinite(minX)) return;
                     const cx = (minX + maxX) / 2;
                     // Reflect each point across cx
-                    const newPaths = sp.dxfPaths.map((path: any[]) => {
+                    const newPaths = sp.dxfPaths.map((path: Array<{ x?: number | string; y?: number | string }>) => {
                       if (!path) return path;
-                      return path.map((p: any) => ({ x: Math.round((2 * cx - Number(p.x || 0)) * 10) / 10, y: Math.round(Number(p.y || 0) * 10) / 10 }));
+                      return path.map((p) => ({ x: Math.round((2 * cx - Number(p.x || 0)) * 10) / 10, y: Math.round(Number(p.y || 0) * 10) / 10 }));
                     });
                     updateShape(selectedShape.id, { dxfPaths: newPaths });
                     return;
@@ -1446,7 +1456,7 @@ export default function Inspector({
                 className="action-text-button"
                 onClick={() => {
                   if (!selectedShape) return;
-                  const sp: any = selectedShape as any;
+                  const sp = selectedShape as ToolShape & { dxfPaths?: Array<Array<{ x?: number | string; y?: number | string }>> };
                   if (sp.dxfPaths && Array.isArray(sp.dxfPaths) && sp.dxfPaths.length) {
                     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
                     for (const path of sp.dxfPaths) {
@@ -1462,9 +1472,9 @@ export default function Inspector({
                     }
                     if (!isFinite(minY)) return;
                     const cy = (minY + maxY) / 2;
-                    const newPaths = sp.dxfPaths.map((path: any[]) => {
+                    const newPaths = sp.dxfPaths.map((path: Array<{ x?: number | string; y?: number | string }>) => {
                       if (!path) return path;
-                      return path.map((p: any) => ({ x: Math.round(Number(p.x || 0) * 10) / 10, y: Math.round((2 * cy - Number(p.y || 0)) * 10) / 10 }));
+                      return path.map((p) => ({ x: Math.round(Number(p.x || 0) * 10) / 10, y: Math.round((2 * cy - Number(p.y || 0)) * 10) / 10 }));
                     });
                     updateShape(selectedShape.id, { dxfPaths: newPaths });
                     return;
