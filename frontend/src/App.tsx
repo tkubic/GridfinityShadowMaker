@@ -49,7 +49,7 @@ function App() {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [shapeCounter, setShapeCounter] = useState<number>(0);
   // local edit fields for inspector inputs (allow typing before commit)
-  const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [editFields, setEditFields] = useState<Record<string, string | undefined>>({});
   const [unitsMode, setUnitsMode] = useState<"mm" | "inches">("inches");
 
   // Active tab (trace / canvas / render)

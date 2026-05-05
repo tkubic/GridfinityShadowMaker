@@ -9,7 +9,20 @@ type Props = {
   pollIntervalMs?: number;
 };
 
-function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geometry: THREE.BufferGeometry | null, userInteracted: boolean, justLoadedRef: React.MutableRefObject<boolean>, controlsRef: React.RefObject<any> }) {
+// Minimal interface describing the shape of the controls object we interact with.
+// We keep this narrow to avoid using `any` while still supporting common APIs
+// exposed by OrbitControls-like objects used by `drei` / three.js.
+interface ControlsLike {
+  target?: { set?: (x: number, y: number, z: number) => void } | THREE.Vector3;
+  update?: () => void;
+  domElement?: HTMLElement;
+  object?: { domElement?: HTMLElement };
+  onMouseWheel?: EventListener;
+  handleMouseWheel?: EventListener;
+  handleWheel?: EventListener;
+}
+
+function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geometry: THREE.BufferGeometry | null, userInteracted: boolean, justLoadedRef: React.MutableRefObject<boolean>, controlsRef: React.RefObject<unknown> }) {
   const meshRef = useRef<THREE.Mesh | null>(null);
   const { camera, size } = useThree();
 
@@ -29,7 +42,8 @@ function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geome
     // Compute distances required to fit the object's X and Y extents into
     // the camera frustum (respecting aspect ratio) and pick the larger
     // distance so the whole object is visible.
-    const vfovDeg = (camera as any).fov || 50;
+    const cam = camera as THREE.PerspectiveCamera;
+    const vfovDeg = (typeof cam?.fov === 'number') ? cam.fov : 50;
     const vfov = THREE.MathUtils.degToRad(vfovDeg);
     const aspect = (size && size.width && size.height) ? (size.width / size.height) : 1;
     // horizontal fov derived from vertical fov and aspect
@@ -49,19 +63,22 @@ function Scene({ geometry, userInteracted, justLoadedRef, controlsRef }: { geome
 
     // Update OrbitControls target if available so controls orbit around center
     try {
-      const ctrl = controlsRef && controlsRef.current;
-      if (ctrl && ctrl.target) {
-        ctrl.target.set(center.x, center.y, center.z);
-        if (typeof ctrl.update === 'function') ctrl.update();
+      const ctrl = controlsRef && (controlsRef.current as ControlsLike | null);
+      const target = ctrl && ctrl.target as THREE.Vector3 | undefined;
+      if (target && typeof target.set === 'function') {
+        target.set(center.x, center.y, center.z);
       }
-    } catch (e) {
+      if (ctrl && typeof ctrl.update === 'function') {
+        ctrl.update();
+      }
+    } catch {
       // non-fatal
     }
 
     // clear the justLoaded flag after fitting so subsequent geometry loads don't
     // auto-fit unless explicitly set
     if (justLoadedRef.current) justLoadedRef.current = false;
-  }, [geometry, camera, size, controlsRef]);
+  }, [geometry, camera, size, controlsRef, userInteracted, justLoadedRef]);
 
   if (!geometry) return null;
 
@@ -79,13 +96,13 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
   const [loading, setLoading] = useState(false);
   const [lastSuccessTs, setLastSuccessTs] = useState<number | null>(null);
   const [activeProject, setActiveProject] = useState<string | undefined>(projectName);
-  const loaderRef = useRef(new STLLoader());
+  const loaderRef = useRef<STLLoader | null>(new STLLoader() as unknown as STLLoader);
   const mountedRef = useRef(true);
   const intervalRef = useRef<number | undefined>(undefined);
   const userInteractedRef = useRef(false);
   const prevPosCountRef = useRef<number | null>(null);
   const justLoadedRef = useRef(false);
-  const controlsRef = useRef<any>(null);
+  const controlsRef = useRef<unknown | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -106,10 +123,11 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
         }
         const buf = await resp.arrayBuffer();
         // parse with STLLoader
-        const parsed = loaderRef.current.parse(buf) as THREE.BufferGeometry;
+        const parsed = loaderRef.current!.parse(buf) as THREE.BufferGeometry;
         if (parsed && mountedRef.current) {
           // avoid resetting geometry/camera if geometry appears identical
-          const pos = (parsed.attributes && (parsed.attributes as any).position) || null;
+          type ParsedAttributes = { position?: { count: number } };
+          const pos = (parsed.attributes && (parsed.attributes as unknown as ParsedAttributes).position) || null;
           const count = pos ? pos.count : null;
           if (count !== null && prevPosCountRef.current === count) {
             // geometry likely unchanged; update timestamp but don't replace geometry
@@ -135,7 +153,7 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
         if (!r.ok) return;
         const list = await r.json();
         if (Array.isArray(list) && list.length > 0) setActiveProject(list[0].name);
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -166,9 +184,10 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
         return;
       }
       const buf = await resp.arrayBuffer();
-      const parsed = loaderRef.current.parse(buf) as THREE.BufferGeometry;
+      const parsed = loaderRef.current!.parse(buf) as THREE.BufferGeometry;
       if (parsed) {
-        const pos = (parsed.attributes && (parsed.attributes as any).position) || null;
+        type ParsedAttributes = { position?: { count: number } };
+        const pos = (parsed.attributes && (parsed.attributes as unknown as ParsedAttributes).position) || null;
         const count = pos ? pos.count : null;
         if (count !== null && prevPosCountRef.current === count) {
           setLastSuccessTs(ts);
@@ -207,7 +226,7 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
           if (name === activeProject) {
             // auto-load the fresh STL
             // ensure any errors inside reload are caught and logged
-            void reload().catch((err) => console.error('reload failed from SSE', err));
+            void reload().catch((err: unknown) => console.error('reload failed from SSE', err));
           }
         } catch (e) { console.warn('bad sse payload', e); }
       });
@@ -237,25 +256,57 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="action-text-button" onClick={reload} style={{ marginRight: 8 }}>Reload</button>
           <button className="action-text-button" onClick={async () => {
-            if (!activeProject) return;
+            // Prefer the live prop `projectName` (reflects the current Project Name input)
+            const current = (projectName && projectName.trim().length > 0) ? projectName : activeProject;
+            if (!current) return;
             try {
               const backendBase = 'http://localhost:5000';
-              const url = `${backendBase}/api/render/output-stl?projectName=${encodeURIComponent(activeProject)}`;
-              const resp = await fetch(url);
-              if (!resp.ok) {
-                console.warn('Failed to download STL, server returned', resp.status);
+              const buildUrl = (name: string) => `${backendBase}/api/render/output-stl?projectName=${encodeURIComponent(name)}&ts=${Date.now()}`;
+              // Prefer fetching the already-loaded STL (`activeProject`) because
+              // users may have edited the Project Name input without regenerating.
+              const desiredName = (projectName && projectName.trim().length > 0) ? projectName : undefined;
+              const candidates: string[] = [];
+              if (activeProject) candidates.push(activeProject);
+              if (desiredName && candidates.indexOf(desiredName) === -1) candidates.push(desiredName);
+
+              let resp: Response | null = null;
+              let lastStatus = 0;
+              for (const name of candidates) {
+                try {
+                  resp = await fetch(buildUrl(name), { cache: 'no-store' });
+                  if (resp.ok) {
+                    // found a valid STL
+                    break;
+                  }
+                  lastStatus = resp.status;
+                } catch {
+                  // network error; record and continue
+                  lastStatus = 0;
+                  resp = null;
+                }
+              }
+              if (!resp || !resp.ok) {
+                console.warn('Failed to download STL; no rendered STL found for project(s)', candidates.join(', '), lastStatus || 'network error');
                 return;
               }
+
               const blob = await resp.blob();
-              const filename = `${activeProject || 'project'}.stl`;
+              // Use the typed Project Name for the download filename if provided,
+              // otherwise fall back to the loaded active project name.
+              const filename = `${(desiredName || activeProject || 'project')}.stl`;
               const urlBlob = window.URL.createObjectURL(blob);
               const a = document.createElement('a');
+              a.style.display = 'none';
               a.href = urlBlob;
               a.download = filename;
               document.body.appendChild(a);
-              a.click();
-              a.remove();
-              window.URL.revokeObjectURL(urlBlob);
+              try { a.click(); } catch {
+                try { a.dispatchEvent(new MouseEvent('click', { view: window, bubbles: true, cancelable: true })); } catch { /* ignore */ }
+              }
+              setTimeout(() => {
+                try { document.body.removeChild(a); } catch { /* ignore */ }
+                try { window.URL.revokeObjectURL(urlBlob); } catch { /* ignore */ }
+              }, 5000);
             } catch (e) {
               console.warn('Download STL failed', e);
             }
@@ -272,7 +323,7 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
             <ambientLight intensity={0.6} />
             <directionalLight position={[10, 10, 10]} intensity={0.8} />
             <Scene geometry={geometry} userInteracted={userInteractedRef.current} justLoadedRef={justLoadedRef} controlsRef={controlsRef} />
-            <OrbitControls ref={controlsRef as any} enablePan enableZoom enableRotate onStart={() => { userInteractedRef.current = true; }} onChange={() => { userInteractedRef.current = true; }} />
+            <OrbitControls ref={(r) => { (controlsRef as React.MutableRefObject<unknown | null>).current = r; }} enablePan enableZoom enableRotate onStart={() => { userInteractedRef.current = true; }} onChange={() => { userInteractedRef.current = true; }} />
           </Canvas>
         )}
       </div>
@@ -285,29 +336,25 @@ export default React.forwardRef(function StlViewer({ projectName, pollIntervalMs
 // with `{ passive: true }` where the underlying controls expose the handler.
 // This is best-effort: if the underlying control implementation changes it's
 // harmless (we catch errors).
-function useMakeControlsWheelPassive(controlsRef: React.RefObject<any>) {
+function useMakeControlsWheelPassive(controlsRef: React.RefObject<unknown>) {
   useEffect(() => {
-    const controls = controlsRef.current;
+    const controls = controlsRef.current as ControlsLike | null;
     if (!controls) return;
     try {
       const dom = controls.domElement || (controls && controls.object && controls.object.domElement) || null;
       // Handler function name differs across three.js versions; try common names
       const handler = controls.onMouseWheel || controls.handleMouseWheel || controls.handleWheel;
       if (dom && handler) {
-        try {
-          dom.removeEventListener('wheel', handler as EventListener);
-        } catch (e) { /* ignore */ }
+        try { dom.removeEventListener('wheel', handler as EventListener); } catch { /* ignore */ }
         try {
           dom.addEventListener('wheel', handler as EventListener, { passive: true });
-        } catch (e) {
-          // Some browsers may throw if options object not supported; fall back
-          try { dom.addEventListener('wheel', handler as EventListener, false); } catch (ee) { /* ignore */ }
+        } catch {
+          try { dom.addEventListener('wheel', handler as EventListener, false); } catch { /* ignore */ }
         }
       }
-    } catch (e) {
+    } catch {
       // non-fatal
-      // console.debug('Could not adjust wheel listener to passive', e);
     }
-  }, [controlsRef.current]);
+  }, [controlsRef]);
 }
 

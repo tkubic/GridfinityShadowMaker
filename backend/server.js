@@ -9,6 +9,10 @@ const REPO_ROOT = path.join(__dirname, '..');
 const CALIB_DIR = path.join(__dirname, '..', 'raw photos', 'calibration_files');
 const CALIB_PKL_PATH = path.join(CALIB_DIR, 'calibration_data.pkl');
 const CALIB_JSON_PATH = path.join(CALIB_DIR, 'calibration_data.json');
+// When set to '1' or 'true', the server will always load the single
+// default calibration file (calibration_data.pkl / calibration_data.json)
+// and will ignore any device-specific or auto-generated calibration files.
+const FORCE_DEFAULT_CALIB = String(process.env.FORCE_DEFAULT_CALIB || '').toLowerCase() === '1' || String(process.env.FORCE_DEFAULT_CALIB || '').toLowerCase() === 'true';
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif', '.webp'];
 
 function sanitizeProjectName(raw) {
@@ -81,7 +85,7 @@ function loadCalibrationData(deviceId) {
     const deviceJson = path.join(CALIB_DIR, `calibration_${key}.json`);
     const devicePkl = path.join(CALIB_DIR, `calibration_${key}.pkl`);
     let deviceTombstone = false;
-    if (deviceId) {
+    if (!FORCE_DEFAULT_CALIB && deviceId) {
       if (isDisabled(deviceJson) || isDisabled(devicePkl)) deviceTombstone = true;
       if (fs.existsSync(deviceJson) && !isDisabled(deviceJson)) deviceCandidates.push({ path: deviceJson, type: 'json', cacheKey: key });
       if (fs.existsSync(devicePkl) && !isDisabled(devicePkl)) deviceCandidates.push({ path: devicePkl, type: 'pkl', cacheKey: key });
@@ -89,10 +93,77 @@ function loadCalibrationData(deviceId) {
     if (fs.existsSync(CALIB_JSON_PATH) && !isDisabled(CALIB_JSON_PATH)) defaultCandidates.push({ path: CALIB_JSON_PATH, type: 'json', cacheKey: 'default' });
     if (fs.existsSync(CALIB_PKL_PATH) && !isDisabled(CALIB_PKL_PATH)) defaultCandidates.push({ path: CALIB_PKL_PATH, type: 'pkl', cacheKey: 'default' });
 
+    // If operator asked to force the single default calibration file, ignore
+    // any device-specific candidates and only consider the default file(s).
+    if (FORCE_DEFAULT_CALIB) {
+      if (!defaultCandidates.length) return null;
+      const withTimes = defaultCandidates.map((c) => {
+        const stat = fs.statSync(c.path);
+        return { ...c, mtime: stat.mtimeMs || stat.ctimeMs || Date.now() };
+      });
+      const chosenDefault = withTimes.reduce((latest, curr) => (curr.mtime > latest.mtime ? curr : latest), withTimes[0]);
+      const cacheEntryDefault = cachedCalibration.get(chosenDefault.cacheKey);
+      if (cacheEntryDefault && cacheEntryDefault.mtime === chosenDefault.mtime) return cacheEntryDefault.data;
+
+      // Load chosenDefault now (same logic used below)
+      let dataDef = null;
+      if (chosenDefault.type === 'json') {
+        const raw = fs.readFileSync(chosenDefault.path, 'utf8');
+        dataDef = JSON.parse(raw);
+      } else {
+        const python = findPythonCmd(REPO_ROOT);
+        if (!python) return null;
+        const script = [
+          'import pickle, json, numpy as np',
+          'from pathlib import Path',
+          'p = Path(' + JSON.stringify(chosenDefault.path.replace(/\\/g, '\\\\')) + ')',
+          'data = pickle.load(open(p, "rb"))',
+          'def normalize(x):',
+          '    if isinstance(x, np.ndarray):',
+          '        return normalize(x.tolist())',
+          '    if isinstance(x, dict):',
+          '        return {k: normalize(v) for k, v in x.items()}',
+          '    if isinstance(x, (list, tuple)):','        return [normalize(v) for v in x]',
+          '    try:',
+          '        return normalize(x.tolist())',
+          '    except Exception:',
+          '        return x',
+          'out = {k: normalize(v) for k, v in data.items()}',
+          'print(json.dumps(out, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))',
+        ].join('\n');
+        const sp = spawnSync(python.cmd, (python.args || []).concat(['-c', script]), { encoding: 'utf8', timeout: 5000 });
+        if (sp.status !== 0) {
+          console.error('Failed to convert calibration pkl to json', sp.stderr || sp.stdout);
+          return null;
+        }
+        dataDef = JSON.parse(sp.stdout || '{}');
+      }
+
+      let friendlyNameDef = path.basename(chosenDefault.path);
+      try {
+        const baseNoExt = chosenDefault.path.replace(/\.[^.]+$/, '');
+        const metaPath = `${baseNoExt}.meta.json`;
+        if (fs.existsSync(metaPath)) {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          if (meta && typeof meta.originalName === 'string' && meta.originalName.trim()) {
+            friendlyNameDef = meta.originalName.trim();
+          } else if (meta && typeof meta.storedFilename === 'string') {
+            friendlyNameDef = meta.storedFilename;
+          }
+        }
+      } catch (e) {
+        // non-fatal
+      }
+
+      const dataWithMetaDef = { ...dataDef, filename: friendlyNameDef, storedFilename: path.basename(chosenDefault.path) };
+      cachedCalibration.set(chosenDefault.cacheKey, { mtime: chosenDefault.mtime, data: dataWithMetaDef });
+      return dataWithMetaDef;
+    }
+
     // If this device was explicitly disabled, do not fall back to default calibration
-    if (deviceId && deviceTombstone && deviceCandidates.length === 0) return null;
+    if (!FORCE_DEFAULT_CALIB && deviceId && deviceTombstone && deviceCandidates.length === 0) return null;
     // Prefer a device-specific calibration when a deviceId is provided; otherwise fall back to default
-    const candidates = deviceCandidates.length ? deviceCandidates : defaultCandidates;
+    const candidates = (!FORCE_DEFAULT_CALIB && deviceCandidates.length) ? deviceCandidates : defaultCandidates;
     if (!candidates.length) return null;
 
     const withTimes = candidates.map((c) => {
