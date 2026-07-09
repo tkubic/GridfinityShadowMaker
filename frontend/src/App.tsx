@@ -464,7 +464,7 @@ function App() {
     if (key === "rotate") {
       const v = parseFloat(raw);
       if (Number.isNaN(v)) return;
-      const rounded = Math.round(v * 1); // integer degrees
+      const rounded = Math.round(v * 10) / 10; // 0.1 degree steps
       updateShape(selectedShape.id, { rotateDeg: rounded });
       setEditFields((p) => ({ ...p, rotate: rounded.toFixed(1) }));
       return;

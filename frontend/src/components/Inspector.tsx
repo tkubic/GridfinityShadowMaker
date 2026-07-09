@@ -722,12 +722,12 @@ export default function Inspector({
                 <label>Rotate (deg)</label>
                 <input
                   type="number"
-                  step="1"
+                  step="0.1"
                   {...buildNumberField({
                     editKey: 'rotate',
                     getValue: () => selectedShape.rotateDeg ?? 0,
                     format: (n) => n.toFixed(1),
-                    transform: (n) => Math.round(n),
+                    transform: (n) => Math.round(n * 10) / 10,
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
                   })}
                   style={{ width: "100%" }}
@@ -875,7 +875,7 @@ export default function Inspector({
                         <label>Section Rotation (deg)</label>
                         <input
                           type="number"
-                          step="1"
+                          step="0.1"
                           {...buildNumberField({
                             editKey: 'sectionRotation',
                             getValue: () => selectedShape.sectionRotation ?? 0,
@@ -933,12 +933,12 @@ export default function Inspector({
                 <label>Rotate (deg)</label>
                 <input
                   type="number"
-                  step="1"
+                  step="0.1"
                   {...buildNumberField({
                     editKey: 'rotate',
                     getValue: () => selectedShape.rotateDeg ?? 0,
                     format: (n) => n.toFixed(1),
-                    transform: (n) => Math.round(n),
+                    transform: (n) => Math.round(n * 10) / 10,
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
                   })}
                       style={{ width: "100%" }}
@@ -1118,7 +1118,7 @@ export default function Inspector({
                         <label>Section Rotation (deg)</label>
                         <input
                           type="number"
-                          step="1"
+                          step="0.1"
                           {...buildNumberField({
                             editKey: 'sectionRotation',
                             getValue: () => selectedShape.sectionRotation ?? 0,
@@ -1195,12 +1195,12 @@ export default function Inspector({
                 <label>Rotate (deg)</label>
                 <input
                   type="number"
-                  step="1"
+                  step="0.1"
                   {...buildNumberField({
                     editKey: 'rotate',
                     getValue: () => selectedShape.rotateDeg ?? 0,
                     format: (n) => n.toFixed(1),
-                    transform: (n) => Math.round(n),
+                    transform: (n) => Math.round(n * 10) / 10,
                     commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
                   })}
                   style={{ width: "100%" }}
@@ -1366,7 +1366,7 @@ export default function Inspector({
                           <label>Section Rotation (deg)</label>
                           <input
                             type="number"
-                            step="1"
+                            step="0.1"
                             {...buildNumberField({
                               editKey: 'sectionRotation',
                               getValue: () => selectedShape.sectionRotation ?? 0,

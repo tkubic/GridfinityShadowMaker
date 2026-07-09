@@ -191,7 +191,8 @@ export default function Canvas({
 
       // rotation when ctrl/meta is held and Left/Right
       if (e.ctrlKey || e.metaKey) {
-        const delta = (e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0);
+        const rotStep = e.shiftKey ? 0.1 : 1.0;
+        const delta = (e.key === "ArrowLeft" ? -rotStep : e.key === "ArrowRight" ? rotStep : 0);
         if (delta === 0) return;
         ensureCheckpoint();
         // rotate whole selection around bounding-box center (more intuitive)
@@ -200,7 +201,7 @@ export default function Canvas({
           const id = targets[0];
           const s = drawShapes.find((d) => d.id === id);
           if (!s) return;
-          const next = Math.round((s.rotateDeg ?? 0) + delta);
+          const next = Math.round(((s.rotateDeg ?? 0) + delta) * 10) / 10;
           updateShape(id, { rotateDeg: next }, { skipHistory: true });
           return;
         }
@@ -237,7 +238,7 @@ export default function Canvas({
           const ry = Math.round((relX * sind + relY * cosd) * 10) / 10;
           const newX = Math.round((centerX + rx) * 10) / 10;
           const newY = Math.round((centerY + ry) * 10) / 10;
-          const nextRot = Math.round((s.rotateDeg ?? 0) + delta);
+          const nextRot = Math.round(((s.rotateDeg ?? 0) + delta) * 10) / 10;
           updateShape(id, { x: newX, y: newY, rotateDeg: nextRot }, { skipHistory: true });
         }
         return;
