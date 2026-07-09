@@ -177,7 +177,12 @@ function resolveProjectFolder(projectName) {
 // Helper: find an available Python command to run. Returns an object { cmd, args }
 // or null if none found. Order: GSM_PYTHON_EXE -> repo .venv -> py -3 (probe) -> python on PATH (probe).
 function findPythonCmd(repoRoot) {
-  const venvPython = path.join(repoRoot, '.venv', 'Scripts', process.platform === 'win32' ? 'python.exe' : 'python');
+  const venvPython = path.join(
+    repoRoot,
+    '.venv',
+    process.platform === 'win32' ? 'Scripts' : 'bin',
+    process.platform === 'win32' ? 'python.exe' : 'python'
+  );
   let pythonCmd = null;
   let pythonArgs = [];
 
