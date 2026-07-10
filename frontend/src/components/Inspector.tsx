@@ -325,9 +325,14 @@ export default function Inspector({
     }
     // trace inputs are lifted into App state via props
     const threshold = traceParams?.threshold ?? 145;
-    const offset = traceParams?.offset ?? 0.1; // inches
+    const offset = traceParams?.offset ?? 0.05; // canonical unit is always inches
     const tokenSize = traceParams?.token ?? 3.0; // inches
     const resolution = traceParams?.resolution ?? 20;
+    // Offset is stored internally in inches regardless of the mm/inches
+    // display toggle, so convert for display/edit here rather than relying
+    // on the mm-based toDisplay/fromDisplay helpers above.
+    const offsetDisplay = useInches ? offset : offset * 25.4;
+    const offsetFromDisplayValue = (v: number) => (useInches ? v : v / 25.4);
 
     return (
       <aside className="panel panel-right">
@@ -337,8 +342,13 @@ export default function Inspector({
           <input type="number" min={0} max={255} value={threshold} onChange={(e) => setTraceParams?.({ threshold: parseInt(e.target.value || '0'), offset: offset, token: tokenSize, resolution })} />
         </div>
         <div className="field">
-          <label>Offset (inches)</label>
-          <input type="number" step="0.01" value={offset} onChange={(e) => setTraceParams?.({ threshold, offset: parseFloat(e.target.value || '0'), token: tokenSize, resolution })} />
+          <label>{`Offset (${unitLabel})`}</label>
+          <input
+            type="number"
+            step={useInches ? "0.01" : "0.1"}
+            value={Number(offsetDisplay.toFixed(useInches ? 3 : 2))}
+            onChange={(e) => setTraceParams?.({ threshold, offset: offsetFromDisplayValue(parseFloat(e.target.value || '0')), token: tokenSize, resolution })}
+          />
         </div>
         <div className="field">
           <label>Token Size</label>

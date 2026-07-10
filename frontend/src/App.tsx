@@ -689,7 +689,7 @@ function App() {
   const [clipboardShapes, setClipboardShapes] = useState<Array<Partial<ToolShape>> | null>(null);
 
   // Lifted trace params so Load Image can include the inspector values
-  const [traceParams, setTraceParams] = useState<{ threshold: number; offset: number; token: number; resolution: number }>({ threshold: 145, offset: 0.1, token: 3.0, resolution: 20 });
+  const [traceParams, setTraceParams] = useState<{ threshold: number; offset: number; token: number; resolution: number }>({ threshold: 145, offset: 0.05, token: 3.0, resolution: 20 });
 
   function saveProjectToFile() {
     try {
