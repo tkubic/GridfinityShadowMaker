@@ -464,7 +464,7 @@ function App() {
     if (key === "rotate") {
       const v = parseFloat(raw);
       if (Number.isNaN(v)) return;
-      const rounded = Math.round(v * 1); // integer degrees
+      const rounded = Math.round(v * 10) / 10; // 0.1 degree steps
       updateShape(selectedShape.id, { rotateDeg: rounded });
       setEditFields((p) => ({ ...p, rotate: rounded.toFixed(1) }));
       return;
@@ -689,7 +689,7 @@ function App() {
   const [clipboardShapes, setClipboardShapes] = useState<Array<Partial<ToolShape>> | null>(null);
 
   // Lifted trace params so Load Image can include the inspector values
-  const [traceParams, setTraceParams] = useState<{ threshold: number; offset: number; token: number; resolution: number }>({ threshold: 145, offset: 0.1, token: 3.0, resolution: 20 });
+  const [traceParams, setTraceParams] = useState<{ threshold: number; offset: number; token: number; resolution: number }>({ threshold: 145, offset: 0.05, token: 3.0, resolution: 20 });
 
   function saveProjectToFile() {
     try {
