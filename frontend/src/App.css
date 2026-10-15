@@ -165,6 +165,34 @@
   box-sizing: border-box;
 }
 
+/* Rotate field: whole-degree step buttons sit to the left of the 0.1-step input */
+.rotate-step-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.rotate-step-row input {
+  width: auto;
+}
+.step-btn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.step-btn:hover {
+  background: #eee;
+}
+.step-btn:active {
+  transform: translateY(1px);
+}
+
 /* preview removed per user request */
 
 .toggle-btn {

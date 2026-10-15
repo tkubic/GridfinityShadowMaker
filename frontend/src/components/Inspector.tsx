@@ -217,6 +217,15 @@ export default function Inspector({
     };
   }
 
+  // Nudge the selected shape's rotation by a whole degree, independent of
+  // the 0.1-degree native spinner on the Rotate input.
+  const stepRotate = (delta: number) => {
+    if (!selectedShape) return;
+    const cur = selectedShape.rotateDeg ?? 0;
+    const next = Math.round((cur + delta) * 10) / 10;
+    updateShape(selectedShape.id, { rotateDeg: next });
+  };
+
   // When the selected shape's key properties change externally (for example
   // when the user drags or rotates the shape), and the inspector field is
   // not currently being edited, clear the edit buffer so the inspector shows
@@ -332,9 +341,14 @@ export default function Inspector({
     }
     // trace inputs are lifted into App state via props
     const threshold = traceParams?.threshold ?? 145;
-    const offset = traceParams?.offset ?? 0.1; // inches
+    const offset = traceParams?.offset ?? 0.05; // canonical unit is always inches
     const tokenSize = traceParams?.token ?? 3.0; // inches
     const resolution = traceParams?.resolution ?? 20;
+    // Offset is stored internally in inches regardless of the mm/inches
+    // display toggle, so convert for display/edit here rather than relying
+    // on the mm-based toDisplay/fromDisplay helpers above.
+    const offsetDisplay = useInches ? offset : offset * 25.4;
+    const offsetFromDisplayValue = (v: number) => (useInches ? v : v / 25.4);
 
     return (
       <aside className="panel panel-right">
@@ -344,8 +358,13 @@ export default function Inspector({
           <input type="number" min={0} max={255} value={threshold} onChange={(e) => setTraceParams?.({ threshold: parseInt(e.target.value || '0'), offset: offset, token: tokenSize, resolution })} />
         </div>
         <div className="field">
-          <label>Offset (inches)</label>
-          <input type="number" step="0.01" value={offset} onChange={(e) => setTraceParams?.({ threshold, offset: parseFloat(e.target.value || '0'), token: tokenSize, resolution })} />
+          <label>{`Offset (${unitLabel})`}</label>
+          <input
+            type="number"
+            step={useInches ? "0.01" : "0.1"}
+            value={Number(offsetDisplay.toFixed(useInches ? 3 : 2))}
+            onChange={(e) => setTraceParams?.({ threshold, offset: offsetFromDisplayValue(parseFloat(e.target.value || '0')), token: tokenSize, resolution })}
+          />
         </div>
         <div className="field">
           <label>Token Size</label>
@@ -736,18 +755,22 @@ export default function Inspector({
               </div>
               <div className="field">
                 <label>Rotate (deg)</label>
-                <input
-                  type="number"
-                  step={0.1}
-                  {...buildNumberField({
-                    editKey: 'rotate',
-                    getValue: () => selectedShape.rotateDeg ?? 0,
-                    format: (n) => n.toFixed(1),
-                    transform: (n) => roundToStep(n, 0.1),
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
-                  })}
-                  style={{ width: "100%" }}
-                />
+                <div className="rotate-step-row">
+                  <button type="button" className="step-btn" title="Rotate -1 degree" onClick={() => stepRotate(-1)}>-1&deg;</button>
+                  <input
+                    type="number"
+                    step={0.1}
+                    {...buildNumberField({
+                      editKey: 'rotate',
+                      getValue: () => selectedShape.rotateDeg ?? 0,
+                      format: (n) => n.toFixed(1),
+                      transform: (n) => roundToStep(n, 0.1),
+                      commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                    })}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <button type="button" className="step-btn" title="Rotate +1 degree" onClick={() => stepRotate(1)}>+1&deg;</button>
+                </div>
               </div>
 
               {/* Split to Sections - for Text Cut type shapes */}
@@ -947,18 +970,22 @@ export default function Inspector({
             <>
               <div className="field">
                 <label>Rotate (deg)</label>
-                <input
-                  type="number"
-                  step={0.1}
-                  {...buildNumberField({
-                    editKey: 'rotate',
-                    getValue: () => selectedShape.rotateDeg ?? 0,
-                    format: (n) => n.toFixed(1),
-                    transform: (n) => roundToStep(n, 0.1),
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
-                  })}
-                      style={{ width: "100%" }}
-                />
+                <div className="rotate-step-row">
+                  <button type="button" className="step-btn" title="Rotate -1 degree" onClick={() => stepRotate(-1)}>-1&deg;</button>
+                  <input
+                    type="number"
+                    step={0.1}
+                    {...buildNumberField({
+                      editKey: 'rotate',
+                      getValue: () => selectedShape.rotateDeg ?? 0,
+                      format: (n) => n.toFixed(1),
+                      transform: (n) => roundToStep(n, 0.1),
+                      commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                    })}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <button type="button" className="step-btn" title="Rotate +1 degree" onClick={() => stepRotate(1)}>+1&deg;</button>
+                </div>
               </div>
               <div className="field">
                 <label>Scale</label>
@@ -1209,18 +1236,22 @@ export default function Inspector({
               { /* radius removed: oval uses width/height only */ }
               <div className="field">
                 <label>Rotate (deg)</label>
-                <input
-                  type="number"
-                  step={0.1}
-                  {...buildNumberField({
-                    editKey: 'rotate',
-                    getValue: () => selectedShape.rotateDeg ?? 0,
-                    format: (n) => n.toFixed(1),
-                    transform: (n) => roundToStep(n, 0.1),
-                    commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
-                  })}
-                  style={{ width: "100%" }}
-                />
+                <div className="rotate-step-row">
+                  <button type="button" className="step-btn" title="Rotate -1 degree" onClick={() => stepRotate(-1)}>-1&deg;</button>
+                  <input
+                    type="number"
+                    step={0.1}
+                    {...buildNumberField({
+                      editKey: 'rotate',
+                      getValue: () => selectedShape.rotateDeg ?? 0,
+                      format: (n) => n.toFixed(1),
+                      transform: (n) => roundToStep(n, 0.1),
+                      commitValue: (n) => { if (selectedShape) updateShape(selectedShape.id, { rotateDeg: n }); },
+                    })}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <button type="button" className="step-btn" title="Rotate +1 degree" onClick={() => stepRotate(1)}>+1&deg;</button>
+                </div>
               </div>
               <div className="field">
                 <label>{`Depth (${unitLabel})`}</label>

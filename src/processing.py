@@ -28,9 +28,9 @@ scad_file_path = None  # Declare scad_file_path as a global variable
 
 def get_threshold_input(threshold_entry, offset_entry, token_entry, resolution_entry):
     global offset, token, resolution
-    # Defaults: threshold 145, offset 0.1 (inches), token 3.0 (inches), resolution 20
+    # Defaults: threshold 145, offset 0.05 (inches), token 3.0 (inches), resolution 20
     threshold_input = validate_input(threshold_entry.text(), 145, 0, 255)
-    offset = validate_input(offset_entry.text(), 0.1)
+    offset = validate_input(offset_entry.text(), 0.05)
     token = validate_input(token_entry.text(), 3.000)
     resolution = validate_input(resolution_entry.text(), 20)
     return threshold_input
@@ -1214,7 +1214,7 @@ def cli_main(argv=None):
     parser.add_argument('input_path', nargs='?')
     parser.add_argument('out_dir', nargs='?', default='processing_output')
     parser.add_argument('--threshold', type=float, default=145)
-    parser.add_argument('--offset', type=float, default=0.1)
+    parser.add_argument('--offset', type=float, default=0.05)
     parser.add_argument('--token', type=float, default=3.0)
     parser.add_argument('--resolution', type=int, default=20)
     parser.add_argument('--projectdir', type=str, default=None)
