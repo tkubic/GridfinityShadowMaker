@@ -1156,7 +1156,7 @@ function App() {
         if (allowDownload && dxfFiles.length) {
           for (const fname of dxfFiles) {
             try {
-              const resp = await fetch('/api/project-output?project=' + encodeURIComponent(project.name || 'project') + '&file=' + encodeURIComponent(fname));
+              const resp = await fetch('http://localhost:5000/api/project-output?project=' + encodeURIComponent(project.name || 'project') + '&file=' + encodeURIComponent(fname));
               if (!resp.ok) {
                 console.warn('Failed to download DXF', fname, resp.status);
                 continue;
